@@ -1,0 +1,57 @@
+# SprawlCrafting — Design
+
+Factorio-style deferred crafting for the vanilla inventory and crafting table: request a
+final item, and the mod automatically crafts every intermediate from your raw resources,
+one component every half second.
+
+## Decisions (locked 2026-06-09)
+
+| Area | Decision |
+|---|---|
+| Project structure | MultiLoader template: shared `common` source set + `fabric` + `neoforge` loader projects. No runtime library dependency. |
+| Initial target | Minecraft 1.21.1 (NeoForge 21.1.x, Fabric Loader 0.16.x). MC 26.1.2 added later via Stonecutter once the design is proven. |
+| Intermediates | Crafted as **real items into the player's inventory**, then consumed by later steps. Crash-safe and visible to other mods; intermediates briefly occupy slots. |
+| Resource consumption | **Per step**, from the live inventory — nothing is reserved upfront. If a step's ingredients are missing when it comes due, the job fails gracefully (notification; already-crafted items remain). |
+| Queue model | **Single job at a time** per player in v1. Requesting a second craft while one runs is rejected/greyed out. |
+| Craft cadence | One component craft per 10 ticks (0.5 s) — `CraftJob.TICKS_PER_STEP`. |
+
+## Core flow
+
+1. **Recipe book / JEI / REI hook (client):** recipes whose direct ingredients are missing
+   but whose *raw* cost is satisfiable get a **yellow outline** (vanilla: white = craftable,
+   red = not). Clicking one sends a "request deferred craft" packet instead of failing.
+2. **Planning (server, `CraftPlanner`):** walk the recipe dependency tree against the
+   player's inventory; emit a topologically ordered list of `CraftStep`s (recipe × count).
+   Items already held are used before any sub-craft is planned.
+3. **Execution (server, `CraftQueueManager`):** every 10 ticks, re-check + consume the
+   current step's ingredients from the live inventory and insert its output as real items
+   (drop at feet if full). Shortfall → cancel + notify.
+4. **HUD (client):** while a job runs with the inventory closed, a top-right flyout (toast
+   style) shows the item currently being crafted and overall job progress.
+
+## Recipe ambiguity rule
+
+When multiple recipes produce a missing intermediate, pick deterministically: the first
+recipe whose raw cost is currently satisfiable, preferring fewer total steps. No player
+prompt in v1. Planning is depth-limited and cycle-guarded (e.g. iron ingot ⇄ iron block).
+
+## Scope
+
+**v1:** vanilla crafting recipes only (2×2 inventory grid limits which recipes can be
+*requested* there, but intermediates are crafted abstractly server-side, so grid size only
+gates the *final* recipe). Single job, real intermediates, per-step consumption.
+
+**Later / open:**
+- MC 26.1.2 targets via Stonecutter (multi-version, same codebase).
+- JEI/REI plugins beyond what the vanilla recipe book hook gives for free.
+- Persistence of an in-flight job across relog (v1: job cancels on disconnect — harmless,
+  since consumption is per-step and intermediates are real items).
+- Whether smelting/smithing/stonecutting count as plannable sub-recipes (v1: crafting only).
+- Quantity batching and multi-job FIFO (deliberately deferred from v1).
+
+## Module layout
+
+- `common/` — all gameplay logic (`craft/` package), mixins into vanilla recipe book UI,
+  HUD rendering, shared networking payloads. Compiles against vanilla via NeoForm.
+- `neoforge/`, `fabric/` — entry points, tick/disconnect event wiring, packet registration,
+  loader-specific `IPlatformHelper` implementations (`ServiceLoader`-discovered).
