@@ -5,6 +5,7 @@ import java.util.Optional;
 import com.legoj15.sprawlcrafting.client.ClientJobTracker;
 import com.legoj15.sprawlcrafting.client.DeferredClickState;
 import com.legoj15.sprawlcrafting.client.DeferredCraftableCache;
+import com.legoj15.sprawlcrafting.craft.CraftPlanner.Craftability;
 import com.legoj15.sprawlcrafting.craft.GridContext;
 
 import mezz.jei.api.constants.RecipeTypes;
@@ -65,8 +66,8 @@ public class DeferredCraftingTransferHandler
             return vanillaError; // direct transfer worked (or an internal error we don't own)
         }
         if (ClientJobTracker.hasActiveJob()
-                || !DeferredCraftableCache.isSolvable(recipe, GridContext.CRAFTING_TABLE)) {
-            return vanillaError; // busy or truly unsolvable: keep JEI's red missing-items
+                || DeferredCraftableCache.classify(recipe, GridContext.CRAFTING_TABLE) != Craftability.DEFERRED) {
+            return vanillaError; // busy or not deferred-craftable: keep JEI's red missing-items
         }
         if (doTransfer) {
             DeferredClickState.sendStartPacket(recipe);
@@ -92,9 +93,9 @@ public class DeferredCraftingTransferHandler
 
         @Override
         public void getTooltip(ITooltipBuilder tooltip) {
-            tooltip.add(Component.translatable("sprawlcrafting.jei.deferred")
+            tooltip.add(Component.translatable("sprawlcrafting.recipe.deferred")
                     .withStyle(ChatFormatting.YELLOW));
-            tooltip.add(Component.translatable("sprawlcrafting.jei.deferred.click")
+            tooltip.add(Component.translatable("sprawlcrafting.recipe.deferred.click")
                     .withStyle(ChatFormatting.GRAY));
         }
     }

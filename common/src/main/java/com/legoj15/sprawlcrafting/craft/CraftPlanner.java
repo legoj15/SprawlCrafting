@@ -42,6 +42,16 @@ public final class CraftPlanner {
     private CraftPlanner() {
     }
 
+    /** How a recipe can be made right now, for recipe-viewer button states. */
+    public enum Craftability {
+        /** Not makeable from current raw resources. */
+        UNSOLVABLE,
+        /** All direct ingredients are in stock — a normal one-step craft (no deferral needed). */
+        DIRECT,
+        /** Makeable only by first crafting intermediates — the deferred (yellow) case. */
+        DEFERRED
+    }
+
     /** Outcome of a plan request, with enough detail for user-facing feedback. */
     public sealed interface PlanOutcome {
         /** Ready to enqueue. */
@@ -112,7 +122,6 @@ public final class CraftPlanner {
         private final Map<Item, List<McRecipe>> producers;
         private final Map<Item, Integer> inventory;
         private final RecipeGraphSolver<ResourceLocation, Item> solver;
-        private final Map<ResourceLocation, Boolean> solvableCache = new HashMap<>();
 
         private Session(RecipeManager recipes, HolderLookup.Provider registries, GridContext grid,
                         Map<Item, List<McRecipe>> producers, Map<Item, Integer> inventory) {
@@ -131,10 +140,27 @@ public final class CraftPlanner {
             return grid;
         }
 
+        private final Map<ResourceLocation, Craftability> classifyCache = new HashMap<>();
+
         /** Cheap repeated query for the recipe book: can this be crafted from raws right now? */
         public boolean isSolvable(RecipeHolder<?> targetHolder) {
-            return solvableCache.computeIfAbsent(targetHolder.id(),
-                    id -> plan(targetHolder) instanceof PlanOutcome.Planned);
+            return classify(targetHolder) != Craftability.UNSOLVABLE;
+        }
+
+        /**
+         * Direct vs deferred vs unsolvable, cached per recipe. Recipe viewers (JEI/REI) use
+         * this to decide between letting their builtin transfer the recipe (DIRECT), showing
+         * the yellow deferred-craft offer (DEFERRED), or their red error (UNSOLVABLE). A plan
+         * with a single step is direct — its one step is the target with all ingredients in
+         * stock; any intermediate steps mean deferral.
+         */
+        public Craftability classify(RecipeHolder<?> targetHolder) {
+            return classifyCache.computeIfAbsent(targetHolder.id(), id -> {
+                if (!(plan(targetHolder) instanceof PlanOutcome.Planned planned)) {
+                    return Craftability.UNSOLVABLE;
+                }
+                return planned.job().steps().size() == 1 ? Craftability.DIRECT : Craftability.DEFERRED;
+            });
         }
 
         public PlanOutcome plan(RecipeHolder<?> targetHolder) {

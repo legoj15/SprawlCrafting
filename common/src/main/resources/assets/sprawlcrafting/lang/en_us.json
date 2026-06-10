@@ -19,8 +19,8 @@
   "sprawlcrafting.craft.none": "No craft in progress",
   "sprawlcrafting.craft.unknown_recipe": "Unknown recipe %s",
   "sprawlcrafting.preview.hint": "Craftable from raw resources — click to preview",
-  "sprawlcrafting.jei.deferred": "Craftable from raw resources!",
-  "sprawlcrafting.jei.deferred.click": "Click to queue the deferred craft",
+  "sprawlcrafting.recipe.deferred": "Craftable from raw resources!",
+  "sprawlcrafting.recipe.deferred.click": "Click to queue the deferred craft",
   "sprawlcrafting.preview.header": "Craft %s from raw resources:",
   "sprawlcrafting.preview.step": "%s× %s",
   "sprawlcrafting.preview.confirm": "Click again to start"

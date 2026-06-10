@@ -43,6 +43,12 @@ public final class DeferredCraftableCache {
         return current != null && current.isSolvable(holder);
     }
 
+    /** Direct vs deferred vs unsolvable, for recipe-viewer (JEI/REI) button states. */
+    public static CraftPlanner.Craftability classify(RecipeHolder<?> holder, GridContext requestGrid) {
+        CraftPlanner.Session current = currentSession(requestGrid);
+        return current != null ? current.classify(holder) : CraftPlanner.Craftability.UNSOLVABLE;
+    }
+
     /** Marks a recipe as craftable-only-via-deferral, for the yellow button tint. */
     public static void markDeferredOnly(RecipeHolder<?> holder) {
         deferredOnly.add(holder.id());

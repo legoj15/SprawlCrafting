@@ -23,6 +23,9 @@
         ],
         "jei_mod_plugin": [
             "com.legoj15.sprawlcrafting.compat.jei.SprawlCraftingJeiPlugin"
+        ],
+        "rei_client": [
+            "com.legoj15.sprawlcrafting.compat.rei.SprawlCraftingReiClientPlugin"
         ]
     },
     "mixins": [
@@ -36,7 +39,8 @@
         "java": ">=${java_version}"
     },
     "suggests": {
-        "jei": "*"
+        "jei": "*",
+        "roughlyenoughitems": "*"
     }
 }
   

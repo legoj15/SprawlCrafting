@@ -42,6 +42,11 @@ repositories {
         name = 'BlameJared'
         url = 'https://maven.blamejared.com'
     }
+    maven {
+        // REI (Roughly Enough Items) + its API
+        name = 'Shedaniel'
+        url = 'https://maven.shedaniel.me/'
+    }
 }
 
 // Declare capabilities on the outgoing configurations.

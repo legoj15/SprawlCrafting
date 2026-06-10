@@ -24,6 +24,8 @@ dependencies {
 
     // Optional JEI integration: API only; the plugin class is loaded solely by JEI.
     compileOnly "mezz.jei:jei-${minecraft_version}-common-api:${jei_version}"
+    // (REI has no mojmap common-API jar, so its integration lives in the loader source
+    //  sets — see fabric/ and neoforge/ build.gradle — not here.)
 
     // The craft solver core is pure Java and unit-tested without Minecraft.
     testImplementation platform('org.junit:junit-bom:5.10.3')
