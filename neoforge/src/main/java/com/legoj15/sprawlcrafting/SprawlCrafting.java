@@ -1,8 +1,10 @@
 package com.legoj15.sprawlcrafting;
 
+import com.legoj15.sprawlcrafting.client.ClientJobTracker;
 import com.legoj15.sprawlcrafting.command.SprawlCraftingCommand;
 import com.legoj15.sprawlcrafting.craft.CraftQueueManager;
 import com.legoj15.sprawlcrafting.craft.CraftRequests;
+import com.legoj15.sprawlcrafting.network.CraftProgressPayload;
 import com.legoj15.sprawlcrafting.network.StartDeferredCraftPayload;
 
 import net.minecraft.server.level.ServerPlayer;
@@ -30,14 +32,21 @@ public class SprawlCrafting {
     }
 
     private static void onRegisterPayloads(RegisterPayloadHandlersEvent event) {
-        event.registrar("1").playToServer(
-                StartDeferredCraftPayload.TYPE,
-                StartDeferredCraftPayload.STREAM_CODEC,
-                (payload, context) -> {
-                    if (context.player() instanceof ServerPlayer serverPlayer) {
-                        CraftRequests.handleStartRequest(serverPlayer, payload.recipeId());
-                    }
-                });
+        event.registrar("1")
+                .playToServer(
+                        StartDeferredCraftPayload.TYPE,
+                        StartDeferredCraftPayload.STREAM_CODEC,
+                        (payload, context) -> {
+                            if (context.player() instanceof ServerPlayer serverPlayer) {
+                                CraftRequests.handleStartRequest(serverPlayer, payload.recipeId());
+                            }
+                        })
+                .playToClient(
+                        CraftProgressPayload.TYPE,
+                        CraftProgressPayload.STREAM_CODEC,
+                        // Lambda body, not a method reference: keeps the client-only
+                        // tracker class from loading on the dedicated server.
+                        (payload, context) -> ClientJobTracker.accept(payload));
     }
 
     // End-of-server-tick player loop, deliberately mirroring the Fabric wiring so jobs

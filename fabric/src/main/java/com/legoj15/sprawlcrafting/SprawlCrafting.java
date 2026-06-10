@@ -3,6 +3,7 @@ package com.legoj15.sprawlcrafting;
 import com.legoj15.sprawlcrafting.command.SprawlCraftingCommand;
 import com.legoj15.sprawlcrafting.craft.CraftQueueManager;
 import com.legoj15.sprawlcrafting.craft.CraftRequests;
+import com.legoj15.sprawlcrafting.network.CraftProgressPayload;
 import com.legoj15.sprawlcrafting.network.StartDeferredCraftPayload;
 
 import net.fabricmc.api.ModInitializer;
@@ -22,6 +23,8 @@ public class SprawlCrafting implements ModInitializer {
 
         PayloadTypeRegistry.playC2S().register(
                 StartDeferredCraftPayload.TYPE, StartDeferredCraftPayload.STREAM_CODEC);
+        PayloadTypeRegistry.playS2C().register(
+                CraftProgressPayload.TYPE, CraftProgressPayload.STREAM_CODEC);
         ServerPlayNetworking.registerGlobalReceiver(StartDeferredCraftPayload.TYPE,
                 (payload, context) -> CraftRequests.handleStartRequest(context.player(), payload.recipeId()));
 

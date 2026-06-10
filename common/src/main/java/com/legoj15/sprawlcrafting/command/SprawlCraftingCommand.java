@@ -73,11 +73,9 @@ public final class SprawlCraftingCommand {
         ServerPlayer player = context.getSource().getPlayerOrException();
         return CraftQueueManager.cancel(player.getUUID())
                 .map(job -> {
-                    Component message = Component.translatable("sprawlcrafting.craft.cancelled",
-                            job.targetResult().getHoverName());
-                    context.getSource().sendSuccess(() -> message, false);
-                    // Overwrite any lingering progress text in the action bar.
-                    player.displayClientMessage(message, true);
+                    CraftQueueManager.syncCancelled(player, job);
+                    context.getSource().sendSuccess(() -> Component.translatable(
+                            "sprawlcrafting.craft.cancelled", job.targetResult().getHoverName()), false);
                     return 1;
                 })
                 .orElseGet(() -> {

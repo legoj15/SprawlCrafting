@@ -17,6 +17,9 @@
     "entrypoints": {
         "main": [
             "com.legoj15.sprawlcrafting.SprawlCrafting"
+        ],
+        "client": [
+            "com.legoj15.sprawlcrafting.SprawlCraftingClient"
         ]
     },
     "mixins": [
