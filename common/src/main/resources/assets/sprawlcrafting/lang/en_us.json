@@ -1,0 +1,14 @@
+{
+  "sprawlcrafting.craft.started": "Crafting %s — %s component crafts queued",
+  "sprawlcrafting.craft.progress": "Crafting %s: %s (%s/%s)",
+  "sprawlcrafting.craft.finished": "Crafted %s",
+  "sprawlcrafting.craft.missing": "Crafting %s cancelled — missing %s",
+  "sprawlcrafting.craft.recipe_gone": "Crafting %s cancelled — recipe no longer exists",
+  "sprawlcrafting.craft.cancelled": "Cancelled crafting %s",
+  "sprawlcrafting.craft.busy": "Already crafting — cancel it first with /sprawlcrafting cancel",
+  "sprawlcrafting.craft.unsupported": "%s is not a plannable crafting recipe",
+  "sprawlcrafting.craft.unsolvable": "Not enough raw resources for %s (missing: %s)",
+  "sprawlcrafting.craft.too_complex": "The recipe tree for %s is too complex to plan",
+  "sprawlcrafting.craft.status": "Crafting %s — %s/%s component crafts done",
+  "sprawlcrafting.craft.none": "No craft in progress"
+}

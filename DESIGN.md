@@ -49,6 +49,25 @@ gates the *final* recipe). Single job, real intermediates, per-step consumption.
 - Whether smelting/smithing/stonecutting count as plannable sub-recipes (v1: crafting only).
 - Quantity batching and multi-job FIFO (deliberately deferred from v1).
 
+## Known v1 limitations (reviewed and accepted)
+
+- **Greedy planning, no cross-slot backtracking.** Slots resolve left-to-right against one
+  virtual inventory; a slot never reconsiders an earlier slot's choice. Under shared-resource
+  contention (two slots competing for the last unit of something with an alternative available)
+  a solvable target can be reported unsolvable. Full search is exponential; rejected for v1.
+- **Search budget instead of memoization.** Pathological graphs (vanilla's 16-color bed cycle
+  with all dyes stocked but no wool/planks, or hostile datapacks) abort with a "too complex"
+  message after `MAX_ATTEMPTS` resolution attempts rather than hanging the server thread.
+- **Items planned by `Item` identity.** Components/NBT are ignored at plan time; execution
+  re-checks with `Ingredient.test` and cancels gracefully on divergence. Damaged, enchanted,
+  and renamed stacks are excluded from both planning and consumption (vanilla recipe-book parity).
+- **Per-`Item` crafting remainders.** Recipes overriding `getRemainingItems` (and NeoForge's
+  stack-sensitive remainders on modded items) are approximated by the item-level remainder.
+- **NeoForge empty-tag placeholder.** NeoForge substitutes a barrier item for ingredients with
+  empty tags; such plans fail at execution (gracefully) rather than at planning.
+- **Play→configuration phase re-entry** (server reconfiguration mid-session) cancels the job
+  on NeoForge but not on Fabric; both are safe, just inconsistent. Revisit with the HUD work.
+
 ## Module layout
 
 - `common/` — all gameplay logic (`craft/` package), mixins into vanilla recipe book UI,
