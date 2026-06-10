@@ -74,12 +74,17 @@ public final class DeferredClickState {
     }
 
     private static void confirm(RecipeHolder<?> holder) {
+        sendStartPacket(holder);
+        clear();
+    }
+
+    /** Fires the start request; shared with the JEI transfer handler. */
+    public static void sendStartPacket(RecipeHolder<?> holder) {
         var connection = Minecraft.getInstance().getConnection();
         if (connection != null) {
             // Vanilla send path — identical to what both loaders' helpers do internally.
             connection.send(new ServerboundCustomPayloadPacket(new StartDeferredCraftPayload(holder.id())));
         }
-        clear();
     }
 
     private static void preview(RecipeHolder<?> holder, GridContext grid, int generation) {

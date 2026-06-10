@@ -40,6 +40,11 @@ public final class ClientJobTracker {
         return current;
     }
 
+    /** True while a job is running or paused — used to gate new craft offers in UIs. */
+    public static boolean hasActiveJob() {
+        return current != null && !current.state().isTerminal();
+    }
+
     /** True once a terminal snapshot has been on screen long enough to slide out. */
     public static boolean terminalDisplayElapsed() {
         return current != null && current.state().isTerminal()

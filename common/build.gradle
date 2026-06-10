@@ -22,6 +22,9 @@ dependencies {
     compileOnly group: 'io.github.llamalad7', name: 'mixinextras-common', version: '0.3.5'
     annotationProcessor group: 'io.github.llamalad7', name: 'mixinextras-common', version: '0.3.5'
 
+    // Optional JEI integration: API only; the plugin class is loaded solely by JEI.
+    compileOnly "mezz.jei:jei-${minecraft_version}-common-api:${jei_version}"
+
     // The craft solver core is pure Java and unit-tested without Minecraft.
     testImplementation platform('org.junit:junit-bom:5.10.3')
     testImplementation 'org.junit.jupiter:junit-jupiter'

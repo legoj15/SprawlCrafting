@@ -20,6 +20,9 @@
         ],
         "client": [
             "com.legoj15.sprawlcrafting.SprawlCraftingClient"
+        ],
+        "jei_mod_plugin": [
+            "com.legoj15.sprawlcrafting.compat.jei.SprawlCraftingJeiPlugin"
         ]
     },
     "mixins": [
@@ -31,6 +34,9 @@
         "fabric-api": "*",
         "minecraft": "${minecraft_version}",
         "java": ">=${java_version}"
+    },
+    "suggests": {
+        "jei": "*"
     }
 }
   
