@@ -1,7 +1,10 @@
 package com.legoj15.sprawlcrafting.client;
 
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 import com.legoj15.sprawlcrafting.craft.CraftJob;
 import com.legoj15.sprawlcrafting.craft.CraftPlanner.PlanOutcome;
@@ -13,6 +16,7 @@ import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.common.ServerboundCustomPayloadPacket;
+import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.crafting.RecipeHolder;
 
@@ -48,8 +52,9 @@ public final class DeferredClickState {
         return false;
     }
 
-    public static List<Component> previewLines() {
-        if (pending == null) {
+    /** Preview lines for {@code holder}'s tooltip, or empty if it isn't the pending recipe. */
+    public static List<Component> previewLinesFor(RecipeHolder<?> holder) {
+        if (pending == null || !pending.id().equals(holder.id())) {
             return List.of();
         }
         // The preview describes a plan against a specific inventory state; drop it the
@@ -79,27 +84,34 @@ public final class DeferredClickState {
 
     private static void preview(RecipeHolder<?> holder, GridContext grid, int generation) {
         Minecraft minecraft = Minecraft.getInstance();
-        List<Component> lines = new ArrayList<>();
-        if (DeferredCraftableCache.plan(holder, grid) instanceof PlanOutcome.Planned planned) {
-            CraftJob job = planned.job();
-            lines.add(Component.translatable("sprawlcrafting.preview.header",
-                    job.targetResult().getHoverName()).withStyle(ChatFormatting.YELLOW));
-            for (CraftStep step : job.steps()) {
-                ItemStack produced = minecraft.level.getRecipeManager().byKey(step.recipeId())
-                        .map(h -> h.value().getResultItem(minecraft.level.registryAccess()))
-                        .orElse(ItemStack.EMPTY);
-                lines.add(Component.translatable("sprawlcrafting.preview.step",
-                        produced.getCount() * step.crafts(), produced.getHoverName())
-                        .withStyle(ChatFormatting.GRAY));
-            }
-            lines.add(Component.translatable("sprawlcrafting.preview.confirm")
-                    .withStyle(ChatFormatting.GREEN, ChatFormatting.ITALIC));
-            pending = holder;
-            pendingInventoryGeneration = generation;
-            previewLines = lines;
-        } else {
+        if (!(DeferredCraftableCache.plan(holder, grid) instanceof PlanOutcome.Planned planned)) {
             // Inventory changed since the outline was computed; treat as not startable.
             clear();
+            return;
         }
+        CraftJob job = planned.job();
+        List<Component> lines = new ArrayList<>();
+        lines.add(Component.translatable("sprawlcrafting.preview.header",
+                job.targetResult().getHoverName()).withStyle(ChatFormatting.YELLOW));
+        // Aggregate intermediate output per item (a chain may revisit the same recipe in
+        // non-adjacent steps); the final step is the target itself — the header covers it.
+        Map<Item, Integer> totals = new LinkedHashMap<>();
+        Map<Item, Component> names = new HashMap<>();
+        for (CraftStep step : job.steps().subList(0, job.steps().size() - 1)) {
+            ItemStack produced = minecraft.level.getRecipeManager().byKey(step.recipeId())
+                    .map(h -> h.value().getResultItem(minecraft.level.registryAccess()))
+                    .orElse(ItemStack.EMPTY);
+            if (!produced.isEmpty()) {
+                totals.merge(produced.getItem(), produced.getCount() * step.crafts(), Integer::sum);
+                names.putIfAbsent(produced.getItem(), produced.getHoverName());
+            }
+        }
+        totals.forEach((item, count) -> lines.add(Component.translatable("sprawlcrafting.preview.step",
+                count, names.get(item)).withStyle(ChatFormatting.GRAY)));
+        lines.add(Component.translatable("sprawlcrafting.preview.confirm")
+                .withStyle(ChatFormatting.GREEN, ChatFormatting.ITALIC));
+        pending = holder;
+        pendingInventoryGeneration = generation;
+        previewLines = lines;
     }
 }

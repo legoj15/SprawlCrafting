@@ -62,6 +62,15 @@ public final class DeferredCraftableCache {
         return current != null ? current.plan(holder) : new CraftPlanner.PlanOutcome.Unsupported();
     }
 
+    /**
+     * Drops the session outright — needed on datapack reload, where the client
+     * RecipeManager is mutated in place and identity comparison cannot see the change.
+     */
+    public static void invalidate() {
+        session = null;
+        deferredOnly.clear();
+    }
+
     private static CraftPlanner.Session currentSession(GridContext requestGrid) {
         Minecraft minecraft = Minecraft.getInstance();
         LocalPlayer player = minecraft.player;

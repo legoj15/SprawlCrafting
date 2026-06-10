@@ -12,25 +12,20 @@ import com.legoj15.sprawlcrafting.client.DeferredClickState;
 import com.legoj15.sprawlcrafting.client.DeferredCraftableCache;
 import com.legoj15.sprawlcrafting.craft.GridContext;
 
-import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.recipebook.RecipeBookComponent;
 import net.minecraft.client.gui.screens.recipebook.RecipeBookPage;
-import net.minecraft.network.chat.Component;
 import net.minecraft.world.inventory.RecipeBookMenu;
 import net.minecraft.world.item.crafting.RecipeHolder;
-
-import java.util.List;
 
 /**
  * The preview-then-confirm flow for yellow (deferred-craftable) recipes:
  * <ul>
  *   <li>Intercepts clicks right before vanilla would send the place-recipe packet —
  *       the single choke point both the grid buttons and the variant overlay route
- *       through. Yellow recipes get a client-computed plan preview on first click and
- *       a start packet on the second; white recipes keep vanilla behavior.</li>
- *   <li>Renders the pending preview as a tooltip panel.</li>
- *   <li>Clears stale preview state when the book (re)binds to a menu.</li>
+ *       through. Yellow recipes get a client-computed plan preview on first click
+ *       (shown in the button's own tooltip, see RecipeButtonMixin) and a start packet
+ *       on the second; white recipes keep vanilla behavior.</li>
+ *   <li>Clears stale preview/cache state when the book (re)binds or recipes reload.</li>
  * </ul>
  */
 @Mixin(RecipeBookComponent.class)
@@ -42,12 +37,6 @@ public abstract class RecipeBookComponentMixin {
     @Shadow
     @Final
     private RecipeBookPage recipeBookPage;
-
-    @Shadow
-    protected Minecraft minecraft;
-
-    @Shadow
-    public abstract boolean isVisible();
 
     @Inject(method = "mouseClicked(DDI)Z",
             cancellable = true,
@@ -65,21 +54,15 @@ public abstract class RecipeBookComponentMixin {
         cir.setReturnValue(true);
     }
 
-    @Inject(method = "render(Lnet/minecraft/client/gui/GuiGraphics;IIF)V", at = @At("TAIL"))
-    private void sprawlcrafting$renderPreview(GuiGraphics guiGraphics, int mouseX, int mouseY,
-                                              float partialTick, CallbackInfo ci) {
-        if (!isVisible()) {
-            return;
-        }
-        List<Component> lines = DeferredClickState.previewLines();
-        if (!lines.isEmpty()) {
-            guiGraphics.renderComponentTooltip(minecraft.font, lines, mouseX + 12, mouseY);
-        }
-    }
-
     @Inject(method = "init(IILnet/minecraft/client/Minecraft;ZLnet/minecraft/world/inventory/RecipeBookMenu;)V",
             at = @At("TAIL"))
     private void sprawlcrafting$clearPreviewOnInit(CallbackInfo ci) {
+        DeferredClickState.clear();
+    }
+
+    @Inject(method = "recipesUpdated()V", at = @At("TAIL"))
+    private void sprawlcrafting$invalidateOnRecipesUpdated(CallbackInfo ci) {
+        DeferredCraftableCache.invalidate();
         DeferredClickState.clear();
     }
 }
