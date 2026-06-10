@@ -1,10 +1,7 @@
 package com.legoj15.sprawlcrafting.command;
 
-import java.util.stream.Collectors;
-
-import com.legoj15.sprawlcrafting.craft.CraftPlanner;
-import com.legoj15.sprawlcrafting.craft.CraftPlanner.PlanOutcome;
 import com.legoj15.sprawlcrafting.craft.CraftQueueManager;
+import com.legoj15.sprawlcrafting.craft.CraftRequests;
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
@@ -55,35 +52,18 @@ public final class SprawlCraftingCommand {
         ServerPlayer player = context.getSource().getPlayerOrException();
         RecipeHolder<?> holder = ResourceLocationArgument.getRecipe(context, "recipe");
 
-        if (CraftQueueManager.activeJob(player.getUUID()).isPresent()) {
-            context.getSource().sendFailure(Component.translatable("sprawlcrafting.craft.busy"));
-            return 0;
-        }
-        return switch (CraftPlanner.plan(player, holder)) {
-            case PlanOutcome.Planned planned -> {
-                CraftQueueManager.start(player, planned.job());
+        return switch (CraftRequests.tryStart(player, holder)) {
+            case CraftRequests.StartOutcome.Started started -> {
                 context.getSource().sendSuccess(() -> Component.translatable("sprawlcrafting.craft.started",
-                        planned.job().targetResult().getHoverName(), planned.job().totalCrafts()), false);
+                        started.job().targetResult().getHoverName(), started.job().totalCrafts()), false);
                 yield 1;
             }
-            case PlanOutcome.Unsupported unsupported -> {
-                context.getSource().sendFailure(Component.translatable("sprawlcrafting.craft.unsupported",
-                        Component.literal(holder.id().toString())));
+            case CraftRequests.StartOutcome.Busy busy -> {
+                context.getSource().sendFailure(Component.translatable("sprawlcrafting.craft.busy"));
                 yield 0;
             }
-            case PlanOutcome.Unsolvable unsolvable -> {
-                Component missing = unsolvable.missing().isEmpty()
-                        ? Component.literal("?")
-                        : Component.literal(unsolvable.missing().stream()
-                                .map(item -> item.getDescription().getString())
-                                .collect(Collectors.joining(", ")));
-                context.getSource().sendFailure(Component.translatable("sprawlcrafting.craft.unsolvable",
-                        Component.literal(holder.id().toString()), missing));
-                yield 0;
-            }
-            case PlanOutcome.TooComplex tooComplex -> {
-                context.getSource().sendFailure(Component.translatable("sprawlcrafting.craft.too_complex",
-                        Component.literal(holder.id().toString())));
+            case CraftRequests.StartOutcome.Rejected rejected -> {
+                context.getSource().sendFailure(CraftRequests.describeRejection(holder, rejected.outcome()));
                 yield 0;
             }
         };

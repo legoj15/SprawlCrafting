@@ -7,7 +7,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import com.legoj15.sprawlcrafting.craft.solver.PlannedStep;
 import com.legoj15.sprawlcrafting.craft.solver.RecipeGraphSolver;
 import com.legoj15.sprawlcrafting.craft.solver.RecipeGraphSolver.Result;
 
@@ -21,13 +20,18 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.crafting.CraftingRecipe;
 import net.minecraft.world.item.crafting.Ingredient;
 import net.minecraft.world.item.crafting.RecipeHolder;
+import net.minecraft.world.item.crafting.RecipeManager;
 import net.minecraft.world.item.crafting.RecipeType;
 
 /**
- * Adapts Minecraft recipes and the player's inventory onto the pure
+ * Adapts Minecraft recipes and a player inventory onto the pure
  * {@link RecipeGraphSolver}. Items are keyed by {@link Item} identity (components/NBT are
  * ignored while planning; execution re-checks with {@link Ingredient#test} and fails
  * gracefully on mismatch, per DESIGN.md).
+ *
+ * <p>Works on both sides: the server plans authoritatively from {@link ServerPlayer}
+ * state; the client opens a {@link Session} over its synced RecipeManager and inventory
+ * mirror to compute yellow-outline solvability and click previews with no round trips.
  */
 public final class CraftPlanner {
 
@@ -46,6 +50,9 @@ public final class CraftPlanner {
         /** Not a crafting recipe, or a special/dynamic recipe we cannot plan. */
         record Unsupported() implements PlanOutcome {}
 
+        /** The target itself does not fit the grid the request came from (DESIGN.md: whole-chain gating). */
+        record NeedsBiggerGrid() implements PlanOutcome {}
+
         /** Raw resources insufficient; {@code missing} holds representative shortfall items. */
         record Unsolvable(List<Item> missing) implements PlanOutcome {}
 
@@ -53,32 +60,86 @@ public final class CraftPlanner {
         record TooComplex() implements PlanOutcome {}
     }
 
-    public static PlanOutcome plan(ServerPlayer player, RecipeHolder<?> targetHolder) {
-        HolderLookup.Provider registries = player.registryAccess();
+    public static PlanOutcome plan(ServerPlayer player, RecipeHolder<?> targetHolder, GridContext grid) {
+        return session(player.server.getRecipeManager(), player.registryAccess(),
+                player.getInventory(), grid).plan(targetHolder);
+    }
 
-        McRecipe target = McRecipe.of(targetHolder, registries);
-        if (target == null) {
-            return new PlanOutcome.Unsupported();
+    /**
+     * Snapshots the inventory and indexes all grid-fitting crafting recipes once, so many
+     * plan/solvability queries (the client's recipe book pass) share the expensive setup.
+     * A session is a point-in-time view: discard it when the inventory or recipes change.
+     */
+    public static Session session(RecipeManager recipes, HolderLookup.Provider registries,
+                                  Inventory inventory, GridContext grid) {
+        return new Session(recipes, registries, grid,
+                indexCraftingRecipes(recipes, registries, grid), snapshotInventory(inventory));
+    }
+
+    public static final class Session {
+        private final RecipeManager recipes;
+        private final HolderLookup.Provider registries;
+        private final GridContext grid;
+        private final Map<Item, List<McRecipe>> producers;
+        private final Map<Item, Integer> inventory;
+        private final RecipeGraphSolver<ResourceLocation, Item> solver;
+        private final Map<ResourceLocation, Boolean> solvableCache = new HashMap<>();
+
+        private Session(RecipeManager recipes, HolderLookup.Provider registries, GridContext grid,
+                        Map<Item, List<McRecipe>> producers, Map<Item, Integer> inventory) {
+            this.recipes = recipes;
+            this.registries = registries;
+            this.grid = grid;
+            this.producers = producers;
+            this.inventory = inventory;
+            this.solver = new RecipeGraphSolver<>(
+                    item -> producers.getOrDefault(item, List.of()),
+                    CraftPlanner::craftingRemainder,
+                    MAX_DEPTH, MAX_ATTEMPTS);
         }
 
-        Map<Item, List<McRecipe>> producers = indexCraftingRecipes(player, registries);
-        RecipeGraphSolver<ResourceLocation, Item> solver = new RecipeGraphSolver<>(
-                item -> producers.getOrDefault(item, List.of()),
-                CraftPlanner::craftingRemainder,
-                MAX_DEPTH, MAX_ATTEMPTS);
+        public GridContext grid() {
+            return grid;
+        }
 
-        Result<ResourceLocation, Item> result = solver.solve(target, snapshotInventory(player));
-        if (result instanceof Result.Success<ResourceLocation, Item> success) {
-            List<CraftStep> steps = success.steps().stream()
-                    .map(step -> new CraftStep(step.recipeId(), step.crafts()))
-                    .toList();
-            return new PlanOutcome.Planned(new CraftJob(targetHolder.id(), target.resultStack(), steps));
+        /** Cheap repeated query for the recipe book: can this be crafted from raws right now? */
+        public boolean isSolvable(RecipeHolder<?> targetHolder) {
+            return solvableCache.computeIfAbsent(targetHolder.id(),
+                    id -> plan(targetHolder) instanceof PlanOutcome.Planned);
         }
-        Result.Failure<ResourceLocation, Item> failure = (Result.Failure<ResourceLocation, Item>) result;
-        if (failure.budgetExceeded()) {
-            return new PlanOutcome.TooComplex();
+
+        public PlanOutcome plan(RecipeHolder<?> targetHolder) {
+            McRecipe target = McRecipe.of(targetHolder, registries);
+            if (target == null) {
+                return new PlanOutcome.Unsupported();
+            }
+            if (!target.fits(grid)) {
+                return new PlanOutcome.NeedsBiggerGrid();
+            }
+
+            Result<ResourceLocation, Item> result = solver.solve(target, inventory);
+            if (result instanceof Result.Success<ResourceLocation, Item> success) {
+                List<CraftStep> steps = success.steps().stream()
+                        .map(step -> new CraftStep(step.recipeId(), step.crafts(),
+                                !fits2x2(step.recipeId(), target)))
+                        .toList();
+                return new PlanOutcome.Planned(new CraftJob(targetHolder.id(), target.resultStack(), steps));
+            }
+            Result.Failure<ResourceLocation, Item> failure = (Result.Failure<ResourceLocation, Item>) result;
+            if (failure.budgetExceeded()) {
+                return new PlanOutcome.TooComplex();
+            }
+            return new PlanOutcome.Unsolvable(failure.missing().stream().toList());
         }
-        return new PlanOutcome.Unsolvable(failure.missing().stream().toList());
+
+        private boolean fits2x2(ResourceLocation recipeId, McRecipe target) {
+            if (recipeId.equals(target.id())) {
+                return target.fits2x2();
+            }
+            return recipes.byKey(recipeId)
+                    .map(h -> h.value() instanceof CraftingRecipe r && r.canCraftInDimensions(2, 2))
+                    .orElse(true);
+        }
     }
 
     /**
@@ -88,9 +149,8 @@ public final class CraftPlanner {
      * stacks are skipped with the same predicate execution uses, so the plan never counts
      * an item that {@code CraftExecutor} would refuse to consume.
      */
-    private static Map<Item, Integer> snapshotInventory(ServerPlayer player) {
+    private static Map<Item, Integer> snapshotInventory(Inventory inventory) {
         Map<Item, Integer> counts = new HashMap<>();
-        Inventory inventory = player.getInventory();
         for (int i = 0; i < Inventory.INVENTORY_SIZE; i++) {
             ItemStack stack = inventory.items.get(i);
             if (!stack.isEmpty() && CraftExecutor.usableAsIngredient(stack)) {
@@ -100,14 +160,18 @@ public final class CraftPlanner {
         return counts;
     }
 
-    /** All plannable crafting recipes indexed by result item, candidate lists sorted by id. */
-    private static Map<Item, List<McRecipe>> indexCraftingRecipes(ServerPlayer player,
-                                                                  HolderLookup.Provider registries) {
+    /**
+     * All plannable crafting recipes that fit the request grid, indexed by result item,
+     * candidate lists sorted by id. Whole-chain gating happens here: a 3×3-only recipe
+     * simply does not exist as a producer for a request made from the 2×2 inventory grid.
+     */
+    private static Map<Item, List<McRecipe>> indexCraftingRecipes(RecipeManager recipes,
+                                                                  HolderLookup.Provider registries,
+                                                                  GridContext grid) {
         Map<Item, List<McRecipe>> byResult = new HashMap<>();
-        for (RecipeHolder<CraftingRecipe> holder
-                : player.server.getRecipeManager().getAllRecipesFor(RecipeType.CRAFTING)) {
+        for (RecipeHolder<CraftingRecipe> holder : recipes.getAllRecipesFor(RecipeType.CRAFTING)) {
             McRecipe info = McRecipe.of(holder, registries);
-            if (info != null) {
+            if (info != null && info.fits(grid)) {
                 byResult.computeIfAbsent(info.result(), item -> new ArrayList<>()).add(info);
             }
         }
@@ -123,8 +187,13 @@ public final class CraftPlanner {
 
     /** A crafting recipe reduced to the solver's view, or null if it cannot be planned. */
     private record McRecipe(ResourceLocation id, List<List<Item>> ingredientSlots,
-                            Item result, int resultCount, ItemStack resultStack)
+                            Item result, int resultCount, ItemStack resultStack,
+                            boolean fits2x2, boolean fits3x3)
             implements RecipeGraphSolver.RecipeInfo<ResourceLocation, Item> {
+
+        boolean fits(GridContext grid) {
+            return grid == GridContext.INVENTORY ? fits2x2 : fits3x3;
+        }
 
         static McRecipe of(RecipeHolder<?> holder, HolderLookup.Provider registries) {
             if (!(holder.value() instanceof CraftingRecipe recipe) || recipe.isSpecial()) {
@@ -152,7 +221,8 @@ public final class CraftPlanner {
             if (slots.isEmpty()) {
                 return null;
             }
-            return new McRecipe(holder.id(), slots, resultStack.getItem(), resultStack.getCount(), resultStack);
+            return new McRecipe(holder.id(), slots, resultStack.getItem(), resultStack.getCount(),
+                    resultStack, recipe.canCraftInDimensions(2, 2), recipe.canCraftInDimensions(3, 3));
         }
     }
 }

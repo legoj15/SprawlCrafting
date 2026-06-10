@@ -2,6 +2,8 @@ package com.legoj15.sprawlcrafting;
 
 import com.legoj15.sprawlcrafting.command.SprawlCraftingCommand;
 import com.legoj15.sprawlcrafting.craft.CraftQueueManager;
+import com.legoj15.sprawlcrafting.craft.CraftRequests;
+import com.legoj15.sprawlcrafting.network.StartDeferredCraftPayload;
 
 import net.minecraft.server.level.ServerPlayer;
 import net.neoforged.bus.api.IEventBus;
@@ -11,6 +13,7 @@ import net.neoforged.neoforge.event.RegisterCommandsEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerEvent;
 import net.neoforged.neoforge.event.server.ServerStoppingEvent;
 import net.neoforged.neoforge.event.tick.ServerTickEvent;
+import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
 
 @Mod(Constants.MOD_ID)
 public class SprawlCrafting {
@@ -18,11 +21,23 @@ public class SprawlCrafting {
     public SprawlCrafting(IEventBus eventBus) {
         CommonClass.init();
 
-        // Gameplay hooks all live on the game bus, not the mod bus we were handed.
+        // Payload registration is a mod-bus event; gameplay hooks live on the game bus.
+        eventBus.addListener(SprawlCrafting::onRegisterPayloads);
         NeoForge.EVENT_BUS.addListener(SprawlCrafting::onServerTickPost);
         NeoForge.EVENT_BUS.addListener(SprawlCrafting::onRegisterCommands);
         NeoForge.EVENT_BUS.addListener(SprawlCrafting::onPlayerLoggedOut);
         NeoForge.EVENT_BUS.addListener(SprawlCrafting::onServerStopping);
+    }
+
+    private static void onRegisterPayloads(RegisterPayloadHandlersEvent event) {
+        event.registrar("1").playToServer(
+                StartDeferredCraftPayload.TYPE,
+                StartDeferredCraftPayload.STREAM_CODEC,
+                (payload, context) -> {
+                    if (context.player() instanceof ServerPlayer serverPlayer) {
+                        CraftRequests.handleStartRequest(serverPlayer, payload.recipeId());
+                    }
+                });
     }
 
     // End-of-server-tick player loop, deliberately mirroring the Fabric wiring so jobs

@@ -8,8 +8,11 @@ import net.minecraft.resources.ResourceLocation;
  * result back into it as real items, so later steps (and the player) can see and use them.
  *
  * <p>One step execution completes every {@link CraftJob#TICKS_PER_STEP} ticks.
+ *
+ * @param needsFullGrid true if the recipe does not fit a 2×2 grid; such steps only
+ *                      execute while a crafting table is within the player's reach
  */
-public record CraftStep(ResourceLocation recipeId, int crafts) {
+public record CraftStep(ResourceLocation recipeId, int crafts, boolean needsFullGrid) {
 
     public CraftStep {
         if (crafts < 1) {

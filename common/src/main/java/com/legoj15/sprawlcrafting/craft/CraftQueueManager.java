@@ -52,6 +52,13 @@ public final class CraftQueueManager {
         if (job == null || !job.tick()) {
             return;
         }
+        // 3×3 steps only run with a crafting table in reach; re-check every half second.
+        if (job.currentStep().needsFullGrid() && !CraftingTableReach.isInReach(player)) {
+            job.holdForRetry();
+            player.displayClientMessage(Component.translatable("sprawlcrafting.craft.paused_no_table",
+                    job.targetResult().getHoverName()).withStyle(ChatFormatting.GOLD), true);
+            return;
+        }
         switch (CraftExecutor.craftOnce(player, job.currentStep().recipeId())) {
             case CraftExecutor.CraftResult.Success success -> {
                 job.onCraftPerformed();

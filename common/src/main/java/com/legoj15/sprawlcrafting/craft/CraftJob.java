@@ -87,6 +87,14 @@ public final class CraftJob {
         return ++progressTicks >= TICKS_PER_STEP;
     }
 
+    /**
+     * Holds a due craft for another half second — used when the current step needs a
+     * crafting table and none is in reach (Factorio assembler waiting on its input).
+     */
+    public void holdForRetry() {
+        progressTicks = 0;
+    }
+
     /** Called after the current step's craft was successfully applied to the inventory. */
     public void onCraftPerformed() {
         progressTicks = 0;

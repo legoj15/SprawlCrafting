@@ -29,6 +29,23 @@ one component every half second.
 4. **HUD (client):** while a job runs with the inventory closed, a top-right flyout (toast
    style) shows the item currently being crafted and overall job progress.
 
+## Grid gating and the crafting table (locked 2026-06-10)
+
+- **Whole-chain gating at request time:** every step of a job — intermediates and the final
+  recipe — must fit the grid the request was made from (`GridContext`): the inventory recipe
+  book plans 2×2 chains only; the crafting table book plans with the full 3×3. A 3×3-only
+  recipe simply doesn't exist as a producer for an inventory-book request.
+- **Proximity pause at execution time:** steps flagged `needsFullGrid` (don't fit 2×2) only
+  execute while a crafting table is within the player's *block-interaction reach* — the
+  attribute-driven distance (`Attributes.BLOCK_INTERACTION_RANGE`), so reach-extending
+  gear/mods are honored. Out of range → the job pauses (Factorio assembler waiting on input)
+  and auto-resumes; 2×2 steps keep crafting anywhere. Vanilla `Player.canInteractWithBlock`
+  semantics decide "in reach".
+- **Recipe book UX:** yellow-outlined recipes are "craftable from raws". Clicking one shows a
+  **preview** of the plan (computed client-side — the client has recipes + its own inventory
+  mirror); a second click confirms and sends the start packet; the server re-plans
+  authoritatively. Yellow recipes are included in the book's "show craftable" filter.
+
 ## Recipe ambiguity rule
 
 When multiple recipes produce a missing intermediate, pick deterministically: the first
@@ -37,9 +54,9 @@ prompt in v1. Planning is depth-limited and cycle-guarded (e.g. iron ingot ⇄ i
 
 ## Scope
 
-**v1:** vanilla crafting recipes only (2×2 inventory grid limits which recipes can be
-*requested* there, but intermediates are crafted abstractly server-side, so grid size only
-gates the *final* recipe). Single job, real intermediates, per-step consumption.
+**v1:** vanilla crafting recipes only. Single job, real intermediates, per-step consumption,
+whole-chain grid gating (see "Grid gating and the crafting table" above — supersedes the
+earlier final-recipe-only rule).
 
 **Later / open:**
 - MC 26.1.2 targets via Stonecutter (multi-version, same codebase).
