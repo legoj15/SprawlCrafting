@@ -50,7 +50,13 @@ public abstract class RecipeBookComponentMixin {
             return; // truly craftable (or unknown): vanilla places it into the grid
         }
         GridContext grid = DeferredCraftableCache.gridFor(menu.getGridWidth(), menu.getGridHeight());
-        DeferredClickState.click(clicked, grid);
+        boolean confirmed = DeferredClickState.click(clicked, grid);
+        if (!confirmed) {
+            // Show the final recipe's layout as a grid ghost (vanilla cleared the previous
+            // ghost just before this injection point), so the player sees what the last
+            // intermediates feed into. Cleared again automatically on confirm.
+            ((RecipeBookComponent) (Object) this).setupGhostRecipe(clicked, menu.slots);
+        }
         cir.setReturnValue(true);
     }
 
