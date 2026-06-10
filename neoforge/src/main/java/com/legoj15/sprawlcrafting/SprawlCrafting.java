@@ -32,7 +32,9 @@ public class SprawlCrafting {
     }
 
     private static void onRegisterPayloads(RegisterPayloadHandlersEvent event) {
-        event.registrar("1")
+        // optional(): a modless/vanilla client is never kicked for lacking these channels;
+        // the server guards each send with a per-player channel check instead.
+        event.registrar("1").optional()
                 .playToServer(
                         StartDeferredCraftPayload.TYPE,
                         StartDeferredCraftPayload.STREAM_CODEC,

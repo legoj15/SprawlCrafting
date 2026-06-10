@@ -14,6 +14,7 @@ import com.legoj15.sprawlcrafting.craft.GridContext;
 
 import net.minecraft.client.gui.screens.recipebook.RecipeBookComponent;
 import net.minecraft.client.gui.screens.recipebook.RecipeBookPage;
+import net.minecraft.client.gui.screens.recipebook.RecipeCollection;
 import net.minecraft.world.inventory.RecipeBookMenu;
 import net.minecraft.world.item.crafting.RecipeHolder;
 
@@ -44,19 +45,25 @@ public abstract class RecipeBookComponentMixin {
                     target = "Lnet/minecraft/client/multiplayer/MultiPlayerGameMode;handlePlaceRecipe(ILnet/minecraft/world/item/crafting/RecipeHolder;Z)V"))
     private void sprawlcrafting$interceptDeferredClick(double mouseX, double mouseY, int button,
                                                        CallbackInfoReturnable<Boolean> cir) {
+        RecipeCollection collection = recipeBookPage.getLastClickedRecipeCollection();
+        // Second click on the button that owns the pending preview confirms THAT recipe,
+        // regardless of which variant a grouped button's animation is currently showing.
+        if (collection != null && DeferredClickState.pendingFor(collection.getRecipes(false)) != null) {
+            DeferredClickState.confirmPending();
+            cir.setReturnValue(true);
+            return;
+        }
         RecipeHolder<?> clicked = recipeBookPage.getLastClickedRecipe();
         if (clicked == null || !DeferredCraftableCache.isDeferredOnly(clicked)) {
             DeferredClickState.clear(); // vanilla click: drop any pending preview
             return; // truly craftable (or unknown): vanilla places it into the grid
         }
         GridContext grid = DeferredCraftableCache.gridFor(menu.getGridWidth(), menu.getGridHeight());
-        boolean confirmed = DeferredClickState.click(clicked, grid);
-        if (!confirmed) {
-            // Show the final recipe's layout as a grid ghost (vanilla cleared the previous
-            // ghost just before this injection point), so the player sees what the last
-            // intermediates feed into. Cleared again automatically on confirm.
-            ((RecipeBookComponent) (Object) this).setupGhostRecipe(clicked, menu.slots);
-        }
+        DeferredClickState.openPreview(clicked, grid);
+        // Show the final recipe's layout as a grid ghost (vanilla cleared the previous
+        // ghost just before this injection point), so the player sees what the last
+        // intermediates feed into. Cleared again automatically on confirm.
+        ((RecipeBookComponent) (Object) this).setupGhostRecipe(clicked, menu.slots);
         cir.setReturnValue(true);
     }
 
@@ -66,8 +73,11 @@ public abstract class RecipeBookComponentMixin {
         DeferredClickState.clear();
     }
 
-    @Inject(method = "recipesUpdated()V", at = @At("TAIL"))
+    @Inject(method = "recipesUpdated()V", at = @At("HEAD"))
     private void sprawlcrafting$invalidateOnRecipesUpdated(CallbackInfo ci) {
+        // HEAD, not TAIL: drop the stale session/marks BEFORE vanilla's updateCollections
+        // re-runs the canCraft pass, so that pass rebuilds and re-marks atomically.
+        // (A TAIL hook would wipe the marks the pass just created.)
         DeferredCraftableCache.invalidate();
         DeferredClickState.clear();
     }

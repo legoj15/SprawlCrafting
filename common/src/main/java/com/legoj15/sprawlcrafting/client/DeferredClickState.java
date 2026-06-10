@@ -36,46 +36,52 @@ public final class DeferredClickState {
     }
 
     /**
-     * Handles a click on a deferred-craftable recipe.
-     *
-     * @return true if this click CONFIRMED (packet sent), false if it opened a preview
+     * Opens a plan preview for a freshly-clicked deferred-craftable recipe.
+     * Confirmation is handled separately via {@link #confirmPending()} so that on a
+     * grouped (multi-recipe) button the second click confirms the recipe that was
+     * previewed, not whichever variant the icon animation has since cycled to.
      */
-    public static boolean click(RecipeHolder<?> holder, GridContext grid) {
-        Minecraft minecraft = Minecraft.getInstance();
-        int generation = minecraft.player.getInventory().getTimesChanged();
-        if (pending != null && pending.id().equals(holder.id())
-                && generation == pendingInventoryGeneration) {
-            confirm(holder);
-            return true;
-        }
-        preview(holder, grid, generation);
-        return false;
+    public static void openPreview(RecipeHolder<?> holder, GridContext grid) {
+        preview(holder, grid, Minecraft.getInstance().player.getInventory().getTimesChanged());
     }
 
-    /** Preview lines for {@code holder}'s tooltip, or empty if it isn't the pending recipe. */
-    public static List<Component> previewLinesFor(RecipeHolder<?> holder) {
-        if (pending == null || !pending.id().equals(holder.id())) {
-            return List.of();
+    /**
+     * The pending preview recipe if it belongs to {@code collectionRecipes} and is still
+     * valid (inventory unchanged) — i.e. a second click on that button should confirm it.
+     */
+    public static RecipeHolder<?> pendingFor(List<RecipeHolder<?>> collectionRecipes) {
+        if (pending == null) {
+            return null;
         }
-        // The preview describes a plan against a specific inventory state; drop it the
-        // moment the inventory changes (same generation signal the outlines use).
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft.player == null
                 || minecraft.player.getInventory().getTimesChanged() != pendingInventoryGeneration) {
             clear();
-            return List.of();
+            return null;
         }
-        return previewLines;
+        return collectionRecipes.contains(pending) ? pending : null;
+    }
+
+    /** Confirms the pending recipe (sends the start packet) and clears the preview. */
+    public static void confirmPending() {
+        if (pending != null) {
+            sendStartPacket(pending);
+            clear();
+        }
+    }
+
+    /**
+     * Preview lines for a button whose collection contains the pending recipe, or empty.
+     * Keyed on collection membership, not the cycled display recipe, so the "Click again
+     * to start" instruction stays visible while a grouped button's icon animates.
+     */
+    public static List<Component> previewLinesFor(List<RecipeHolder<?>> collectionRecipes) {
+        return pendingFor(collectionRecipes) != null ? previewLines : List.of();
     }
 
     public static void clear() {
         pending = null;
         previewLines = List.of();
-    }
-
-    private static void confirm(RecipeHolder<?> holder) {
-        sendStartPacket(holder);
-        clear();
     }
 
     /** Fires the start request; shared with the JEI transfer handler. */

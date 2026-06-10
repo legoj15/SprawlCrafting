@@ -4,6 +4,7 @@ import com.legoj15.sprawlcrafting.network.CraftProgressPayload;
 
 import net.minecraft.Util;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.components.toasts.Toast;
 
 /**
  * Render-thread-only holder of the latest {@link CraftProgressPayload} snapshot, and the
@@ -18,7 +19,6 @@ public final class ClientJobTracker {
 
     private static CraftProgressPayload current;
     private static long terminalAtMillis;
-    private static boolean toastActive;
 
     private ClientJobTracker() {
     }
@@ -29,10 +29,18 @@ public final class ClientJobTracker {
             terminalAtMillis = Util.getMillis();
         }
         current = payload;
-        if (!toastActive) {
-            toastActive = true;
+        // Presence check rather than a local flag: vanilla clears all toasts on
+        // disconnect without our toast ever returning HIDE, so a flag would desync and
+        // permanently suppress future toasts. Asking ToastComponent directly cannot.
+        if (Minecraft.getInstance().getToasts().getToast(CraftProgressToast.class, Toast.NO_TOKEN) == null) {
             Minecraft.getInstance().getToasts().addToast(new CraftProgressToast());
         }
+    }
+
+    /** Clears all job state — call on client disconnect so nothing leaks into the next world. */
+    public static void reset() {
+        current = null;
+        terminalAtMillis = 0;
     }
 
     /** Latest snapshot, or null when there is nothing to show. */
@@ -53,7 +61,6 @@ public final class ClientJobTracker {
 
     /** Called by the toast as it hides; the next update will spawn a fresh toast. */
     public static void onToastHidden() {
-        toastActive = false;
         if (current != null && current.state().isTerminal()) {
             current = null;
         }

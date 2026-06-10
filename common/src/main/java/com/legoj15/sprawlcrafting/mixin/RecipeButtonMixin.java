@@ -64,7 +64,7 @@ public abstract class RecipeButtonMixin {
             return;
         }
         List<Component> lines = new java.util.ArrayList<>(cir.getReturnValue());
-        List<Component> preview = DeferredClickState.previewLinesFor(recipe);
+        List<Component> preview = DeferredClickState.previewLinesFor(collection.getRecipes(false));
         if (preview.isEmpty()) {
             lines.add(Component.translatable("sprawlcrafting.preview.hint")
                     .withStyle(ChatFormatting.YELLOW, ChatFormatting.ITALIC));

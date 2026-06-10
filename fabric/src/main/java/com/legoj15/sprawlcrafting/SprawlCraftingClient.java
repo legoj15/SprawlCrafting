@@ -4,6 +4,7 @@ import com.legoj15.sprawlcrafting.client.ClientJobTracker;
 import com.legoj15.sprawlcrafting.network.CraftProgressPayload;
 
 import net.fabricmc.api.ClientModInitializer;
+import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 
 public class SprawlCraftingClient implements ClientModInitializer {
@@ -13,5 +14,7 @@ public class SprawlCraftingClient implements ClientModInitializer {
         // Handler runs on the render thread (Fabric dispatches before invoking).
         ClientPlayNetworking.registerGlobalReceiver(CraftProgressPayload.TYPE,
                 (payload, context) -> ClientJobTracker.accept(payload));
+        // Drop job state on disconnect so a stale toast can't leak into the next world.
+        ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> ClientJobTracker.reset());
     }
 }

@@ -5,7 +5,7 @@
   "sprawlcrafting.craft.missing": "Crafting %s cancelled — missing %s",
   "sprawlcrafting.craft.recipe_gone": "Crafting %s cancelled — recipe no longer exists",
   "sprawlcrafting.craft.cancelled": "Cancelled crafting %s",
-  "sprawlcrafting.craft.busy": "Already crafting — cancel it first with /sprawlcrafting cancel",
+  "sprawlcrafting.craft.busy": "Already crafting — finish or cancel the current job first",
   "sprawlcrafting.craft.unsupported": "%s is not a plannable crafting recipe",
   "sprawlcrafting.craft.unsolvable": "Not enough raw resources for %s (missing: %s)",
   "sprawlcrafting.craft.too_complex": "The recipe tree for %s is too complex to plan",

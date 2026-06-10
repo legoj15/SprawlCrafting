@@ -1,5 +1,8 @@
 package com.legoj15.sprawlcrafting.platform.services;
 
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.server.level.ServerPlayer;
+
 public interface IPlatformHelper {
 
     /**
@@ -8,6 +11,14 @@ public interface IPlatformHelper {
      * @return The name of the current platform.
      */
     String getPlatformName();
+
+    /**
+     * Whether {@code player}'s connection has negotiated the given custom-payload channel —
+     * i.e. the player has this mod and can receive the payload. Lets the server stream
+     * progress to modded clients while gracefully skipping vanilla/modless ones (the mod
+     * registers its payloads as optional, so modless clients are never kicked).
+     */
+    boolean canReceive(ServerPlayer player, ResourceLocation payloadId);
 
     /**
      * Checks if a mod with the given id is loaded.

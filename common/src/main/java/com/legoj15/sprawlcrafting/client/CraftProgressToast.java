@@ -23,11 +23,17 @@ public class CraftProgressToast implements Toast {
 
     private static final int TITLE_COLOR = 0xFF332211;
     private static final int SUBTITLE_COLOR = 0xFF6B5B4A;
-    private static final int PAUSED_COLOR = 0xFFB8860B;
-    private static final int FINISHED_COLOR = 0xFF207A20;
+    // Darkened from goldenrod for ~4.8:1 contrast on the light (0xDEDEDE) toast interior —
+    // PAUSED is the long-lived, must-read state, so legibility matters most here.
+    private static final int PAUSED_COLOR = 0xFF7A5900;
+    private static final int FINISHED_COLOR = 0xFF1C661C;
     private static final int CANCELLED_COLOR = 0xFFAA2020;
     private static final int BAR_COLOR = 0xFF76C610;
     private static final int BAR_BACK_COLOR = 0xFF3F3324;
+
+    /** Text budget inside the 160px sprite (interior ends ~x=156, text starts at x=30). */
+    private static final int TEXT_X = 30;
+    private static final int TEXT_BUDGET = 124;
 
     @Override
     public Toast.Visibility render(GuiGraphics guiGraphics, ToastComponent toastComponent,
@@ -46,27 +52,36 @@ public class CraftProgressToast implements Toast {
 
         switch (job.state()) {
             case CRAFTING -> {
-                guiGraphics.drawString(font, Component.translatable("sprawlcrafting.toast.crafting",
-                        job.target().getHoverName()), 30, 7, TITLE_COLOR, false);
+                drawClipped(guiGraphics, font, Component.translatable("sprawlcrafting.toast.crafting",
+                        job.target().getHoverName()), 7, TITLE_COLOR);
                 guiGraphics.drawString(font, Component.translatable("sprawlcrafting.toast.step",
-                        job.done(), job.total()), 30, 18, SUBTITLE_COLOR, false);
+                        job.done(), job.total()), TEXT_X, 18, SUBTITLE_COLOR, false);
                 drawProgressBar(guiGraphics, job);
             }
             case PAUSED -> {
-                guiGraphics.drawString(font, Component.translatable("sprawlcrafting.toast.crafting",
-                        job.target().getHoverName()), 30, 7, TITLE_COLOR, false);
+                drawClipped(guiGraphics, font, Component.translatable("sprawlcrafting.toast.crafting",
+                        job.target().getHoverName()), 7, TITLE_COLOR);
                 guiGraphics.drawString(font, Component.translatable("sprawlcrafting.toast.paused"),
-                        30, 18, PAUSED_COLOR, false);
+                        TEXT_X, 18, PAUSED_COLOR, false);
                 drawProgressBar(guiGraphics, job);
             }
-            case FINISHED -> guiGraphics.drawString(font,
+            case FINISHED -> drawClipped(guiGraphics, font,
                     Component.translatable("sprawlcrafting.toast.finished", job.target().getHoverName()),
-                    30, 12, FINISHED_COLOR, false);
+                    12, FINISHED_COLOR);
             case CANCELLED -> guiGraphics.drawString(font,
                     Component.translatable("sprawlcrafting.toast.cancelled"),
-                    30, 12, CANCELLED_COLOR, false);
+                    TEXT_X, 12, CANCELLED_COLOR, false);
         }
         return Toast.Visibility.SHOW;
+    }
+
+    /** Draws text, ellipsizing to the toast's interior width so long item names don't overrun. */
+    private void drawClipped(GuiGraphics guiGraphics, Font font, Component text, int y, int color) {
+        String string = text.getString();
+        if (font.width(string) > TEXT_BUDGET) {
+            string = font.plainSubstrByWidth(string, TEXT_BUDGET - font.width("...")) + "...";
+        }
+        guiGraphics.drawString(font, string, TEXT_X, y, color, false);
     }
 
     private void drawProgressBar(GuiGraphics guiGraphics, CraftProgressPayload job) {

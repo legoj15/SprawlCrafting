@@ -85,6 +85,21 @@ earlier final-recipe-only rule).
 - **Play→configuration phase re-entry** (server reconfiguration mid-session) cancels the job
   on NeoForge but not on Fabric; both are safe, just inconsistent. Revisit with the HUD work.
 
+## Known limitations (recipe book / JEI / HUD)
+
+- **Variant overlay popup** (right-click "Right Click for More"): deferred-craftable
+  recipes are clickable there and the preview/confirm still works, but the popup buttons
+  render in vanilla white rather than yellow — restyling JEI-internal overlay buttons
+  isn't API-exposed. The main grid buttons show yellow correctly.
+- **Modded 3×3 tables**: the grid context now matches client/server on grid *size*, so a
+  modded `RecipeBookMenu` with a 3×3 grid plans correctly. But the execution-time
+  proximity pause looks for a vanilla `minecraft:crafting_table` block, so a job needing
+  the full grid will pause indefinitely next to a *modded* table. Tracked for a future
+  "blocks that open a 3×3 crafting menu" registry.
+- **Server-side optional**: payloads are registered optional and sends are channel-guarded,
+  so a modless/vanilla client can join a SprawlCrafting server (it just gets no toast).
+  A modded client on a vanilla server sees no yellow offers (the C2S start is ignored).
+
 ## Module layout
 
 - `common/` — all gameplay logic (`craft/` package), mixins into vanilla recipe book UI,

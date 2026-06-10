@@ -61,6 +61,11 @@ public final class CraftPlanner {
     }
 
     public static PlanOutcome plan(ServerPlayer player, RecipeHolder<?> targetHolder, GridContext grid) {
+        // Cheap reject before building the producer index, so spammed unplannable
+        // requests (special/non-crafting/wrong-grid recipes) cost almost nothing.
+        if (McRecipe.of(targetHolder, player.registryAccess()) == null) {
+            return new PlanOutcome.Unsupported();
+        }
         return session(player.server.getRecipeManager(), player.registryAccess(),
                 player.getInventory(), grid).plan(targetHolder);
     }
@@ -69,11 +74,35 @@ public final class CraftPlanner {
      * Snapshots the inventory and indexes all grid-fitting crafting recipes once, so many
      * plan/solvability queries (the client's recipe book pass) share the expensive setup.
      * A session is a point-in-time view: discard it when the inventory or recipes change.
+     *
+     * <p>The expensive per-grid producer index (which only changes on datapack reload) is
+     * cached per {@link RecipeManager}; only the cheap inventory snapshot is per call.
      */
     public static Session session(RecipeManager recipes, HolderLookup.Provider registries,
                                   Inventory inventory, GridContext grid) {
         return new Session(recipes, registries, grid,
-                indexCraftingRecipes(recipes, registries, grid), snapshotInventory(inventory));
+                ProducerIndex.forGrid(recipes, registries, grid), snapshotInventory(inventory));
+    }
+
+    /**
+     * Per-RecipeManager, per-grid cache of the producer index. The RecipeManager instance
+     * is replaced wholesale on datapack reload (server and client alike), so keying on its
+     * identity makes the cache self-invalidating; weak keys let stale managers be collected.
+     * Keyed by identity so the integrated server's and client's distinct managers don't
+     * evict each other in singleplayer.
+     */
+    private static final class ProducerIndex {
+        private static final Map<RecipeManager, Map<GridContext, Map<Item, List<McRecipe>>>> CACHE =
+                java.util.Collections.synchronizedMap(new java.util.WeakHashMap<>());
+
+        static Map<Item, List<McRecipe>> forGrid(RecipeManager recipes,
+                                                 HolderLookup.Provider registries,
+                                                 GridContext grid) {
+            Map<GridContext, Map<Item, List<McRecipe>>> byGrid =
+                    CACHE.computeIfAbsent(recipes, r -> java.util.Collections.synchronizedMap(
+                            new java.util.EnumMap<>(GridContext.class)));
+            return byGrid.computeIfAbsent(grid, g -> indexCraftingRecipes(recipes, registries, g));
+        }
     }
 
     public static final class Session {
