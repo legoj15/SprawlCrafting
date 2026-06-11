@@ -11,11 +11,11 @@ import com.legoj15.sprawlcrafting.craft.CraftPlanner.PlanOutcome;
 import com.legoj15.sprawlcrafting.craft.CraftStep;
 import com.legoj15.sprawlcrafting.craft.GridContext;
 import com.legoj15.sprawlcrafting.network.StartDeferredCraftPayload;
+import com.legoj15.sprawlcrafting.platform.Services;
 
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
-import net.minecraft.network.protocol.common.ServerboundCustomPayloadPacket;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.crafting.RecipeHolder;
@@ -84,13 +84,11 @@ public final class DeferredClickState {
         previewLines = List.of();
     }
 
-    /** Fires the start request; shared with the JEI transfer handler. */
+    /** Fires the start request; shared with the JEI/REI transfer handlers. */
     public static void sendStartPacket(RecipeHolder<?> holder) {
-        var connection = Minecraft.getInstance().getConnection();
-        if (connection != null) {
-            // Vanilla send path — identical to what both loaders' helpers do internally.
-            connection.send(new ServerboundCustomPayloadPacket(new StartDeferredCraftPayload(holder.id())));
-        }
+        // Routed through the platform helper: the raw vanilla send works on NeoForge but
+        // not on Fabric, so each loader uses its own C2S networking API.
+        Services.PLATFORM.sendToServer(new StartDeferredCraftPayload(holder.id()));
     }
 
     private static void preview(RecipeHolder<?> holder, GridContext grid, int generation) {

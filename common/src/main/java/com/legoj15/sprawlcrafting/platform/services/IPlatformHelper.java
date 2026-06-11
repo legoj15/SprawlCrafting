@@ -1,9 +1,17 @@
 package com.legoj15.sprawlcrafting.platform.services;
 
+import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerPlayer;
 
 public interface IPlatformHelper {
+
+    /**
+     * Sends a custom payload from the client to the server. Client-only — call only from
+     * client code. The raw vanilla send path works on NeoForge but is unreliable on Fabric,
+     * so each loader routes through its own networking API here.
+     */
+    void sendToServer(CustomPacketPayload payload);
 
     /**
      * Gets the name of the current platform
