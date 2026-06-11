@@ -24,6 +24,9 @@ stonecutter {
             loaders.forEach { version("$version-$it", version).buildscript = getBuildscript(it, version) }
 
         match("1.21.1", "fabric", "neoforge")
+        // Phase 2b: NeoForge-26 first (proven MDG path + BuildCraft ground truth) to surface the
+        // code API cliffs; 26.1.2-fabric (modern Loom) is added once the code port compiles.
+        match("26.1.2", "neoforge")
 
         vcsVersion = "1.21.1-fabric"
     }

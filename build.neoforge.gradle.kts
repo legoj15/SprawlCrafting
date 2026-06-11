@@ -9,8 +9,9 @@ val minecraftVersion = property("minecraft_version") as String
 val neoVersion = property("neoforge_version") as String
 val jeiVersion = property("jei_version") as String
 val javaVersion = (property("java_version") as String).toInt()
-val parchmentMc = property("parchment_minecraft") as String
-val parchmentVersion = property("parchment_version") as String
+// Parchment is 1.x-only (no post-cutoff 26.x release); null on nodes that omit the props.
+val parchmentMc = project.findProperty("parchment_minecraft") as String?
+val parchmentVersion = project.findProperty("parchment_version") as String?
 val modId = property("mod_id") as String
 val modVersion = property("version") as String
 // Resolved at project scope: inside tasks.processResources {} `property()` resolves against
@@ -24,6 +25,36 @@ val neoLoaderRange = property("neoforge_loader_version_range") as String
 val mcVersionRange = property("minecraft_version_range") as String
 // REI ships on the 1.21.1 line only; its presence is signalled by a node-level rei_version.
 val hasRei = project.findProperty("rei_version") != null
+
+// ─── Stonecutter source replacements (forward-port 1.21.1-canonical source to 26.x) ──────────
+// The shared source is authored in the 1.21.1 form. `direction` is true only on >=1.21.11 nodes
+// (i.e. 26.x), so the forward rename runs there; on 1.21.1 the reverse pair runs but matches
+// nothing in the canonical source (no-op), keeping the green 1.21.1 node untouched. Word
+// boundaries (\b) avoid clobbering substrings (e.g. ResourceLocationArgument, IdentifierException).
+val is1_21_11Plus = stonecutter.eval(stonecutter.current.version, ">=1.21.11")
+stonecutter {
+    replacements {
+        // MC 1.21.11 renamed net.minecraft.resources.ResourceLocation -> Identifier (same package).
+        regex {
+            direction.set(is1_21_11Plus)
+            replace("\\bResourceLocation\\b", "Identifier", "\\bIdentifier\\b", "ResourceLocation")
+        }
+        regex {
+            direction.set(is1_21_11Plus)
+            replace("\\bResourceLocationArgument\\b", "IdentifierArgument", "\\bIdentifierArgument\\b", "ResourceLocationArgument")
+        }
+        // net.minecraft.Util moved to net.minecraft.util.Util.
+        regex {
+            direction.set(is1_21_11Plus)
+            replace("\\bnet\\.minecraft\\.Util\\b", "net.minecraft.util.Util", "\\bnet\\.minecraft\\.util\\.Util\\b", "net.minecraft.Util")
+        }
+        // GameRules moved into the net.minecraft.world.level.gamerules subpackage.
+        regex {
+            direction.set(is1_21_11Plus)
+            replace("net\\.minecraft\\.world\\.level\\.GameRules\\b", "net.minecraft.world.level.gamerules.GameRules", "net\\.minecraft\\.world\\.level\\.gamerules\\.GameRules\\b", "net.minecraft.world.level.GameRules")
+        }
+    }
+}
 
 java {
     toolchain { languageVersion = JavaLanguageVersion.of(javaVersion) }
@@ -40,9 +71,11 @@ repositories {
 
 neoForge {
     version = neoVersion
-    parchment {
-        minecraftVersion = parchmentMc
-        mappingsVersion = parchmentVersion
+    if (parchmentMc != null && parchmentVersion != null) {
+        parchment {
+            minecraftVersion = parchmentMc
+            mappingsVersion = parchmentVersion
+        }
     }
     // src/ lives at the Tree root, not in versions/<node>/, so resolve from rootProject.
     val at = rootProject.file("src/main/resources/META-INF/accesstransformer.cfg")
@@ -91,6 +124,8 @@ tasks.withType<JavaCompile>().configureEach {
         exclude("**/compat/rei/**")
         exclude("**/*ReiPlugin*")
     }
+    // Surface the full cross-cliff error set during the 26.x port (javac caps at 100 by default).
+    options.compilerArgs.addAll(listOf("-Xmaxerrs", "2000", "-Xmaxwarns", "200"))
 }
 
 tasks.test {
