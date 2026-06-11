@@ -66,11 +66,13 @@ public class DeferredCraftingReiTransferHandler implements TransferHandler {
             DeferredClickState.sendStartPacket(recipe);
             return Result.createSuccessful();
         }
-        return Result.createFailedCustomButtonColor(
-                        Component.translatable("sprawlcrafting.recipe.deferred").withStyle(ChatFormatting.YELLOW),
-                        TRANSLUCENT_YELLOW)
-                .tooltip(Component.translatable("sprawlcrafting.recipe.deferred.click")
-                        .withStyle(ChatFormatting.GRAY))
-                .blocksFurtherHandling();
+        // A "successful" result is the only kind REI renders as a clickable transfer
+        // button (the createFailed* variants are display-only). We tint it yellow and
+        // attach the invite tooltip so it reads as the deferred-craft offer, not a normal
+        // green transfer.
+        return Result.createSuccessful()
+                .color(TRANSLUCENT_YELLOW)
+                .tooltip(Component.translatable("sprawlcrafting.recipe.deferred").withStyle(ChatFormatting.YELLOW))
+                .tooltip(Component.translatable("sprawlcrafting.recipe.deferred.click").withStyle(ChatFormatting.GRAY));
     }
 }
