@@ -1,6 +1,0 @@
-plugins {
-    // see https://fabricmc.net/develop/ for new versions (1.17.x supports Gradle 9; 1.8 did not)
-    id 'fabric-loom' version '1.17.8' apply false
-    // see https://projects.neoforged.net/neoforged/moddevgradle for new versions
-    id 'net.neoforged.moddev' version '2.0.141' apply false
-}
