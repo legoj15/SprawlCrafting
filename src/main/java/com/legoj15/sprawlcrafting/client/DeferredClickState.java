@@ -1,34 +1,31 @@
 package com.legoj15.sprawlcrafting.client;
 
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 
-import com.legoj15.sprawlcrafting.craft.CraftJob;
-import com.legoj15.sprawlcrafting.craft.CraftPlanner.PlanOutcome;
-import com.legoj15.sprawlcrafting.craft.CraftStep;
+import com.legoj15.sprawlcrafting.craft.CraftPlanner;
+import com.legoj15.sprawlcrafting.craft.CraftPreview;
 import com.legoj15.sprawlcrafting.craft.GridContext;
+import com.legoj15.sprawlcrafting.craft.RecipeIds;
+import com.legoj15.sprawlcrafting.network.RequestCraftPreviewPayload;
+import com.legoj15.sprawlcrafting.network.StartDeferredCraftByDisplayPayload;
 import com.legoj15.sprawlcrafting.network.StartDeferredCraftPayload;
 import com.legoj15.sprawlcrafting.platform.Services;
 
-import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
-import net.minecraft.world.item.Item;
-import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.crafting.RecipeHolder;
 
 /**
- * Preview-then-confirm state for yellow recipe book clicks (render thread only).
- * First click on a deferred-craftable recipe computes the plan client-side and shows it;
- * a second click on the same recipe (with the inventory unchanged) sends the start
- * packet — the server re-plans authoritatively.
+ * Preview-then-confirm state for yellow recipe book clicks (render thread only). First click on a
+ * deferred-craftable recipe shows its plan; a second click on the same recipe (inventory unchanged)
+ * sends the start packet and the server re-plans authoritatively.
+ *
+ * <p>1.21.1 keys the pending recipe by {@code RecipeHolder} and builds the preview client-side.
+ * 26.x keys it by the recipe book's opaque {@code RecipeDisplayId} and gets the preview from the
+ * server (it cannot plan locally); confirm sends the display-id start payload.
  */
 public final class DeferredClickState {
 
-    private static RecipeHolder<?> pending;
     private static int pendingInventoryGeneration = -1;
     private static List<Component> previewLines = List.of();
 
@@ -36,18 +33,104 @@ public final class DeferredClickState {
     }
 
     /**
-     * Opens a plan preview for a freshly-clicked deferred-craftable recipe.
-     * Confirmation is handled separately via {@link #confirmPending()} so that on a
-     * grouped (multi-recipe) button the second click confirms the recipe that was
-     * previewed, not whichever variant the icon animation has since cycled to.
+     * Fires the start request for a recipe we hold directly (the JEI/REI transfer button, both
+     * versions — those viewers supply the recipe, so the identifier path always works).
+     */
+    public static void sendStartPacket(RecipeHolder<?> holder) {
+        // Routed through the platform helper: the raw vanilla send works on NeoForge but not on
+        // Fabric, so each loader uses its own C2S networking API.
+        Services.PLATFORM.sendToServer(new StartDeferredCraftPayload(RecipeIds.id(holder)));
+    }
+
+    //? if >=1.21.11 {
+    /*// 26.x: pending keyed by RecipeDisplayId; the preview breakdown is planned server-side.
+    private static net.minecraft.world.item.crafting.display.RecipeDisplayId pendingDisplay;
+
+    public static void openPreview(net.minecraft.world.item.crafting.display.RecipeDisplayId id) {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.player == null) {
+            return;
+        }
+        pendingDisplay = id;
+        pendingInventoryGeneration = minecraft.player.getInventory().getTimesChanged();
+        previewLines = List.of();
+        Services.PLATFORM.sendToServer(new RequestCraftPreviewPayload(id.index()));
+    }
+
+    // Server reply to the first-click preview request: store the lines if still pending + current.
+    public static void acceptPreview(int displayId, List<Component> lines) {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (pendingDisplay == null || minecraft.player == null
+                || minecraft.player.getInventory().getTimesChanged() != pendingInventoryGeneration
+                || pendingDisplay.index() != displayId) {
+            return;
+        }
+        if (lines.isEmpty()) {
+            clear(); // server says no longer plannable (inventory changed)
+            return;
+        }
+        previewLines = lines;
+    }
+
+    public static net.minecraft.world.item.crafting.display.RecipeDisplayId pendingFor(
+            List<net.minecraft.world.item.crafting.display.RecipeDisplayId> collectionIds) {
+        if (pendingDisplay == null) {
+            return null;
+        }
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.player == null
+                || minecraft.player.getInventory().getTimesChanged() != pendingInventoryGeneration) {
+            clear();
+            return null;
+        }
+        return collectionIds.contains(pendingDisplay) ? pendingDisplay : null;
+    }
+
+    public static void confirmPending() {
+        if (pendingDisplay != null) {
+            Services.PLATFORM.sendToServer(new StartDeferredCraftByDisplayPayload(pendingDisplay.index()));
+            clear();
+        }
+    }
+
+    public static List<Component> previewLinesFor(
+            List<net.minecraft.world.item.crafting.display.RecipeDisplayId> collectionIds) {
+        return pendingFor(collectionIds) != null ? previewLines : List.of();
+    }
+
+    public static void clear() {
+        pendingDisplay = null;
+        previewLines = List.of();
+    }*/
+    //?} else {
+    private static RecipeHolder<?> pending;
+
+    /**
+     * Opens a plan preview for a freshly-clicked deferred-craftable recipe. Confirmation is
+     * handled separately via {@link #confirmPending()} so that on a grouped (multi-recipe) button
+     * the second click confirms the recipe that was previewed, not whichever variant the icon
+     * animation has since cycled to.
      */
     public static void openPreview(RecipeHolder<?> holder, GridContext grid) {
-        preview(holder, grid, Minecraft.getInstance().player.getInventory().getTimesChanged());
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.player == null) {
+            return;
+        }
+        int generation = minecraft.player.getInventory().getTimesChanged();
+        if (!(DeferredCraftableCache.plan(holder, grid) instanceof CraftPlanner.PlanOutcome.Planned planned)) {
+            // Inventory changed since the outline was computed; treat as not startable.
+            clear();
+            return;
+        }
+        pending = holder;
+        pendingInventoryGeneration = generation;
+        previewLines = CraftPreview.lines(planned.job(),
+                minecraft.level.getRecipeManager(), minecraft.level.registryAccess());
     }
 
     /**
-     * The pending preview recipe if it belongs to {@code collectionRecipes} and is still
-     * valid (inventory unchanged) — i.e. a second click on that button should confirm it.
+     * The pending preview recipe if it belongs to {@code collectionRecipes} and is still valid
+     * (inventory unchanged) — i.e. a second click on that button should confirm it.
      */
     public static RecipeHolder<?> pendingFor(List<RecipeHolder<?>> collectionRecipes) {
         if (pending == null) {
@@ -71,9 +154,9 @@ public final class DeferredClickState {
     }
 
     /**
-     * Preview lines for a button whose collection contains the pending recipe, or empty.
-     * Keyed on collection membership, not the cycled display recipe, so the "Click again
-     * to start" instruction stays visible while a grouped button's icon animates.
+     * Preview lines for a button whose collection contains the pending recipe, or empty. Keyed on
+     * collection membership, not the cycled display recipe, so the "Click again to start"
+     * instruction stays visible while a grouped button's icon animates.
      */
     public static List<Component> previewLinesFor(List<RecipeHolder<?>> collectionRecipes) {
         return pendingFor(collectionRecipes) != null ? previewLines : List.of();
@@ -83,44 +166,5 @@ public final class DeferredClickState {
         pending = null;
         previewLines = List.of();
     }
-
-    /** Fires the start request; shared with the JEI/REI transfer handlers. */
-    public static void sendStartPacket(RecipeHolder<?> holder) {
-        // Routed through the platform helper: the raw vanilla send works on NeoForge but
-        // not on Fabric, so each loader uses its own C2S networking API.
-        Services.PLATFORM.sendToServer(new StartDeferredCraftPayload(holder.id()));
-    }
-
-    private static void preview(RecipeHolder<?> holder, GridContext grid, int generation) {
-        Minecraft minecraft = Minecraft.getInstance();
-        if (!(DeferredCraftableCache.plan(holder, grid) instanceof PlanOutcome.Planned planned)) {
-            // Inventory changed since the outline was computed; treat as not startable.
-            clear();
-            return;
-        }
-        CraftJob job = planned.job();
-        List<Component> lines = new ArrayList<>();
-        lines.add(Component.translatable("sprawlcrafting.preview.header",
-                job.targetResult().getHoverName()).withStyle(ChatFormatting.YELLOW));
-        // Aggregate intermediate output per item (a chain may revisit the same recipe in
-        // non-adjacent steps); the final step is the target itself — the header covers it.
-        Map<Item, Integer> totals = new LinkedHashMap<>();
-        Map<Item, Component> names = new HashMap<>();
-        for (CraftStep step : job.steps().subList(0, job.steps().size() - 1)) {
-            ItemStack produced = minecraft.level.getRecipeManager().byKey(step.recipeId())
-                    .map(h -> h.value().getResultItem(minecraft.level.registryAccess()))
-                    .orElse(ItemStack.EMPTY);
-            if (!produced.isEmpty()) {
-                totals.merge(produced.getItem(), produced.getCount() * step.crafts(), Integer::sum);
-                names.putIfAbsent(produced.getItem(), produced.getHoverName());
-            }
-        }
-        totals.forEach((item, count) -> lines.add(Component.translatable("sprawlcrafting.preview.step",
-                count, names.get(item)).withStyle(ChatFormatting.GRAY)));
-        lines.add(Component.translatable("sprawlcrafting.preview.confirm")
-                .withStyle(ChatFormatting.GREEN, ChatFormatting.ITALIC));
-        pending = holder;
-        pendingInventoryGeneration = generation;
-        previewLines = lines;
-    }
+    //?}
 }

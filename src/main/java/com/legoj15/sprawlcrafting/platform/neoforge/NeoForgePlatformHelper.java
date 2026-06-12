@@ -24,7 +24,11 @@ public class NeoForgePlatformHelper implements IPlatformHelper {
 
     @Override
     public void sendToServer(CustomPacketPayload payload) {
+        //? if >=1.21.11 {
+        /*net.neoforged.neoforge.client.network.ClientPacketDistributor.sendToServer(payload);*/
+        //?} else {
         PacketDistributor.sendToServer(payload);
+        //?}
     }
 
     @Override
@@ -36,6 +40,10 @@ public class NeoForgePlatformHelper implements IPlatformHelper {
     @Override
     public boolean isDevelopmentEnvironment() {
 
+        //? if >=1.21.11 {
+        /*return !net.neoforged.fml.loading.FMLEnvironment.isProduction();*/
+        //?} else {
         return !FMLLoader.isProduction();
+        //?}
     }
 }

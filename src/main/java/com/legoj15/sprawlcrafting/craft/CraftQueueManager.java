@@ -81,8 +81,8 @@ public final class CraftQueueManager {
                 if (job.isFinished()) {
                     ACTIVE.remove(player.getUUID());
                     sync(player, job, CraftProgressPayload.State.FINISHED, success.crafted());
-                    player.displayClientMessage(Component.translatable("sprawlcrafting.craft.finished",
-                            job.targetResult().getHoverName()).withStyle(ChatFormatting.GREEN), false);
+                    notify(player, Component.translatable("sprawlcrafting.craft.finished",
+                            job.targetResult().getHoverName()).withStyle(ChatFormatting.GREEN));
                 } else {
                     sync(player, job, CraftProgressPayload.State.CRAFTING, success.crafted());
                 }
@@ -90,16 +90,25 @@ public final class CraftQueueManager {
             case CraftExecutor.CraftResult.MissingIngredient missing -> {
                 ACTIVE.remove(player.getUUID());
                 sync(player, job, CraftProgressPayload.State.CANCELLED, ItemStack.EMPTY);
-                player.displayClientMessage(Component.translatable("sprawlcrafting.craft.missing",
-                        job.targetResult().getHoverName(), missing.missing()).withStyle(ChatFormatting.RED), false);
+                notify(player, Component.translatable("sprawlcrafting.craft.missing",
+                        job.targetResult().getHoverName(), missing.missing()).withStyle(ChatFormatting.RED));
             }
             case CraftExecutor.CraftResult.RecipeGone gone -> {
                 ACTIVE.remove(player.getUUID());
                 sync(player, job, CraftProgressPayload.State.CANCELLED, ItemStack.EMPTY);
-                player.displayClientMessage(Component.translatable("sprawlcrafting.craft.recipe_gone",
-                        job.targetResult().getHoverName()).withStyle(ChatFormatting.RED), false);
+                notify(player, Component.translatable("sprawlcrafting.craft.recipe_gone",
+                        job.targetResult().getHoverName()).withStyle(ChatFormatting.RED));
             }
         }
+    }
+
+    /** Player feedback line. 26.x renamed displayClientMessage -> sendSystemMessage(overlay). */
+    private static void notify(ServerPlayer player, Component message) {
+        //? if >=1.21.11 {
+        /*player.sendSystemMessage(message, false);*/
+        //?} else {
+        player.displayClientMessage(message, false);
+        //?}
     }
 
     /**

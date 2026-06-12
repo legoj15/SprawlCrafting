@@ -22,6 +22,12 @@ build
 eclipse
 run
 runs
+run-*
+logs
+
+# Machine-specific test harness (Server1/WinRM hostnames, local Prism/JDK paths, staged jars) —
+# same convention as BuildCraft. Third-party clones run `test` + `runGameTestServer` instead.
+/testing/
 
 # Claude Code session state
 .claude/

@@ -2,6 +2,7 @@ package com.legoj15.sprawlcrafting.command;
 
 import com.legoj15.sprawlcrafting.craft.CraftQueueManager;
 import com.legoj15.sprawlcrafting.craft.CraftRequests;
+import com.legoj15.sprawlcrafting.craft.RecipeIds;
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
@@ -32,13 +33,17 @@ public final class SprawlCraftingCommand {
     public static void register(CommandDispatcher<CommandSourceStack> dispatcher) {
         dispatcher.register(Commands.literal("sprawlcrafting")
                 .then(Commands.literal("craft")
+                        //? if >=1.21.11 {
+                        /*.then(Commands.argument("recipe", net.minecraft.commands.arguments.ResourceKeyArgument.key(net.minecraft.core.registries.Registries.RECIPE))*/
+                        //?} else {
                         .then(Commands.argument("recipe", ResourceLocationArgument.id())
+                        //?}
                                 // Only plannable crafting recipes — not smelting/smithing/special.
                                 .suggests((context, builder) -> SharedSuggestionProvider.suggestResource(
-                                        context.getSource().getServer().getRecipeManager()
-                                                .getAllRecipesFor(RecipeType.CRAFTING).stream()
+                                        java.util.stream.StreamSupport.stream(
+                                                RecipeIds.craftingRecipes(context.getSource().getServer().getRecipeManager()).spliterator(), false)
                                                 .filter(h -> !h.value().isSpecial())
-                                                .map(RecipeHolder::id)
+                                                .map(RecipeIds::id)
                                                 .toList(),
                                         builder))
                                 .executes(SprawlCraftingCommand::craft)))
@@ -50,7 +55,11 @@ public final class SprawlCraftingCommand {
 
     private static int craft(CommandContext<CommandSourceStack> context) throws CommandSyntaxException {
         ServerPlayer player = context.getSource().getPlayerOrException();
+        //? if >=1.21.11 {
+        /*RecipeHolder<?> holder = net.minecraft.commands.arguments.ResourceKeyArgument.getRecipe(context, "recipe");*/
+        //?} else {
         RecipeHolder<?> holder = ResourceLocationArgument.getRecipe(context, "recipe");
+        //?}
 
         return switch (CraftRequests.tryStart(player, holder)) {
             case CraftRequests.StartOutcome.Started started -> {

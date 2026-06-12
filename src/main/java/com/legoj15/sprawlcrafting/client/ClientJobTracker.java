@@ -23,6 +23,16 @@ public final class ClientJobTracker {
     private ClientJobTracker() {
     }
 
+    //? if >=1.21.11 {
+    /*private static net.minecraft.client.gui.components.toasts.ToastManager toasts() {
+        return Minecraft.getInstance().getToastManager();
+    }*/
+    //?} else {
+    private static net.minecraft.client.gui.components.toasts.ToastComponent toasts() {
+        return Minecraft.getInstance().getToasts();
+    }
+    //?}
+
     public static void accept(CraftProgressPayload payload) {
         boolean wasTerminal = current != null && current.state().isTerminal();
         if (payload.state().isTerminal() && !(wasTerminal)) {
@@ -32,8 +42,8 @@ public final class ClientJobTracker {
         // Presence check rather than a local flag: vanilla clears all toasts on
         // disconnect without our toast ever returning HIDE, so a flag would desync and
         // permanently suppress future toasts. Asking ToastComponent directly cannot.
-        if (Minecraft.getInstance().getToasts().getToast(CraftProgressToast.class, Toast.NO_TOKEN) == null) {
-            Minecraft.getInstance().getToasts().addToast(new CraftProgressToast());
+        if (toasts().getToast(CraftProgressToast.class, Toast.NO_TOKEN) == null) {
+            toasts().addToast(new CraftProgressToast());
         }
     }
 

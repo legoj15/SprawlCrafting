@@ -22,6 +22,7 @@ val modDescription = property("description") as String
 val modLicense = property("license") as String
 val modCredits = property("credits") as String
 val neoLoaderRange = property("neoforge_loader_version_range") as String
+val neoVersionRange = property("neoforge_version_range") as String
 val mcVersionRange = property("minecraft_version_range") as String
 // REI ships on the 1.21.1 line only; its presence is signalled by a node-level rei_version.
 val hasRei = project.findProperty("rei_version") != null
@@ -60,6 +61,17 @@ java {
     toolchain { languageVersion = JavaLanguageVersion.of(javaVersion) }
 }
 
+// ModDevGradle only wires Minecraft onto `main` by default. Extend the `test` source set with main's
+// classpath + output so MC-touching unit tests (the payload codecs) AND the in-game game tests under
+// src/test/.../gametest compile and run on this node (mirrors the proven BuildCraft setup).
+run {
+    val mainSourceSet = sourceSets["main"]
+    sourceSets["test"].apply {
+        compileClasspath += mainSourceSet.compileClasspath + mainSourceSet.output
+        runtimeClasspath += mainSourceSet.runtimeClasspath + mainSourceSet.output
+    }
+}
+
 repositories {
     mavenLocal()
     maven("https://maven.neoforged.net/releases")
@@ -85,15 +97,29 @@ neoForge {
         register("client") {
             client()
             gameDirectory = project.file("run")
+            // Test harness hook: -Psc.connect=host:port auto-connects the dev client (quick-play).
+            (project.findProperty("sc.connect") as String?)?.let {
+                programArgument("--quickPlayMultiplayer")
+                programArgument(it)
+            }
         }
         register("server") {
             server()
             gameDirectory = project.file("run-server")
         }
+        // Headless game-test server: boots, runs every registered GameTest, exits non-zero on any
+        // failure. Task name: runGameTestServer. The mod includes the `test` source set below so the
+        // gametest registration (src/test/.../gametest) is discovered.
+        register("gameTestServer") {
+            type = "gameTestServer"
+            systemProperty("neoforge.enableGameTest", "true")
+            gameDirectory = project.file("run-gametest")
+        }
     }
     mods {
         register(modId) {
             sourceSet(sourceSets["main"])
+            sourceSet(sourceSets["test"]) // game tests + their registration live in src/test
         }
     }
 }
@@ -141,7 +167,7 @@ tasks.processResources {
         "description" to modDescription,
         "license" to modLicense,
         "credits" to modCredits,
-        "neoforge_version" to neoVersion,
+        "neoforge_version_range" to neoVersionRange,
         "neoforge_loader_version_range" to neoLoaderRange,
         "minecraft_version_range" to mcVersionRange
     )

@@ -11,7 +11,11 @@ import com.legoj15.sprawlcrafting.craft.GridContext;
 import mezz.jei.api.constants.RecipeTypes;
 import mezz.jei.api.gui.builder.ITooltipBuilder;
 import mezz.jei.api.gui.ingredient.IRecipeSlotsView;
+//? if >=1.21.11 {
+/*import mezz.jei.api.recipe.types.IRecipeType;*/
+//?} else {
 import mezz.jei.api.recipe.RecipeType;
+//?}
 import mezz.jei.api.recipe.transfer.IRecipeTransferError;
 import mezz.jei.api.recipe.transfer.IRecipeTransferHandler;
 import net.minecraft.ChatFormatting;
@@ -52,7 +56,11 @@ public class DeferredCraftingTransferHandler
     }
 
     @Override
+    //? if >=1.21.11 {
+    /*public IRecipeType<RecipeHolder<CraftingRecipe>> getRecipeType() {*/
+    //?} else {
     public RecipeType<RecipeHolder<CraftingRecipe>> getRecipeType() {
+    //?}
         return RecipeTypes.CRAFTING;
     }
 

@@ -2,6 +2,9 @@ package com.legoj15.sprawlcrafting.craft;
 
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.inventory.RecipeBookMenu;
+//? if >=1.21.11 {
+/*import net.minecraft.world.inventory.AbstractCraftingMenu;*/
+//?}
 
 /**
  * The crafting grid a deferred-craft request was made from. Whole-chain gating
@@ -38,8 +41,13 @@ public enum GridContext {
      * {@code DeferredCraftableCache.gridFor}, including modded crafting-table menus.
      */
     public static GridContext current(ServerPlayer player) {
+        //? if >=1.21.11 {
+        /*if (player.containerMenu instanceof AbstractCraftingMenu menu
+                && menu.getGridWidth() >= 3 && menu.getGridHeight() >= 3) {*/
+        //?} else {
         if (player.containerMenu instanceof RecipeBookMenu<?, ?> menu
                 && menu.getGridWidth() >= 3 && menu.getGridHeight() >= 3) {
+        //?}
             return CRAFTING_TABLE;
         }
         return INVENTORY;

@@ -49,16 +49,23 @@ public final class CraftRequests {
         if (player.isSpectator()) {
             return;
         }
-        RecipeHolder<?> holder = player.server.getRecipeManager().byKey(recipeId).orElse(null);
+        RecipeHolder<?> holder = RecipeIds.byId(player.level().getServer().getRecipeManager(), recipeId).orElse(null);
         if (holder == null) {
-            player.displayClientMessage(Component.translatable("sprawlcrafting.craft.unknown_recipe",
-                    Component.literal(recipeId.toString())).withStyle(ChatFormatting.RED), false);
+            notify(player, Component.translatable("sprawlcrafting.craft.unknown_recipe",
+                    Component.literal(recipeId.toString())).withStyle(ChatFormatting.RED));
             return;
         }
+        //? if >=1.21.11 {
+        /*if (player.level().getGameRules().get(GameRules.LIMITED_CRAFTING)
+                && !player.getRecipeBook().contains(holder.id())) {
+            return;
+        }*/
+        //?} else {
         if (player.serverLevel().getGameRules().getBoolean(GameRules.RULE_LIMITED_CRAFTING)
                 && !player.getRecipeBook().contains(holder)) {
             return;
         }
+        //?}
         Component feedback = switch (tryStart(player, holder)) {
             case StartOutcome.Started started -> Component.translatable("sprawlcrafting.craft.started",
                     started.job().targetResult().getHoverName(), started.job().totalCrafts());
@@ -66,7 +73,16 @@ public final class CraftRequests {
                     .withStyle(ChatFormatting.RED);
             case StartOutcome.Rejected rejected -> describeRejection(holder, rejected.outcome());
         };
-        player.displayClientMessage(feedback, false);
+        notify(player, feedback);
+    }
+
+    /** Player feedback line. 26.x renamed displayClientMessage -> sendSystemMessage(overlay). */
+    private static void notify(ServerPlayer player, Component message) {
+        //? if >=1.21.11 {
+        /*player.sendSystemMessage(message, false);*/
+        //?} else {
+        player.displayClientMessage(message, false);
+        //?}
     }
 
     public static Component describeRejection(RecipeHolder<?> holder, PlanOutcome outcome) {
@@ -83,7 +99,7 @@ public final class CraftRequests {
                     unsolvable.missing().isEmpty()
                             ? Component.literal("?")
                             : Component.literal(unsolvable.missing().stream()
-                                    .map(item -> item.getDescription().getString())
+                                    .map(item -> Component.translatable(item.getDescriptionId()).getString())
                                     .collect(Collectors.joining(", "))));
             case PlanOutcome.Planned planned -> throw new IllegalArgumentException("not a rejection");
         }).withStyle(ChatFormatting.RED);

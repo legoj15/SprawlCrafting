@@ -47,11 +47,11 @@ public final class CraftExecutor {
     }
 
     public static CraftResult craftOnce(ServerPlayer player, ResourceLocation recipeId) {
-        RecipeHolder<?> holder = player.server.getRecipeManager().byKey(recipeId).orElse(null);
+        RecipeHolder<?> holder = RecipeIds.byId(player.level().getServer().getRecipeManager(), recipeId).orElse(null);
         if (holder == null || !(holder.value() instanceof CraftingRecipe recipe)) {
             return new CraftResult.RecipeGone();
         }
-        ItemStack result = recipe.getResultItem(player.registryAccess());
+        ItemStack result = RecipeIds.resultOf(recipe, player.registryAccess());
         if (result.isEmpty()) {
             return new CraftResult.RecipeGone();
         }
@@ -61,7 +61,11 @@ public final class CraftExecutor {
         Inventory inventory = player.getInventory();
         List<Integer> chosenSlots = new ArrayList<>();
         int[] reserved = new int[Inventory.INVENTORY_SIZE];
+        //? if >=1.21.11 {
+        /*for (Ingredient ingredient : recipe.placementInfo().ingredients()) {*/
+        //?} else {
         for (Ingredient ingredient : recipe.getIngredients()) {
+        //?}
             if (ingredient.isEmpty()) {
                 continue;
             }
@@ -76,15 +80,22 @@ public final class CraftExecutor {
         // Phase 2: apply — consume, return remainders, insert the result.
         List<ItemStack> remainders = new ArrayList<>();
         for (int slot : chosenSlots) {
-            ItemStack stack = inventory.items.get(slot);
+            ItemStack stack = inventory.getItem(slot);
             Item item = stack.getItem();
             stack.shrink(1);
             if (stack.isEmpty()) {
-                inventory.items.set(slot, ItemStack.EMPTY);
+                inventory.setItem(slot, ItemStack.EMPTY);
             }
+            //? if >=1.21.11 {
+            /*net.minecraft.world.item.ItemStackTemplate remainder = item.getCraftingRemainder();
+            if (remainder != null) {
+                remainders.add(remainder.create());
+            }*/
+            //?} else {
             if (item.hasCraftingRemainingItem()) {
                 remainders.add(new ItemStack(item.getCraftingRemainingItem()));
             }
+            //?}
         }
         inventory.setChanged();
         for (ItemStack remainder : remainders) {
@@ -102,7 +113,7 @@ public final class CraftExecutor {
 
     private static int findMatchingSlot(Inventory inventory, Ingredient ingredient, int[] reserved) {
         for (int i = 0; i < Inventory.INVENTORY_SIZE; i++) {
-            ItemStack stack = inventory.items.get(i);
+            ItemStack stack = inventory.getItem(i);
             if (!stack.isEmpty() && stack.getCount() - reserved[i] > 0
                     && usableAsIngredient(stack) && ingredient.test(stack)) {
                 return i;
@@ -120,7 +131,7 @@ public final class CraftExecutor {
     private static void insertIntoMainInventory(ServerPlayer player, ItemStack stack) {
         Inventory inventory = player.getInventory();
         for (int i = 0; i < Inventory.INVENTORY_SIZE && !stack.isEmpty(); i++) {
-            ItemStack existing = inventory.items.get(i);
+            ItemStack existing = inventory.getItem(i);
             if (!existing.isEmpty() && ItemStack.isSameItemSameComponents(existing, stack)) {
                 int room = existing.getMaxStackSize() - existing.getCount();
                 if (room > 0) {
@@ -131,9 +142,9 @@ public final class CraftExecutor {
             }
         }
         for (int i = 0; i < Inventory.INVENTORY_SIZE && !stack.isEmpty(); i++) {
-            if (inventory.items.get(i).isEmpty()) {
-                inventory.items.set(i, stack.copyWithCount(Math.min(stack.getCount(), stack.getMaxStackSize())));
-                stack.shrink(inventory.items.get(i).getCount());
+            if (inventory.getItem(i).isEmpty()) {
+                inventory.setItem(i, stack.copyWithCount(Math.min(stack.getCount(), stack.getMaxStackSize())));
+                stack.shrink(inventory.getItem(i).getCount());
             }
         }
         inventory.setChanged();
@@ -143,7 +154,11 @@ public final class CraftExecutor {
     }
 
     private static Component describe(Ingredient ingredient) {
+        //? if >=1.21.11 {
+        /*return ingredient.items().findFirst().map(h -> new ItemStack(h.value()).getHoverName()).orElse(Component.literal("?"));*/
+        //?} else {
         ItemStack[] options = ingredient.getItems();
         return options.length > 0 ? options[0].getHoverName() : Component.literal("?");
+        //?}
     }
 }

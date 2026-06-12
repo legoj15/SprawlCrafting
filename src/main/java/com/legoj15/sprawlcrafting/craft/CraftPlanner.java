@@ -76,7 +76,7 @@ public final class CraftPlanner {
         if (McRecipe.of(targetHolder, player.registryAccess()) == null) {
             return new PlanOutcome.Unsupported();
         }
-        return session(player.server.getRecipeManager(), player.registryAccess(),
+        return session(player.level().getServer().getRecipeManager(), player.registryAccess(),
                 player.getInventory(), grid).plan(targetHolder);
     }
 
@@ -155,7 +155,7 @@ public final class CraftPlanner {
          * stock; any intermediate steps mean deferral.
          */
         public Craftability classify(RecipeHolder<?> targetHolder) {
-            return classifyCache.computeIfAbsent(targetHolder.id(), id -> {
+            return classifyCache.computeIfAbsent(RecipeIds.id(targetHolder), id -> {
                 if (!(plan(targetHolder) instanceof PlanOutcome.Planned planned)) {
                     return Craftability.UNSOLVABLE;
                 }
@@ -178,7 +178,7 @@ public final class CraftPlanner {
                         .map(step -> new CraftStep(step.recipeId(), step.crafts(),
                                 !fits2x2(step.recipeId(), target)))
                         .toList();
-                return new PlanOutcome.Planned(new CraftJob(targetHolder.id(), target.resultStack(), steps));
+                return new PlanOutcome.Planned(new CraftJob(RecipeIds.id(targetHolder), target.resultStack(), steps));
             }
             Result.Failure<ResourceLocation, Item> failure = (Result.Failure<ResourceLocation, Item>) result;
             if (failure.budgetExceeded()) {
@@ -191,8 +191,8 @@ public final class CraftPlanner {
             if (recipeId.equals(target.id())) {
                 return target.fits2x2();
             }
-            return recipes.byKey(recipeId)
-                    .map(h -> h.value() instanceof CraftingRecipe r && r.canCraftInDimensions(2, 2))
+            return RecipeIds.byId(recipes, recipeId)
+                    .map(h -> h.value() instanceof CraftingRecipe r && canCraftInDimensions(r, 2, 2))
                     .orElse(true);
         }
     }
@@ -207,7 +207,7 @@ public final class CraftPlanner {
     private static Map<Item, Integer> snapshotInventory(Inventory inventory) {
         Map<Item, Integer> counts = new HashMap<>();
         for (int i = 0; i < Inventory.INVENTORY_SIZE; i++) {
-            ItemStack stack = inventory.items.get(i);
+            ItemStack stack = inventory.getItem(i);
             if (!stack.isEmpty() && CraftExecutor.usableAsIngredient(stack)) {
                 counts.merge(stack.getItem(), stack.getCount(), Integer::sum);
             }
@@ -224,7 +224,7 @@ public final class CraftPlanner {
                                                                   HolderLookup.Provider registries,
                                                                   GridContext grid) {
         Map<Item, List<McRecipe>> byResult = new HashMap<>();
-        for (RecipeHolder<CraftingRecipe> holder : recipes.getAllRecipesFor(RecipeType.CRAFTING)) {
+        for (RecipeHolder<CraftingRecipe> holder : RecipeIds.craftingRecipes(recipes)) {
             McRecipe info = McRecipe.of(holder, registries);
             if (info != null && info.fits(grid)) {
                 byResult.computeIfAbsent(info.result(), item -> new ArrayList<>()).add(info);
@@ -237,7 +237,27 @@ public final class CraftPlanner {
     }
 
     private static Item craftingRemainder(Item item) {
+        //? if >=1.21.11 {
+        /*net.minecraft.world.item.ItemStackTemplate remainder = item.getCraftingRemainder();
+        return remainder == null ? null : remainder.item().value();*/
+        //?} else {
         return item.hasCraftingRemainingItem() ? item.getCraftingRemainingItem() : null;
+        //?}
+    }
+
+    /**
+     * Whether {@code recipe} fits a w×h grid. 26.x removed {@code canCraftInDimensions}; reconstruct
+     * the vanilla rule — shaped by declared width/height, anything else by ingredient count.
+     */
+    private static boolean canCraftInDimensions(CraftingRecipe recipe, int w, int h) {
+        //? if >=1.21.11 {
+        /*if (recipe instanceof net.minecraft.world.item.crafting.ShapedRecipe shaped) {
+            return shaped.getWidth() <= w && shaped.getHeight() <= h;
+        }
+        return recipe.placementInfo().ingredients().size() <= w * h;*/
+        //?} else {
+        return recipe.canCraftInDimensions(w, h);
+        //?}
     }
 
     /** A crafting recipe reduced to the solver's view, or null if it cannot be planned. */
@@ -254,8 +274,12 @@ public final class CraftPlanner {
             if (!(holder.value() instanceof CraftingRecipe recipe) || recipe.isSpecial()) {
                 return null;
             }
-            ItemStack resultStack = recipe.getResultItem(registries);
+            ItemStack resultStack = RecipeIds.resultOf(recipe, registries);
+            //? if >=1.21.11 {
+            /*java.util.List<Ingredient> ingredients = recipe.placementInfo().ingredients();*/
+            //?} else {
             NonNullList<Ingredient> ingredients = recipe.getIngredients();
+            //?}
             if (resultStack.isEmpty() || ingredients.isEmpty()) {
                 return null;
             }
@@ -264,10 +288,14 @@ public final class CraftPlanner {
                 if (ingredient.isEmpty()) {
                     continue; // blank slot in a shaped recipe's grid
                 }
+                //? if >=1.21.11 {
+                /*List<Item> alternatives = ingredient.items().map(net.minecraft.core.Holder::value).distinct().toList();*/
+                //?} else {
                 List<Item> alternatives = Arrays.stream(ingredient.getItems())
                         .map(ItemStack::getItem)
                         .distinct()
                         .toList();
+                //?}
                 if (alternatives.isEmpty()) {
                     return null; // unresolvable ingredient (e.g. empty tag)
                 }
@@ -276,8 +304,8 @@ public final class CraftPlanner {
             if (slots.isEmpty()) {
                 return null;
             }
-            return new McRecipe(holder.id(), slots, resultStack.getItem(), resultStack.getCount(),
-                    resultStack, recipe.canCraftInDimensions(2, 2), recipe.canCraftInDimensions(3, 3));
+            return new McRecipe(RecipeIds.id(holder), slots, resultStack.getItem(), resultStack.getCount(),
+                    resultStack, canCraftInDimensions(recipe, 2, 2), canCraftInDimensions(recipe, 3, 3));
         }
     }
 }

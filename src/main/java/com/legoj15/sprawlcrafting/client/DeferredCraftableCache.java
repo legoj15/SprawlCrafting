@@ -14,21 +14,15 @@ import net.minecraft.world.item.crafting.RecipeHolder;
 import net.minecraft.world.item.crafting.RecipeManager;
 
 /**
- * Client-side, render-thread-only cache answering "is this recipe craftable from raw
- * resources right now?" for the recipe book (yellow outlines, the craftable filter, and
- * click previews). Wraps a {@link CraftPlanner.Session} over the client's synced
- * RecipeManager and inventory mirror, rebuilt whenever the inventory generation
- * ({@code Inventory.getTimesChanged()}) or grid context changes — the same invalidation
- * signal the vanilla recipe book uses.
+ * Client-side answer to "is this recipe craftable from raw resources right now?" for the recipe
+ * book (yellow outlines, the craftable filter, click previews) and the JEI/REI transfer button.
+ *
+ * <p>1.21.1 computes this on the client by running a {@link CraftPlanner.Session} over the synced
+ * RecipeManager and inventory mirror. 26.x (&gt;=1.21.11) clients have no recipe contents, so the
+ * server classifies and pushes the deferred-craftable set ({@code DeferredCraftSync} /
+ * {@code DeferredCraftableSyncPayload}) and this cache just stores and queries it.
  */
 public final class DeferredCraftableCache {
-
-    private static CraftPlanner.Session session;
-    private static int inventoryGeneration = -1;
-    private static GridContext grid;
-    private static RecipeManager recipeManager;
-    /** Recipes we marked craftable that vanilla did NOT — these get the yellow outline. */
-    private static final Set<ResourceLocation> deferredOnly = new HashSet<>();
 
     private DeferredCraftableCache() {
     }
@@ -37,6 +31,40 @@ public final class DeferredCraftableCache {
     public static GridContext gridFor(int width, int height) {
         return width >= 3 && height >= 3 ? GridContext.CRAFTING_TABLE : GridContext.INVENTORY;
     }
+
+    //? if >=1.21.11 {
+    /*// 26.x: read the server-synced deferred-craftable sets; no client-side solving.
+    // displayIds key the recipe book (RecipeDisplayId.index); recipeIds key JEI (recipe identifier).
+    private static java.util.Set<Integer> deferredDisplayIds = java.util.Set.of();
+    private static java.util.Set<ResourceLocation> deferredRecipeIds = java.util.Set.of();
+
+    public static void accept(java.util.Set<Integer> displayIds, java.util.Set<ResourceLocation> recipeIds) {
+        deferredDisplayIds = displayIds;
+        deferredRecipeIds = recipeIds;
+    }
+
+    public static boolean isDeferredOnly(net.minecraft.world.item.crafting.display.RecipeDisplayId id) {
+        return deferredDisplayIds.contains(id.index());
+    }
+
+    // JEI hands us the RecipeHolder, so we key by identifier. We only distinguish DEFERRED
+    // (server said so) from not-our-business; UNSOLVABLE stands in for the latter.
+    public static CraftPlanner.Craftability classify(RecipeHolder<?> holder, GridContext requestGrid) {
+        return deferredRecipeIds.contains(holder.id().identifier())
+                ? CraftPlanner.Craftability.DEFERRED : CraftPlanner.Craftability.UNSOLVABLE;
+    }
+
+    public static void invalidate() {
+        deferredDisplayIds = java.util.Set.of();
+        deferredRecipeIds = java.util.Set.of();
+    }*/
+    //?} else {
+    private static CraftPlanner.Session session;
+    private static int inventoryGeneration = -1;
+    private static GridContext grid;
+    private static RecipeManager recipeManager;
+    /** Recipes we marked craftable that vanilla did NOT — these get the yellow outline. */
+    private static final Set<ResourceLocation> deferredOnly = new HashSet<>();
 
     public static boolean isSolvable(RecipeHolder<?> holder, GridContext requestGrid) {
         CraftPlanner.Session current = currentSession(requestGrid);
@@ -96,4 +124,5 @@ public final class DeferredCraftableCache {
         }
         return session;
     }
+    //?}
 }

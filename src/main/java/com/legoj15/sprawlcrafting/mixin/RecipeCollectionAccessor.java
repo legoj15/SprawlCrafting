@@ -11,6 +11,12 @@ import net.minecraft.world.item.crafting.RecipeHolder;
 @Mixin(RecipeCollection.class)
 public interface RecipeCollectionAccessor {
 
+    // 26.x rekeyed the recipe book on RecipeDisplayId; 1.21.1 used RecipeHolder.
+    //? if >=1.21.11 {
+    /*@Accessor("craftable")
+    Set<net.minecraft.world.item.crafting.display.RecipeDisplayId> sprawlcrafting$craftable();*/
+    //?} else {
     @Accessor("craftable")
     Set<RecipeHolder<?>> sprawlcrafting$craftable();
+    //?}
 }

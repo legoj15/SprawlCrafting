@@ -48,7 +48,11 @@ public final class CraftingTableReach {
 
         for (int cx = minX; cx <= maxX; cx++) {
             for (int cz = minZ; cz <= maxZ; cz++) {
+                //? if >=1.21.11 {
+                /*LevelChunk chunk = player.level().getChunkSource().getChunkNow(cx, cz);*/
+                //?} else {
                 LevelChunk chunk = player.serverLevel().getChunkSource().getChunkNow(cx, cz);
+                //?}
                 if (chunk == null) {
                     continue; // never force-load a chunk just to look for a table
                 }
@@ -62,8 +66,13 @@ public final class CraftingTableReach {
 
     private static boolean scanChunk(ServerPlayer player, LevelChunk chunk, int cx, int cz,
                                      int minSectionY, int maxSectionY) {
+        //? if >=1.21.11 {
+        /*int loY = Math.max(minSectionY, chunk.getMinSectionY());
+        int hiY = Math.min(maxSectionY, chunk.getMaxSectionY());*/
+        //?} else {
         int loY = Math.max(minSectionY, chunk.getMinSection());
         int hiY = Math.min(maxSectionY, chunk.getMaxSection() - 1);
+        //?}
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
         for (int sectionY = loY; sectionY <= hiY; sectionY++) {
             LevelChunkSection section = chunk.getSection(chunk.getSectionIndexFromSectionY(sectionY));
@@ -76,7 +85,11 @@ public final class CraftingTableReach {
                         if (section.getBlockState(dx, dy, dz).is(Blocks.CRAFTING_TABLE)) {
                             pos.set((cx << 4) + dx, SectionPos.sectionToBlockCoord(sectionY) + dy,
                                     (cz << 4) + dz);
+                            //? if >=1.21.11 {
+                            /*if (player.isWithinBlockInteractionRange(pos, INTERACTION_PADDING)) {*/
+                            //?} else {
                             if (player.canInteractWithBlock(pos, INTERACTION_PADDING)) {
+                            //?}
                                 return true;
                             }
                         }

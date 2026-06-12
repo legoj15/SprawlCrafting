@@ -33,10 +33,14 @@ class RecipeGraphSolverTest {
     private final Map<String, String> remainders = new HashMap<>();
 
     private RecipeGraphSolver<String, String> solver() {
+        return solver(32, 4096);
+    }
+
+    private RecipeGraphSolver<String, String> solver(int maxDepth, int maxAttempts) {
         return new RecipeGraphSolver<>(
                 item -> recipes.stream().filter(r -> r.result().equals(item)).toList(),
                 remainders::get,
-                32, 4096);
+                maxDepth, maxAttempts);
     }
 
     private static Map<String, Integer> inv(Object... pairs) {
@@ -230,5 +234,95 @@ class RecipeGraphSolverTest {
         // 6 sticks needed: two crafts of 4 (one would only give 4), planks from stock.
         assertEquals(List.of(new PlannedStep<>("stick", 2), new PlannedStep<>("frame", 1)),
                 solveOk(frame, inv("planks", 4)));
+    }
+
+    // --- classification boundary: CraftPlanner keys DIRECT vs DEFERRED on steps().size()==1 ---
+
+    @Test
+    void allIngredientsInStockYieldsExactlyOneStep_theDirectClassification() {
+        // CraftPlanner.classify => DIRECT iff the plan is a single step. Pin that the solver
+        // emits exactly one step when nothing must be sub-crafted, so DIRECT stays DIRECT.
+        TestRecipe stick = TestRecipe.of("stick", "stick", 4, "planks", "planks");
+        assertEquals(1, solveOk(stick, inv("planks", 2)).size());
+    }
+
+    @Test
+    void oneSubCraftYieldsTwoSteps_theDeferredClassification() {
+        // The other side of the boundary: a single required intermediate makes the plan multi-step,
+        // which is exactly what flips classify() to DEFERRED (the yellow-outline case).
+        recipes.add(TestRecipe.of("planks", "planks", 4, "log"));
+        TestRecipe chest = TestRecipe.of("chest", "chest", 1,
+                "planks", "planks", "planks", "planks", "planks", "planks", "planks", "planks");
+        assertEquals(2, solveOk(chest, inv("log", 2)).size());
+    }
+
+    @Test
+    void nonAdjacentIdenticalRecipesAreNotMerged() {
+        // mergeAdjacent only collapses CONSECUTIVE duplicates. CraftPreview's per-recipe totals
+        // depend on the solver NOT globally deduping, so a plan of X, Y, X must stay three steps.
+        // X has resultCount 1 (no surplus to reuse), and Y sits between the two X crafts.
+        recipes.add(TestRecipe.of("x", "x", 1, "rawx"));
+        recipes.add(TestRecipe.of("y", "y", 1, "rawy"));
+        TestRecipe target = TestRecipe.of("t", "t", 1, "x", "y", "x");
+        assertEquals(List.of(
+                        new PlannedStep<>("x", 1),
+                        new PlannedStep<>("y", 1),
+                        new PlannedStep<>("x", 1),
+                        new PlannedStep<>("t", 1)),
+                solveOk(target, inv("rawx", 2, "rawy", 1)));
+    }
+
+    @Test
+    void resultCountSurplusCarriesAcrossStepsNotJustSlots() {
+        // A single craft of P yields 4 "p"; two different intermediates (A, B) each consume one p.
+        // The surplus from P's one craft must satisfy BOTH, so P is crafted exactly once — surplus
+        // crossing a step boundary, which the within-recipe surplus test does not cover.
+        recipes.add(TestRecipe.of("p", "p", 4, "rawp"));
+        recipes.add(TestRecipe.of("a", "a", 1, "p"));
+        recipes.add(TestRecipe.of("b", "b", 1, "p"));
+        TestRecipe target = TestRecipe.of("t", "t", 1, "a", "b");
+        assertEquals(List.of(
+                        new PlannedStep<>("p", 1),
+                        new PlannedStep<>("a", 1),
+                        new PlannedStep<>("b", 1),
+                        new PlannedStep<>("t", 1)),
+                solveOk(target, inv("rawp", 1)));
+    }
+
+    @Test
+    void budgetExceededFlagIsFalseForAPlainShortfall() {
+        // A target with no producer and nothing in stock fails on SHORTFALL, not budget — so
+        // CraftPlanner reports Unsolvable, not TooComplex. Pin budgetExceeded()==false here.
+        TestRecipe target = TestRecipe.of("widget", "widget", 1, "unobtanium");
+        Result<String, String> result = solver().solve(target, inv());
+        Result.Failure<String, String> failure = assertInstanceOf(Result.Failure.class, result);
+        assertEquals(false, failure.budgetExceeded(), "plain shortfall must not set budgetExceeded");
+    }
+
+    @Test
+    void sameSolvableGraphFailsWithBudgetExceededWhenAttemptsRunOut() {
+        // Identical graph, two budgets: solvable with room, budget-failure with a tiny cap. Proves
+        // budgetExceeded keys on the attempt budget (CraftPlanner's TooComplex branch), not shortfall.
+        recipes.add(TestRecipe.of("x", "x", 1, "rawx"));
+        TestRecipe target = TestRecipe.of("t", "t", 1, "x");
+        assertInstanceOf(Result.Success.class, solver(32, 4096).solve(target, inv("rawx", 1)));
+        Result.Failure<String, String> failure =
+                assertInstanceOf(Result.Failure.class, solver(32, 1).solve(target, inv("rawx", 1)));
+        assertTrue(failure.budgetExceeded(), "exhausting the attempt budget must set budgetExceeded");
+    }
+
+    @Test
+    void depthBoundarySucceedsAtLimitAndFailsOnDepthNotBudgetBeyondIt() {
+        // Chain item0<-item1<-item2<-item3 with item3 in stock: the deepest sub-craft sits at
+        // depth 3. maxDepth 3 resolves; maxDepth 2 fails — and with a generous attempt budget the
+        // failure is on DEPTH, so budgetExceeded() must stay false (distinguishes the two backstops).
+        recipes.add(TestRecipe.of("r0", "item0", 1, "item1"));
+        recipes.add(TestRecipe.of("r1", "item1", 1, "item2"));
+        recipes.add(TestRecipe.of("r2", "item2", 1, "item3"));
+        TestRecipe target = TestRecipe.of("final", "final", 1, "item0");
+        assertInstanceOf(Result.Success.class, solver(3, 100_000).solve(target, inv("item3", 1)));
+        Result.Failure<String, String> failure =
+                assertInstanceOf(Result.Failure.class, solver(2, 100_000).solve(target, inv("item3", 1)));
+        assertEquals(false, failure.budgetExceeded(), "depth-limit failure must not look like a budget failure");
     }
 }
