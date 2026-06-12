@@ -26,9 +26,11 @@ public final class DeferredCraftSync {
     }
 
     /**
-     * Debounce key per player: a hash of (open-menu identity, grid, inventory generation).
-     * Recompute only when one of those changes — opening/closing a grid or moving an item —
-     * not every tick.
+     * Debounce key per player: a hash of (open-menu identity, grid, inventory generation,
+     * RecipeManager identity). Recompute only when one of those changes — opening/closing a
+     * grid, moving an item, or a datapack reload (which swaps the server's RecipeManager and
+     * reassigns every RecipeDisplayId, so the client's synced set must be replaced) — not
+     * every tick.
      */
     private static final Map<UUID, Long> LAST_SYNC = new ConcurrentHashMap<>();
 
@@ -44,20 +46,22 @@ public final class DeferredCraftSync {
         }
         GridContext grid = (menu.getGridWidth() >= 3 && menu.getGridHeight() >= 3)
                 ? GridContext.CRAFTING_TABLE : GridContext.INVENTORY;
+        // /reload swaps MinecraftServer.resources (a fresh RecipeManager instance) and
+        // reallocates all display ids, so the manager's identity must be part of the key.
+        net.minecraft.world.item.crafting.RecipeManager recipes = player.level().getServer().getRecipeManager();
         long key = (((long) System.identityHashCode(menu)) << 21)
                 ^ ((long) grid.ordinal() << 19)
-                ^ (player.getInventory().getTimesChanged() & 0x7FFFFL);
+                ^ (player.getInventory().getTimesChanged() & 0x7FFFFL)
+                ^ (((long) System.identityHashCode(recipes)) << 32);
         Long prev = LAST_SYNC.get(player.getUUID());
         if (prev != null && prev == key) {
-            return; // (menu, grid, inventory) unchanged since the last push
+            return; // (menu, grid, inventory, recipes) unchanged since the last push
         }
         LAST_SYNC.put(player.getUUID(), key);
 
         if (!Services.PLATFORM.canReceive(player, DeferredCraftableSyncPayload.TYPE.id())) {
             return; // vanilla/modless client — it has no recipe book hook to feed
         }
-
-        net.minecraft.world.item.crafting.RecipeManager recipes = player.level().getServer().getRecipeManager();
         CraftPlanner.Session session = CraftPlanner.session(recipes, player.registryAccess(),
                 player.getInventory(), grid);
         java.util.Set<Integer> displayIds = new java.util.HashSet<>();

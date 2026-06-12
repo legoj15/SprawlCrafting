@@ -119,9 +119,23 @@ public abstract class RecipeBookComponentMixin {
 
     @Inject(method = "recipesUpdated()V", at = @At("HEAD"))
     private void sprawlcrafting$invalidateOnRecipesUpdated(CallbackInfo ci) {
+        //? if >=1.21.11 {
+        /*// 26.x: do NOT invalidate here. recipesUpdated fires on every recipe-book
+        // Add/Remove/Settings packet (routine on production servers: recipe unlocks) and from
+        // DeferredCraftableCache.accept's repaint poke. The synced sets are server truth with
+        // no client-side regeneration path — wiping them would kill the yellow outlines until
+        // the server's next inventory-keyed re-push. Vanilla's selectRecipes pass that follows
+        // this HEAD re-marks collections from the sets via RecipeCollectionMixin.*/
+        //?} else {
         // HEAD, not TAIL: drop the stale session/marks BEFORE vanilla's update re-runs the
-        // craftable pass, so that pass rebuilds and re-marks atomically.
+        // craftable pass, so that pass rebuilds and re-marks atomically. (1.21.1 only: the
+        // client re-solves locally; a datapack reload mutates the client RecipeManager in
+        // place, which the session's identity check cannot see.)
         DeferredCraftableCache.invalidate();
+        //?}
+        // Deliberately ungated (on 26.x this also fires from accept's repaint poke): whenever
+        // craftability data changed, a pending first-click preview is suspect — dropping it
+        // costs one re-click, while confirming against changed data could start a wrong craft.
         DeferredClickState.clear();
     }
 }

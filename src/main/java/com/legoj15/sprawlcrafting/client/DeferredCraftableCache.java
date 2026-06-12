@@ -39,8 +39,20 @@ public final class DeferredCraftableCache {
     private static java.util.Set<ResourceLocation> deferredRecipeIds = java.util.Set.of();
 
     public static void accept(java.util.Set<Integer> displayIds, java.util.Set<ResourceLocation> recipeIds) {
+        if (displayIds.equals(deferredDisplayIds) && recipeIds.equals(deferredRecipeIds)) {
+            return; // unchanged — whatever pass last ran already reflects these sets
+        }
         deferredDisplayIds = displayIds;
         deferredRecipeIds = recipeIds;
+        // The recipe book bakes craftability into per-collection sets during its selectRecipes
+        // pass (screen init / inventory-change tick / recipe-book packets) — and this payload
+        // always lands AFTER that pass, because the server classifies at end-of-tick. Re-trigger
+        // the pass the same way vanilla's ClientPacketListener.refreshRecipeBook does, so the
+        // yellow outlines repaint without waiting for a screen re-init.
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.screen instanceof net.minecraft.client.gui.screens.recipebook.RecipeUpdateListener listener) {
+            listener.recipesUpdated();
+        }
     }
 
     public static boolean isDeferredOnly(net.minecraft.world.item.crafting.display.RecipeDisplayId id) {
