@@ -111,8 +111,14 @@ public final class DeferredCraftableCache {
     /**
      * Drops the session outright — needed on datapack reload, where the client
      * RecipeManager is mutated in place and identity comparison cannot see the change.
+     * The planner's producer index is keyed on that same unchanged identity, so it must
+     * be evicted too, or the rebuilt session would solve against the pre-reload recipes.
      */
     public static void invalidate() {
+        if (recipeManager != null) {
+            CraftPlanner.invalidateProducerIndex(recipeManager);
+            recipeManager = null;
+        }
         session = null;
         deferredOnly.clear();
     }

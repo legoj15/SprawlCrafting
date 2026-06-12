@@ -95,11 +95,23 @@ public final class CraftPlanner {
     }
 
     /**
-     * Per-RecipeManager, per-grid cache of the producer index. The RecipeManager instance
-     * is replaced wholesale on datapack reload (server and client alike), so keying on its
-     * identity makes the cache self-invalidating; weak keys let stale managers be collected.
-     * Keyed by identity so the integrated server's and client's distinct managers don't
-     * evict each other in singleplayer.
+     * Drops the cached producer index for {@code recipes}. Only the 1.21.1 client needs
+     * this: a datapack reload mutates its single RecipeManager in place
+     * ({@code ClientPacketListener.handleUpdateRecipes} → {@code replaceRecipes}), which
+     * the identity-keyed cache cannot see. Servers — and 26.x clients, which never build
+     * sessions — replace the instance wholesale, so they self-invalidate.
+     */
+    public static void invalidateProducerIndex(RecipeManager recipes) {
+        ProducerIndex.CACHE.remove(recipes);
+    }
+
+    /**
+     * Per-RecipeManager, per-grid cache of the producer index. The server replaces its
+     * RecipeManager wholesale on datapack reload, so keying on identity makes the cache
+     * self-invalidating there; weak keys let stale managers be collected. The 1.21.1
+     * client instead mutates its manager in place on reload — its reload hook evicts via
+     * {@link CraftPlanner#invalidateProducerIndex}. Keyed by identity so the integrated
+     * server's and client's distinct managers don't evict each other in singleplayer.
      */
     private static final class ProducerIndex {
         private static final Map<RecipeManager, Map<GridContext, Map<Item, List<McRecipe>>>> CACHE =
