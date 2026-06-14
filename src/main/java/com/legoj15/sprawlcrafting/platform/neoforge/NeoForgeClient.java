@@ -6,12 +6,16 @@ import com.legoj15.sprawlcrafting.client.CraftingScreenWatcher;
 import com.legoj15.sprawlcrafting.client.DeferredClickState;
 import com.legoj15.sprawlcrafting.client.DeferredCraftableCache;
 import com.legoj15.sprawlcrafting.client.MissingIngredients;
+import com.legoj15.sprawlcrafting.client.SprawlConfigScreen;
+import com.legoj15.sprawlcrafting.config.SprawlConfig;
 
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.IEventBus;
+import net.neoforged.fml.ModContainer;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent;
 import net.neoforged.neoforge.client.event.ClientTickEvent;
+import net.neoforged.neoforge.client.gui.IConfigScreenFactory;
 import net.neoforged.neoforge.common.NeoForge;
 
 /**
@@ -23,7 +27,12 @@ import net.neoforged.neoforge.common.NeoForge;
 @Mod(value = Constants.MOD_ID, dist = Dist.CLIENT)
 public class NeoForgeClient {
 
-    public NeoForgeClient(IEventBus modEventBus) {
+    public NeoForgeClient(ModContainer container, IEventBus modEventBus) {
+        SprawlConfig.get(); // load (and create on first run) the config at client start
+        // The mod-list "Config" button. registerExtensionPoint(Class<T>, T) — the factory's
+        // createScreen(container, modListScreen) hands back our screen with the list as its parent.
+        IConfigScreenFactory configScreen = (mc, modListScreen) -> new SprawlConfigScreen(modListScreen);
+        container.registerExtensionPoint(IConfigScreenFactory.class, configScreen);
         NeoForge.EVENT_BUS.addListener(NeoForgeClient::onLoggingOut);
         NeoForge.EVENT_BUS.addListener(NeoForgeClient::onClientTick);
     }

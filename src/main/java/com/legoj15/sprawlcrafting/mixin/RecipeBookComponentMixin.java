@@ -12,6 +12,7 @@ import com.legoj15.sprawlcrafting.client.DeferredClickState;
 import com.legoj15.sprawlcrafting.client.DeferredCraftableCache;
 import com.legoj15.sprawlcrafting.client.GatherCandidate;
 import com.legoj15.sprawlcrafting.client.RecipeBookGhost;
+import com.legoj15.sprawlcrafting.config.SprawlConfig;
 
 import net.minecraft.client.gui.screens.recipebook.RecipeBookComponent;
 import net.minecraft.client.gui.screens.recipebook.RecipeBookPage;
@@ -122,6 +123,9 @@ public abstract class RecipeBookComponentMixin {
         if (event.button() != 1 || !((RecipeBookComponent) (Object) this).isVisible()) {
             return;
         }
+        if (!SprawlConfig.get().needsSystem()) {
+            return; // gather/"needs" helper disabled: right-click stays vanilla
+        }
         if (((RecipeBookPageAccessor) recipeBookPage).sprawlcrafting$overlay().isVisible()) {
             return; // variant overlay open: its right-clicks belong to OverlayRecipeComponentMixin,
                     // not the recipe button it happens to sit over (which would otherwise leak through)
@@ -190,6 +194,9 @@ public abstract class RecipeBookComponentMixin {
                                                      CallbackInfoReturnable<Boolean> cir) {
         if (button != 1 || !((RecipeBookComponent) (Object) this).isVisible()) {
             return;
+        }
+        if (!SprawlConfig.get().needsSystem()) {
+            return; // gather/"needs" helper disabled: right-click stays vanilla
         }
         if (((RecipeBookPageAccessor) recipeBookPage).sprawlcrafting$overlay().isVisible()) {
             return; // variant overlay open: its right-clicks belong to OverlayRecipeComponentMixin,

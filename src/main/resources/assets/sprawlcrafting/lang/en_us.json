@@ -35,5 +35,17 @@
   "sprawlcrafting.gather.rightclick": "Right-click to see what you need",
   "sprawlcrafting.gather.loading": "Working out what you need…",
   "sprawlcrafting.gather.approximate": "List may be incomplete — recipe tree too complex",
-  "sprawlcrafting.gather.empty": "A 3×3 crafting table (you already have the materials)"
+  "sprawlcrafting.gather.empty": "A 3×3 crafting table (you already have the materials)",
+  "sprawlcrafting.config.title": "SprawlCrafting Settings",
+  "sprawlcrafting.config.hint": "Click a setting to toggle it · Esc to go back",
+  "sprawlcrafting.config.on": "ON",
+  "sprawlcrafting.config.off": "OFF",
+  "sprawlcrafting.config.sound": "Sound effects",
+  "sprawlcrafting.config.sound.desc": "The per-step craft sound as a deferred job works",
+  "sprawlcrafting.config.jei": "JEI integration",
+  "sprawlcrafting.config.jei.desc": "Deferred-craft & gather transfer buttons in JEI",
+  "sprawlcrafting.config.rei": "REI integration",
+  "sprawlcrafting.config.rei.desc": "Deferred-craft & gather transfer buttons in REI",
+  "sprawlcrafting.config.needs": "\"Needs\" helper",
+  "sprawlcrafting.config.needs.desc": "Right-click red recipes (& orange buttons) to see what you still need"
 }

@@ -21,6 +21,9 @@ val modAuthor = property("mod_author") as String
 val modDescription = property("description") as String
 val modLicense = property("license") as String
 val hasRei = project.findProperty("rei_version") != null
+// Mod Menu provides the in-game config-screen button on Fabric; present only on nodes that pin a
+// modmenu_version (1.21.1). Where absent, the integration class is excluded (same gating as REI).
+val hasModMenu = project.findProperty("modmenu_version") != null
 
 java {
     toolchain { languageVersion = JavaLanguageVersion.of(javaVersion) }
@@ -31,6 +34,7 @@ repositories {
     maven("https://maven.fabricmc.net/")
     maven("https://maven.blamejared.com")   // JEI
     maven("https://maven.shedaniel.me/")     // REI
+    maven("https://maven.terraformersmc.com/releases") // Mod Menu
     maven("https://maven.parchmentmc.org")
     mavenCentral()
 }
@@ -68,6 +72,12 @@ dependencies {
         }
     }
 
+    // Mod Menu API: compile-only, Loom-remapped (intermediary→Mojmap) like the JEI/REI mod APIs, so
+    // SprawlModMenuIntegration sees Mojmap Screen. The player supplies the Mod Menu mod at runtime.
+    if (hasModMenu) {
+        modCompileOnly("com.terraformersmc:modmenu:${property("modmenu_version")}")
+    }
+
     // The craft solver core is pure Java and unit-tested without Minecraft.
     testImplementation(platform("org.junit:junit-bom:5.10.3"))
     testImplementation("org.junit.jupiter:junit-jupiter")
@@ -103,6 +113,9 @@ tasks.withType<JavaCompile>().configureEach {
     if (!hasRei) {
         exclude("**/compat/rei/**")
         exclude("**/*ReiPlugin*")
+    }
+    if (!hasModMenu) {
+        exclude("**/*ModMenu*") // no Mod Menu build for this node → drop the integration class
     }
 }
 

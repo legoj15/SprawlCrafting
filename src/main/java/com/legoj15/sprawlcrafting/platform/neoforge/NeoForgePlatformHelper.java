@@ -1,11 +1,14 @@
 package com.legoj15.sprawlcrafting.platform.neoforge;
 
+import java.nio.file.Path;
+
 import com.legoj15.sprawlcrafting.platform.services.IPlatformHelper;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerPlayer;
 import net.neoforged.fml.ModList;
 import net.neoforged.fml.loading.FMLLoader;
+import net.neoforged.fml.loading.FMLPaths;
 import net.neoforged.neoforge.network.PacketDistributor;
 import net.neoforged.neoforge.network.registration.NetworkRegistry;
 
@@ -15,6 +18,11 @@ public class NeoForgePlatformHelper implements IPlatformHelper {
     public String getPlatformName() {
 
         return "NeoForge";
+    }
+
+    @Override
+    public Path getConfigDir() {
+        return FMLPaths.CONFIGDIR.get();
     }
 
     @Override

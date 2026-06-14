@@ -22,6 +22,9 @@ val modAuthor = property("mod_author") as String
 val modDescription = property("description") as String
 val modLicense = property("license") as String
 val hasRei = project.findProperty("rei_version") != null
+// Mod Menu (Fabric config-screen button) is present only on nodes that pin a modmenu_version. No
+// 26.1 build is published, so this node leaves it unset → the integration class is excluded below.
+val hasModMenu = project.findProperty("modmenu_version") != null
 
 // ─── Stonecutter source replacements (forward-port 1.21.1-canonical source to 26.x) ──────────
 // Same as the neoforge node: the shared source is authored in 1.21.1 form, and these renames run
@@ -59,6 +62,7 @@ repositories {
     maven("https://maven.fabricmc.net/")
     maven("https://maven.blamejared.com")   // JEI
     maven("https://maven.shedaniel.me/")     // REI (unused on 26.x; kept for parity)
+    maven("https://maven.terraformersmc.com/releases") // Mod Menu (unused on 26.x; kept for parity)
     mavenCentral()
 }
 
@@ -91,6 +95,12 @@ dependencies {
             // Full Fabric jar (+ architectury/cloth transitively) so runClient -Pviewer=rei loads REI.
             runtimeOnly("me.shedaniel:RoughlyEnoughItems-fabric:$reiVersion")
         }
+    }
+
+    // Mod Menu API (plain compileOnly on this unobfuscated node). Inert unless a 26.1 build is later
+    // pinned via modmenu_version; until then hasModMenu is false and the class is excluded below.
+    if (hasModMenu) {
+        compileOnly("com.terraformersmc:modmenu:${property("modmenu_version")}")
     }
 
     // The craft solver core is pure Java and unit-tested without Minecraft.
@@ -128,6 +138,9 @@ tasks.withType<JavaCompile>().configureEach {
     if (!hasRei) {
         exclude("**/compat/rei/**")
         exclude("**/*ReiPlugin*")
+    }
+    if (!hasModMenu) {
+        exclude("**/*ModMenu*") // no Mod Menu build for this node → drop the integration class
     }
 }
 

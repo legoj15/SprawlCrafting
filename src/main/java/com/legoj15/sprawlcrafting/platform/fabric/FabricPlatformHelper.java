@@ -1,5 +1,7 @@
 package com.legoj15.sprawlcrafting.platform.fabric;
 
+import java.nio.file.Path;
+
 import com.legoj15.sprawlcrafting.platform.services.IPlatformHelper;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
@@ -13,6 +15,11 @@ public class FabricPlatformHelper implements IPlatformHelper {
     @Override
     public String getPlatformName() {
         return "Fabric";
+    }
+
+    @Override
+    public Path getConfigDir() {
+        return FabricLoader.getInstance().getConfigDir();
     }
 
     @Override

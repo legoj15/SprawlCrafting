@@ -5,6 +5,7 @@ import com.legoj15.sprawlcrafting.client.CraftingScreenWatcher;
 import com.legoj15.sprawlcrafting.client.DeferredClickState;
 import com.legoj15.sprawlcrafting.client.DeferredCraftableCache;
 import com.legoj15.sprawlcrafting.client.MissingIngredients;
+import com.legoj15.sprawlcrafting.config.SprawlConfig;
 import com.legoj15.sprawlcrafting.network.CraftPreviewPayload;
 import com.legoj15.sprawlcrafting.network.CraftProgressPayload;
 import com.legoj15.sprawlcrafting.network.DeferredCraftableSyncPayload;
@@ -19,6 +20,7 @@ public class FabricClient implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
+        SprawlConfig.get(); // load (and create on first run) the config at client start
         // Handler runs on the render thread (Fabric dispatches before invoking).
         ClientPlayNetworking.registerGlobalReceiver(CraftProgressPayload.TYPE,
                 (payload, context) -> ClientJobTracker.accept(payload));

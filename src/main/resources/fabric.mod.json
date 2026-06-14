@@ -26,6 +26,9 @@
         ],
         "rei_client": [
             "com.legoj15.sprawlcrafting.platform.fabric.FabricReiPlugin"
+        ],
+        "modmenu": [
+            "com.legoj15.sprawlcrafting.platform.fabric.SprawlModMenuIntegration"
         ]
     },
     "mixins": [
@@ -39,7 +42,8 @@
     },
     "suggests": {
         "jei": "*",
-        "roughlyenoughitems": "*"
+        "roughlyenoughitems": "*",
+        "modmenu": "*"
     }
 }
   

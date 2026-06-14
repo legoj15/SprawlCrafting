@@ -7,6 +7,7 @@ import com.legoj15.sprawlcrafting.client.DeferredClickState;
 import com.legoj15.sprawlcrafting.client.DeferredCraftableCache;
 import com.legoj15.sprawlcrafting.client.MissingIngredients;
 import com.legoj15.sprawlcrafting.client.MissingIngredientsView;
+import com.legoj15.sprawlcrafting.config.SprawlConfig;
 import com.legoj15.sprawlcrafting.craft.CraftPlanner.Craftability;
 import com.legoj15.sprawlcrafting.craft.GridContext;
 
@@ -39,6 +40,9 @@ public class DeferredCraftingReiTransferHandler implements TransferHandler {
 
     @Override
     public Result handle(Context context) {
+        if (!SprawlConfig.get().reiIntegration()) {
+            return Result.createNotApplicable(); // REI integration disabled: REI's builtin handler takes over
+        }
         // REI offers a transfer button on both the 3×3 table (CraftingMenu) and the 2×2 inventory
         // grid (InventoryMenu); pick the grid context so deferred-craftability is judged per grid.
         GridContext grid;
@@ -74,7 +78,8 @@ public class DeferredCraftingReiTransferHandler implements TransferHandler {
                     .tooltip(Component.translatable("sprawlcrafting.recipe.deferred").withStyle(ChatFormatting.YELLOW))
                     .tooltip(Component.translatable("sprawlcrafting.recipe.deferred.click").withStyle(ChatFormatting.GRAY));
         }
-        if (craftability == Craftability.UNSOLVABLE && grid == GridContext.CRAFTING_TABLE) {
+        if (craftability == Craftability.UNSOLVABLE && grid == GridContext.CRAFTING_TABLE
+                && SprawlConfig.get().needsSystem()) {
             // Mirror JEI's orange button: an unmakeable recipe's transfer button opens the gather list
             // instead of REI's dead red "Not enough materials". Informational, so available mid-job.
             // Gated to the 3×3 table: on the 2×2, classify==UNSOLVABLE also covers "needs a bigger

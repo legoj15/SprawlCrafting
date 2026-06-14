@@ -8,6 +8,7 @@ import com.legoj15.sprawlcrafting.client.DeferredCraftableCache;
 import com.legoj15.sprawlcrafting.client.GatherTooltip;
 import com.legoj15.sprawlcrafting.client.MissingIngredients;
 import com.legoj15.sprawlcrafting.client.MissingIngredientsView;
+import com.legoj15.sprawlcrafting.config.SprawlConfig;
 import com.legoj15.sprawlcrafting.craft.CraftPlanner.Craftability;
 import com.legoj15.sprawlcrafting.craft.GridContext;
 import com.legoj15.sprawlcrafting.craft.ShortfallView;
@@ -77,6 +78,9 @@ public class DeferredCraftingTransferHandler
         if (vanillaError == null || vanillaError.getType() != IRecipeTransferError.Type.USER_FACING) {
             return vanillaError; // direct transfer worked (or an internal error we don't own)
         }
+        if (!SprawlConfig.get().jeiIntegration()) {
+            return vanillaError; // JEI integration disabled: leave JEI's own (red) error untouched
+        }
         Craftability craftability = DeferredCraftableCache.classify(recipe, GridContext.CRAFTING_TABLE);
         if (craftability == Craftability.DEFERRED) {
             if (ClientJobTracker.hasActiveJob()) {
@@ -88,7 +92,7 @@ public class DeferredCraftingTransferHandler
             }
             return DEFERRED_AVAILABLE;
         }
-        if (craftability == Craftability.UNSOLVABLE) {
+        if (craftability == Craftability.UNSOLVABLE && SprawlConfig.get().needsSystem()) {
             // Even deferred crafting can't make it from current resources. Repurpose JEI's otherwise
             // dead red button into a clickable "what would I need to gather" prompt (still available
             // mid-job, since it's informational). On the real click, open our own screen — deferred,

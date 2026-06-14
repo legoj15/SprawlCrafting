@@ -10,6 +10,7 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 import com.legoj15.sprawlcrafting.client.GatherCandidate;
+import com.legoj15.sprawlcrafting.config.SprawlConfig;
 
 import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.screens.recipebook.OverlayRecipeComponent;
@@ -45,6 +46,9 @@ public abstract class OverlayRecipeComponentMixin {
         if (event.button() != 1 || !isVisible()) {
             return;
         }
+        if (!SprawlConfig.get().needsSystem()) {
+            return; // gather/"needs" helper disabled: right-click stays vanilla
+        }
         for (AbstractWidget button : recipeButtons) {
             if (button.isMouseOver(event.x(), event.y()) && button instanceof GatherCandidate gather
                     && gather.sprawlcrafting$tryOpenGatherList()) {
@@ -59,6 +63,9 @@ public abstract class OverlayRecipeComponentMixin {
                                                    CallbackInfoReturnable<Boolean> cir) {
         if (button != 1 || !isVisible()) {
             return;
+        }
+        if (!SprawlConfig.get().needsSystem()) {
+            return; // gather/"needs" helper disabled: right-click stays vanilla
         }
         for (AbstractWidget widget : recipeButtons) {
             if (widget.isMouseOver(mouseX, mouseY) && widget instanceof GatherCandidate gather

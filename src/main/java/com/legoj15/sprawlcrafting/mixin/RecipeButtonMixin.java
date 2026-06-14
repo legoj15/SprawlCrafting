@@ -13,6 +13,7 @@ import com.legoj15.sprawlcrafting.client.DeferredClickState;
 import com.legoj15.sprawlcrafting.client.DeferredCraftableCache;
 import com.legoj15.sprawlcrafting.client.GatherCandidate;
 import com.legoj15.sprawlcrafting.client.MissingIngredientsView;
+import com.legoj15.sprawlcrafting.config.SprawlConfig;
 import com.legoj15.sprawlcrafting.craft.GridContext;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
@@ -193,6 +194,9 @@ public abstract class RecipeButtonMixin implements GatherCandidate {
 
     /** Appends the "right-click to see what you need" hint to a red recipe's tooltip. */
     private void sprawlcrafting$appendGatherHint(CallbackInfoReturnable<List<Component>> cir) {
+        if (!SprawlConfig.get().needsSystem()) {
+            return; // gather/"needs" helper disabled: no right-click hint (right-click stays vanilla too)
+        }
         List<Component> lines = new java.util.ArrayList<>(cir.getReturnValue());
         lines.add(Component.translatable("sprawlcrafting.gather.rightclick")
                 .withStyle(ChatFormatting.GOLD, ChatFormatting.ITALIC));

@@ -1,10 +1,19 @@
 package com.legoj15.sprawlcrafting.platform.services;
 
+import java.nio.file.Path;
+
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerPlayer;
 
 public interface IPlatformHelper {
+
+    /**
+     * The loader's config directory (e.g. {@code .minecraft/config}). Used by
+     * {@code SprawlConfig} to locate {@code sprawlcrafting.json}. Fabric resolves it via
+     * {@code FabricLoader.getConfigDir()}, NeoForge via {@code FMLPaths.CONFIGDIR}.
+     */
+    Path getConfigDir();
 
     /**
      * Sends a custom payload from the client to the server. Client-only — call only from
