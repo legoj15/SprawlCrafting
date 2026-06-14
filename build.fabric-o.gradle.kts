@@ -44,15 +44,28 @@ dependencies {
     modImplementation("net.fabricmc:fabric-loader:$fabricLoaderVersion")
     modImplementation("net.fabricmc.fabric-api:fabric-api:$fabricApiVersion")
 
+    // Which recipe viewer loads in the dev runtime (runClient/runServer) is selectable via
+    // -Pviewer=jei|rei|both|none (default jei). The APIs stay (mod)compileOnly regardless, so
+    // `build`/`test` are unaffected. On Loom the runtime mod MUST go through a mod* configuration
+    // (modLocalRuntime) so it's remapped intermediary→Mojmap and the loader actually loads it as a
+    // mod; a plain runtimeOnly jar would be on the classpath but never loaded.
+    val viewer = (project.findProperty("viewer") as String?) ?: "jei"
+
     // JEI: common-api is Mojmap (matches our mappings); the runtime fabric jar is Loom-remapped.
     compileOnly("mezz.jei:jei-$minecraftVersion-common-api:$jeiVersion")
     modCompileOnly("mezz.jei:jei-$minecraftVersion-fabric-api:$jeiVersion")
-    modLocalRuntime("mezz.jei:jei-$minecraftVersion-fabric:$jeiVersion")
+    if (viewer == "jei" || viewer == "both") {
+        modLocalRuntime("mezz.jei:jei-$minecraftVersion-fabric:$jeiVersion")
+    }
 
     if (hasRei) {
-        // API only for compile (Loom-remapped). Runtime REI is left to the tester's install.
         val reiVersion = property("rei_version") as String
         modCompileOnly("me.shedaniel:RoughlyEnoughItems-api:$reiVersion")
+        if (viewer == "rei" || viewer == "both") {
+            // Full Fabric jar (+ architectury/cloth transitively), Loom-remapped, so
+            // runClient -Pviewer=rei actually loads REI in the dev environment.
+            modLocalRuntime("me.shedaniel:RoughlyEnoughItems-fabric:$reiVersion")
+        }
     }
 
     // The craft solver core is pure Java and unit-tested without Minecraft.

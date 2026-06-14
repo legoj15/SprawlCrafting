@@ -93,6 +93,11 @@ public final class DeferredClickState {
         }
     }
 
+    // Whether a deferred-craft preview is pending — i.e. the grid ghost we painted is showing.
+    public static boolean hasPendingPreview() {
+        return pendingDisplay != null;
+    }
+
     public static List<Component> previewLinesFor(
             List<net.minecraft.world.item.crafting.display.RecipeDisplayId> collectionIds) {
         return pendingFor(collectionIds) != null ? previewLines : List.of();

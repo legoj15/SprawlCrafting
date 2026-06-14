@@ -11,6 +11,7 @@ import com.legoj15.sprawlcrafting.craft.solver.RecipeGraphSolver.RecipeInfo;
 import com.legoj15.sprawlcrafting.craft.solver.RecipeGraphSolver.Result;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -324,5 +325,159 @@ class RecipeGraphSolverTest {
         Result.Failure<String, String> failure =
                 assertInstanceOf(Result.Failure.class, solver(2, 100_000).solve(target, inv("item3", 1)));
         assertEquals(false, failure.budgetExceeded(), "depth-limit failure must not look like a budget failure");
+    }
+
+    // --- shortfall: net raw-gatherable demand for a red/unmakeable recipe ---------------------
+
+    @Test
+    void shortfallOfFullyStockedRecipeIsEmpty() {
+        TestRecipe stick = TestRecipe.of("stick", "stick", 4, "planks", "planks");
+        RecipeGraphSolver.ShortfallResult<String> r = solver().shortfall(stick, inv("planks", 2));
+        assertEquals(Map.of(), r.demands());
+        assertFalse(r.approximate());
+    }
+
+    @Test
+    void shortfallOfPlainLeafTargetReportsTheLeaf() {
+        // No producer for the only ingredient and nothing in stock: it IS the gatherable.
+        TestRecipe widget = TestRecipe.of("widget", "widget", 1, "unobtanium");
+        assertEquals(inv("unobtanium", 1), solver().shortfall(widget, inv()).demands());
+    }
+
+    @Test
+    void shortfallCollapsesMultiLevelChainToRaws() {
+        recipes.add(TestRecipe.of("planks", "planks", 4, "log"));
+        TestRecipe chest = TestRecipe.of("chest", "chest", 1,
+                "planks", "planks", "planks", "planks", "planks", "planks", "planks", "planks");
+        // 8 planks, 4 per log → 2 logs to gather; planks themselves are not listed (craftable).
+        assertEquals(inv("log", 2), solver().shortfall(chest, inv()).demands());
+    }
+
+    @Test
+    void shortfallCreditsPartialInventory() {
+        recipes.add(TestRecipe.of("planks", "planks", 4, "log"));
+        TestRecipe chest = TestRecipe.of("chest", "chest", 1,
+                "planks", "planks", "planks", "planks", "planks", "planks", "planks", "planks");
+        // 6 planks already held; one more log craft (yields 4) covers the remaining 2.
+        assertEquals(inv("log", 1), solver().shortfall(chest, inv("planks", 6)).demands());
+    }
+
+    @Test
+    void shortfallCreditsOverproductionAcrossSteps() {
+        // One craft of "stick" yields 4; a and b each consume one. The surplus must cover both,
+        // so only one rawstick is gathered, not two.
+        recipes.add(TestRecipe.of("stick", "stick", 4, "rawstick"));
+        recipes.add(TestRecipe.of("a", "a", 1, "stick"));
+        recipes.add(TestRecipe.of("b", "b", 1, "stick"));
+        TestRecipe target = TestRecipe.of("t", "t", 1, "a", "b");
+        assertEquals(inv("rawstick", 1), solver().shortfall(target, inv()).demands());
+    }
+
+    @Test
+    void shortfallPrefersStockedAlternative() {
+        recipes.add(TestRecipe.of("oak_planks", "oak_planks", 4, "oak_log"));
+        TestRecipe stick = TestRecipe.of("stick", "stick", 4,
+                "oak_planks|birch_planks", "oak_planks|birch_planks");
+        // Birch planks in stock satisfy both slots; nothing to gather even though oak is listed first.
+        assertEquals(Map.of(), solver().shortfall(stick, inv("birch_planks", 2)).demands());
+    }
+
+    @Test
+    void shortfallFallsThroughToCraftableAlternative() {
+        // Neither alternative is a raw leaf (both planks are craftable from their logs), so the slot
+        // falls through to crafting the first listed and reporting ITS raw log.
+        recipes.add(TestRecipe.of("oak_planks", "oak_planks", 4, "oak_log"));
+        recipes.add(TestRecipe.of("birch_planks", "birch_planks", 4, "birch_log"));
+        TestRecipe stick = TestRecipe.of("stick", "stick", 4,
+                "oak_planks|birch_planks", "oak_planks|birch_planks");
+        assertEquals(inv("oak_log", 1), solver().shortfall(stick, inv()).demands());
+    }
+
+    @Test
+    void shortfallCapturesSlotAlternativesForCycling() {
+        // Each missing slot remembers its full accepted set so the UI can cycle them. Both items in
+        // each slot here are raw leaves, so the chosen representative is the first, keyed in demands.
+        TestRecipe thing = TestRecipe.of("thing", "thing", 1, "coal|charcoal", "oak_log|spruce_log");
+        RecipeGraphSolver.ShortfallResult<String> r = solver().shortfall(thing, inv());
+        assertEquals(List.of("coal", "charcoal"), r.alternatives().get("coal"));
+        assertEquals(List.of("oak_log", "spruce_log"), r.alternatives().get("oak_log"));
+    }
+
+    @Test
+    void shortfallUsesStockedWoodForAlternativeSlots() {
+        // A stick's planks slot accepts oak OR spruce planks; the player has a spruce log. The walk
+        // must craft via spruce (the wood it can make from stock), not demand the first-listed oak log.
+        recipes.add(TestRecipe.of("oak_planks", "oak_planks", 4, "oak_log"));
+        recipes.add(TestRecipe.of("spruce_planks", "spruce_planks", 4, "spruce_log"));
+        recipes.add(TestRecipe.of("stick", "stick", 4,
+                "oak_planks|spruce_planks", "oak_planks|spruce_planks"));
+        TestRecipe rod = TestRecipe.of("rod", "rod", 1, "stick");
+        assertEquals(Map.of(), solver().shortfall(rod, inv("spruce_log", 1)).demands());
+    }
+
+    @Test
+    void shortfallPrefersRawLeafOverCraftableAlternative() {
+        // A #logs-style slot accepting the raw oak_log OR the craftable oak_wood (4 logs → 3 wood):
+        // gather the raw log, never route through the wood block (which would demand four logs).
+        recipes.add(TestRecipe.of("oak_wood", "oak_wood", 3, "oak_log", "oak_log", "oak_log", "oak_log"));
+        TestRecipe thing = TestRecipe.of("thing", "thing", 1, "oak_log|oak_wood");
+        assertEquals(inv("oak_log", 1), solver().shortfall(thing, inv()).demands());
+    }
+
+    @Test
+    void shortfallBreaksCompressionCycleAndTerminates() {
+        recipes.add(TestRecipe.of("block_from_ingots", "block", 1,
+                "ingot", "ingot", "ingot", "ingot", "ingot", "ingot", "ingot", "ingot", "ingot"));
+        recipes.add(TestRecipe.of("ingots_from_block", "ingot", 9, "block"));
+        TestRecipe pick = TestRecipe.of("pick", "pick", 1, "ingot", "ingot", "ingot");
+        // ingot ⇄ block is the only producer path: the cycle break bottoms out at ingot itself.
+        RecipeGraphSolver.ShortfallResult<String> r = solver().shortfall(pick, inv());
+        assertFalse(r.demands().isEmpty());
+        assertTrue(r.demands().containsKey("ingot"), "cycle should bottom out at the cycle item");
+    }
+
+    @Test
+    void shortfallStopsAtBudgetAndReturnsPartial() {
+        recipes.add(TestRecipe.of("plank", "plank", 1, "log"));
+        TestRecipe wall = TestRecipe.of("wall", "wall", 1,
+                "plank", "plank", "plank", "plank", "plank", "plank");
+        // Tiny budget can't walk all six plank crafts: returns a partial map, flagged approximate.
+        RecipeGraphSolver.ShortfallResult<String> r = solver(32, 3).shortfall(wall, inv());
+        assertTrue(r.approximate(), "exhausting the budget must flag the result approximate");
+        assertFalse(r.demands().isEmpty());
+    }
+
+    @Test
+    void shortfallIgnoresCraftingRemainders() {
+        remainders.put("milk_bucket", "bucket");
+        TestRecipe cake = TestRecipe.of("cake", "cake", 1,
+                "milk_bucket", "milk_bucket", "milk_bucket", "wheat", "wheat", "wheat");
+        Map<String, Integer> demands = solver().shortfall(cake, inv()).demands();
+        assertEquals(inv("milk_bucket", 3, "wheat", 3), demands);
+        assertFalse(demands.containsKey("bucket"), "a byproduct is never a gatherable input");
+    }
+
+    @Test
+    void shortfallDoesNotInflateThroughStorageDecompression() {
+        // coal's only producer is "uncrafting" a coal_block (yields 9), and the block is made from
+        // 9 coal. Needing 1 coal must report 1 coal to gather — NOT the 9 that filling a block implies.
+        recipes.add(TestRecipe.of("coal_from_block", "coal", 9, "coal_block"));
+        recipes.add(TestRecipe.of("block_from_coal", "coal_block", 1,
+                "coal", "coal", "coal", "coal", "coal", "coal", "coal", "coal", "coal"));
+        TestRecipe torch = TestRecipe.of("torch", "torch", 4, "coal", "stick");
+        assertEquals(inv("coal", 1, "stick", 1), solver().shortfall(torch, inv()).demands());
+    }
+
+    @Test
+    void shortfallOfCoalTagSlotNeedsExactlyOne() {
+        // The campfire-style "coal OR charcoal" slot: coal has only a decompression producer, charcoal
+        // is a pure leaf. Either alternative, the answer is one unit to gather — never nine.
+        recipes.add(TestRecipe.of("coal_from_block", "coal", 9, "coal_block"));
+        recipes.add(TestRecipe.of("block_from_coal", "coal_block", 1,
+                "coal", "coal", "coal", "coal", "coal", "coal", "coal", "coal", "coal"));
+        TestRecipe campfire = TestRecipe.of("campfire", "campfire", 1, "coal|charcoal");
+        Map<String, Integer> demands = solver().shortfall(campfire, inv()).demands();
+        assertEquals(1, demands.values().stream().mapToInt(Integer::intValue).sum(),
+                "exactly one coal-or-charcoal to gather, got " + demands);
     }
 }

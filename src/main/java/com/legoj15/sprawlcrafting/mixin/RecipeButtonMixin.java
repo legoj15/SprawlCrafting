@@ -11,6 +11,9 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 import com.legoj15.sprawlcrafting.Constants;
 import com.legoj15.sprawlcrafting.client.DeferredClickState;
 import com.legoj15.sprawlcrafting.client.DeferredCraftableCache;
+import com.legoj15.sprawlcrafting.client.GatherCandidate;
+import com.legoj15.sprawlcrafting.client.MissingIngredientsView;
+import com.legoj15.sprawlcrafting.craft.GridContext;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 
@@ -40,10 +43,15 @@ import net.minecraft.world.item.crafting.RecipeHolder;
  * GuiGraphicsExtractor render-state model.
  */
 @Mixin(RecipeButton.class)
-public abstract class RecipeButtonMixin {
+public abstract class RecipeButtonMixin implements GatherCandidate {
 
     @Shadow
     private RecipeCollection collection;
+
+    // Same signature on both MC versions (1.21.1: ordered recipes == 1; 26.x: selectedEntries == 1):
+    // false when the button is a multi-recipe group, whose right-click vanilla owns (variant overlay).
+    @Shadow
+    public abstract boolean isOnlyOption();
 
     //? if >=1.21.11 {
     /*@Shadow
@@ -79,6 +87,11 @@ public abstract class RecipeButtonMixin {
                                                       CallbackInfoReturnable<List<Component>> cir) {
         RecipeDisplayId recipe = getCurrentRecipe();
         if (!DeferredCraftableCache.isDeferredOnly(recipe)) {
+            if (recipe != null && !collection.isCraftable(recipe) && isOnlyOption()) {
+                // Single red recipe: tell the player to right-click. Grouped recipes keep vanilla's
+                // "more recipes" hint — there, right-click opens the variant overlay, not the gather list.
+                sprawlcrafting$appendGatherHint(cir);
+            }
             return;
         }
         List<Component> lines = new java.util.ArrayList<>(cir.getReturnValue());
@@ -122,6 +135,11 @@ public abstract class RecipeButtonMixin {
     private void sprawlcrafting$appendDeferredTooltip(CallbackInfoReturnable<List<Component>> cir) {
         RecipeHolder<?> recipe = getRecipe();
         if (!DeferredCraftableCache.isDeferredOnly(recipe)) {
+            if (recipe != null && !collection.isCraftable(recipe) && isOnlyOption()) {
+                // Single red recipe: tell the player to right-click. Grouped recipes keep vanilla's
+                // "more recipes" hint — there, right-click opens the variant overlay, not the gather list.
+                sprawlcrafting$appendGatherHint(cir);
+            }
             return;
         }
         List<Component> lines = new java.util.ArrayList<>(cir.getReturnValue());
@@ -147,4 +165,37 @@ public abstract class RecipeButtonMixin {
         return any;
     }
     //?}
+
+    @Override
+    public boolean sprawlcrafting$tryOpenGatherList() {
+        //? if >=1.21.11 {
+        /*RecipeDisplayId id = getCurrentRecipe();
+        if (id == null || collection.isCraftable(id)) {
+            return false; // craftable (incl. our deferred yellow): not a red gather candidate
+        }
+        if (!isOnlyOption()) {
+            return false; // grouped recipe: leave right-click to vanilla's variant overlay
+        }
+        MissingIngredientsView.open(id);
+        return true;*/
+        //?} else {
+        RecipeHolder<?> holder = getRecipe();
+        if (holder == null || collection.isCraftable(holder)) {
+            return false; // craftable (incl. our deferred yellow): not a red gather candidate
+        }
+        if (!isOnlyOption()) {
+            return false; // grouped recipe: leave right-click to vanilla's variant overlay
+        }
+        MissingIngredientsView.open(holder, GridContext.CRAFTING_TABLE);
+        return true;
+        //?}
+    }
+
+    /** Appends the "right-click to see what you need" hint to a red recipe's tooltip. */
+    private void sprawlcrafting$appendGatherHint(CallbackInfoReturnable<List<Component>> cir) {
+        List<Component> lines = new java.util.ArrayList<>(cir.getReturnValue());
+        lines.add(Component.translatable("sprawlcrafting.gather.rightclick")
+                .withStyle(ChatFormatting.GOLD, ChatFormatting.ITALIC));
+        cir.setReturnValue(lines);
+    }
 }

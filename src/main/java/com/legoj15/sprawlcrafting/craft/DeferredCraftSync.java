@@ -112,6 +112,10 @@ public final class DeferredCraftSync {
                 recipes.getRecipeFromDisplay(new net.minecraft.world.item.crafting.display.RecipeDisplayId(displayId));
         java.util.List<net.minecraft.network.chat.Component> lines = java.util.List.of();
         if (info != null) {
+            // Vanilla parity: the first click on a recipe clears the grid back to the inventory.
+            // Do it here so a single click on a yellow recipe behaves like any vanilla recipe
+            // click, and so the preview plan below reflects the freed grid items.
+            CraftExecutor.clearOpenCraftingGrid(player);
             GridContext grid = GridContext.current(player);
             if (CraftPlanner.plan(player, info.parent(), grid) instanceof CraftPlanner.PlanOutcome.Planned planned) {
                 lines = CraftPreview.lines(planned.job(), recipes, player.registryAccess());
@@ -123,4 +127,38 @@ public final class DeferredCraftSync {
         }*/
         //?}
     }
+
+    /** Server handler: gather-list request from the recipe book (display index). No-op on 1.21.1. */
+    public static void handleShortfallByDisplay(ServerPlayer player, int token, int displayId) {
+        //? if >=1.21.11 {
+        /*net.minecraft.world.item.crafting.RecipeManager recipes = player.level().getServer().getRecipeManager();
+        net.minecraft.world.item.crafting.RecipeManager.ServerDisplayInfo info =
+                recipes.getRecipeFromDisplay(new net.minecraft.world.item.crafting.display.RecipeDisplayId(displayId));
+        sendShortfall(player, token, info == null ? null : info.parent());*/
+        //?}
+    }
+
+    /** Server handler: gather-list request from a recipe viewer (recipe id). No-op on 1.21.1. */
+    public static void handleShortfallByRecipe(ServerPlayer player, int token,
+                                               net.minecraft.resources.ResourceLocation recipeId) {
+        //? if >=1.21.11 {
+        /*sendShortfall(player, token, RecipeIds.byId(player.level().getServer().getRecipeManager(), recipeId).orElse(null));*/
+        //?}
+    }
+
+    //? if >=1.21.11 {
+    /*// Compute the gather list (informational → always cost the full 3×3 chain, never mutate the
+    // grid the way the preview handler does) and stream it back, echoing the request token.
+    private static void sendShortfall(ServerPlayer player, int token,
+                                      net.minecraft.world.item.crafting.RecipeHolder<?> holder) {
+        ShortfallView view = holder == null
+                ? ShortfallView.unavailable()
+                : CraftPlanner.shortfall(player, holder, GridContext.CRAFTING_TABLE);
+        if (Services.PLATFORM.canReceive(player, com.legoj15.sprawlcrafting.network.ShortfallPayload.TYPE.id())) {
+            player.connection.send(new net.minecraft.network.protocol.common.ClientboundCustomPayloadPacket(
+                    new com.legoj15.sprawlcrafting.network.ShortfallPayload(
+                            token, view.targetItem(), view.targetCount(), view.approximate(), view.demands())));
+        }
+    }*/
+    //?}
 }

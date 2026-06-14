@@ -71,15 +71,26 @@ dependencies {
     implementation("net.fabricmc:fabric-loader:$fabricLoaderVersion")
     implementation("net.fabricmc.fabric-api:fabric-api:$fabricApiVersion")
 
+    // Which recipe viewer loads in the dev runtime (runClient/runServer) is selectable via
+    // -Pviewer=jei|rei|both|none (default jei). The API stays compileOnly regardless, so `build`/
+    // `test` are unaffected. REI is 1.21.1-only, so -Pviewer=rei is a no-op on 26.x.
+    val viewer = (project.findProperty("viewer") as String?) ?: "jei"
+
     // JEI: common-api is the cross-loader API; the fabric jar is the dev runtime impl.
     compileOnly("mezz.jei:jei-$minecraftVersion-common-api:$jeiVersion")
     compileOnly("mezz.jei:jei-$minecraftVersion-fabric-api:$jeiVersion")
-    runtimeOnly("mezz.jei:jei-$minecraftVersion-fabric:$jeiVersion")
+    if (viewer == "jei" || viewer == "both") {
+        runtimeOnly("mezz.jei:jei-$minecraftVersion-fabric:$jeiVersion")
+    }
 
     if (hasRei) {
         // No REI build exists for 26.x, so rei_version is unset there and this block is skipped.
         val reiVersion = property("rei_version") as String
         compileOnly("me.shedaniel:RoughlyEnoughItems-api:$reiVersion")
+        if (viewer == "rei" || viewer == "both") {
+            // Full Fabric jar (+ architectury/cloth transitively) so runClient -Pviewer=rei loads REI.
+            runtimeOnly("me.shedaniel:RoughlyEnoughItems-fabric:$reiVersion")
+        }
     }
 
     // The craft solver core is pure Java and unit-tested without Minecraft.

@@ -6,7 +6,10 @@
   "compatibilityLevel": "JAVA_21",
   "mixins": [],
   "client": [
+    "OverlayRecipeButtonMixin",
+    "OverlayRecipeComponentMixin",
     "RecipeBookComponentMixin",
+    "RecipeBookPageAccessor",
     "RecipeButtonMixin",
     "RecipeCollectionAccessor",
     "RecipeCollectionMixin"

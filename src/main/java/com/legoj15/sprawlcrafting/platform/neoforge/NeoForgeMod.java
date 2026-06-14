@@ -5,14 +5,20 @@ import com.legoj15.sprawlcrafting.Constants;
 import com.legoj15.sprawlcrafting.client.ClientJobTracker;
 import com.legoj15.sprawlcrafting.client.DeferredClickState;
 import com.legoj15.sprawlcrafting.client.DeferredCraftableCache;
+import com.legoj15.sprawlcrafting.client.MissingIngredients;
 import com.legoj15.sprawlcrafting.command.SprawlCraftingCommand;
+import com.legoj15.sprawlcrafting.craft.ClientCraftingView;
 import com.legoj15.sprawlcrafting.craft.CraftQueueManager;
 import com.legoj15.sprawlcrafting.craft.CraftRequests;
 import com.legoj15.sprawlcrafting.craft.DeferredCraftSync;
 import com.legoj15.sprawlcrafting.network.CraftPreviewPayload;
 import com.legoj15.sprawlcrafting.network.CraftProgressPayload;
+import com.legoj15.sprawlcrafting.network.CraftingScreenStatePayload;
 import com.legoj15.sprawlcrafting.network.DeferredCraftableSyncPayload;
 import com.legoj15.sprawlcrafting.network.RequestCraftPreviewPayload;
+import com.legoj15.sprawlcrafting.network.RequestShortfallByDisplayPayload;
+import com.legoj15.sprawlcrafting.network.RequestShortfallByRecipePayload;
+import com.legoj15.sprawlcrafting.network.ShortfallPayload;
 import com.legoj15.sprawlcrafting.network.StartDeferredCraftByDisplayPayload;
 import com.legoj15.sprawlcrafting.network.StartDeferredCraftPayload;
 
@@ -52,6 +58,14 @@ public class NeoForgeMod {
                         CraftRequests.handleStartRequest(serverPlayer, payload.recipeId());
                     }
                 });
+        registrar.playToServer(
+                CraftingScreenStatePayload.TYPE,
+                CraftingScreenStatePayload.STREAM_CODEC,
+                (payload, context) -> {
+                    if (context.player() instanceof ServerPlayer serverPlayer) {
+                        ClientCraftingView.update(serverPlayer.getUUID(), payload.gridWidth(), payload.gridHeight());
+                    }
+                });
         registrar.playToClient(
                 CraftProgressPayload.TYPE,
                 CraftProgressPayload.STREAM_CODEC,
@@ -84,7 +98,29 @@ public class NeoForgeMod {
         registrar.playToClient(
                 CraftPreviewPayload.TYPE,
                 CraftPreviewPayload.STREAM_CODEC,
-                (payload, context) -> DeferredClickState.acceptPreview(payload.displayId(), payload.lines()));*/
+                (payload, context) -> DeferredClickState.acceptPreview(payload.displayId(), payload.lines()));
+        registrar.playToServer(
+                RequestShortfallByDisplayPayload.TYPE,
+                RequestShortfallByDisplayPayload.STREAM_CODEC,
+                (payload, context) -> {
+                    if (context.player() instanceof ServerPlayer serverPlayer) {
+                        DeferredCraftSync.handleShortfallByDisplay(serverPlayer, payload.token(), payload.displayId());
+                    }
+                });
+        registrar.playToServer(
+                RequestShortfallByRecipePayload.TYPE,
+                RequestShortfallByRecipePayload.STREAM_CODEC,
+                (payload, context) -> {
+                    if (context.player() instanceof ServerPlayer serverPlayer) {
+                        DeferredCraftSync.handleShortfallByRecipe(serverPlayer, payload.token(), payload.recipeId());
+                    }
+                });
+        registrar.playToClient(
+                ShortfallPayload.TYPE,
+                ShortfallPayload.STREAM_CODEC,
+                (payload, context) -> MissingIngredients.accept(
+                        payload.token(), payload.targetItem(), payload.targetCount(),
+                        payload.approximate(), payload.demands()));*/
         //?}
     }
 

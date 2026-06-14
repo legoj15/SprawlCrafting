@@ -12,6 +12,7 @@ import com.legoj15.sprawlcrafting.craft.solver.RecipeGraphSolver.Result;
 
 import net.minecraft.core.HolderLookup;
 import net.minecraft.core.NonNullList;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.player.Inventory;
@@ -78,6 +79,20 @@ public final class CraftPlanner {
         }
         return session(player.level().getServer().getRecipeManager(), player.registryAccess(),
                 player.getInventory(), grid).plan(targetHolder);
+    }
+
+    /**
+     * The raw materials the player still needs to make {@code targetHolder} (see
+     * {@link Session#shortfall}). The gather list is informational, so callers pass
+     * {@link GridContext#CRAFTING_TABLE} to cost the full 3×3 chain regardless of which grid the
+     * query came from. Returns {@link ShortfallView#unavailable()} for unplannable recipes.
+     */
+    public static ShortfallView shortfall(ServerPlayer player, RecipeHolder<?> targetHolder, GridContext grid) {
+        if (McRecipe.of(targetHolder, player.registryAccess()) == null) {
+            return ShortfallView.unavailable();
+        }
+        return session(player.level().getServer().getRecipeManager(), player.registryAccess(),
+                player.getInventory(), grid).shortfall(targetHolder);
     }
 
     /**
@@ -197,6 +212,33 @@ public final class CraftPlanner {
                 return new PlanOutcome.TooComplex();
             }
             return new PlanOutcome.Unsolvable(failure.missing().stream().toList());
+        }
+
+        /**
+         * The net raw-gatherable demand to make {@code targetHolder} once, mapping the solver's
+         * leaf {@link Item}s back to registry ids (sorted for a deterministic wire order). Used both
+         * for the chat-free "gather list" UI and the server reply on 26.x. A recipe that doesn't fit
+         * the grid yields an empty demand list (the screen still titles itself from the target).
+         */
+        public ShortfallView shortfall(RecipeHolder<?> targetHolder) {
+            McRecipe target = McRecipe.of(targetHolder, registries);
+            if (target == null) {
+                return ShortfallView.unavailable();
+            }
+            ResourceLocation targetId = BuiltInRegistries.ITEM.getKey(target.result());
+            if (!target.fits(grid)) {
+                return new ShortfallView(targetId, target.resultCount(), false, List.of());
+            }
+            RecipeGraphSolver.ShortfallResult<Item> result = solver.shortfall(target, inventory);
+            List<ItemDemand> demands = new ArrayList<>();
+            result.demands().forEach((item, count) -> {
+                List<Item> altItems = result.alternatives().getOrDefault(item, List.of(item));
+                List<ResourceLocation> altIds = altItems.stream()
+                        .map(BuiltInRegistries.ITEM::getKey).toList();
+                demands.add(new ItemDemand(altIds, count));
+            });
+            demands.sort(Comparator.comparing(d -> d.items().get(0).toString()));
+            return new ShortfallView(targetId, target.resultCount(), result.approximate(), demands);
         }
 
         private boolean fits2x2(ResourceLocation recipeId, McRecipe target) {

@@ -61,6 +61,24 @@ public final class CraftJob {
         return stepIndex >= steps.size();
     }
 
+    /**
+     * True while the current step is the last one — the step that produces the requested
+     * item. Must be read before {@link #onCraftPerformed()} (which advances {@code stepIndex}).
+     */
+    public boolean isFinalStep() {
+        return stepIndex == steps.size() - 1;
+    }
+
+    /**
+     * True when the craft about to be performed is the final craft of the current step
+     * (the next {@link #onCraftPerformed()} will advance past it). Lets the grid-fill
+     * hand-off divert only the very last craft of the final step, auto-crafting any
+     * earlier crafts of a multi-craft step normally.
+     */
+    public boolean isLastCraftOfStep() {
+        return craftsDoneInStep == currentStep().crafts() - 1;
+    }
+
     public int totalCrafts() {
         return totalCrafts;
     }

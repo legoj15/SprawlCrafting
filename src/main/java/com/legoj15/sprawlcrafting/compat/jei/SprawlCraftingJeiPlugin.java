@@ -1,12 +1,14 @@
 package com.legoj15.sprawlcrafting.compat.jei;
 
 import com.legoj15.sprawlcrafting.Constants;
+import com.legoj15.sprawlcrafting.client.MissingIngredientsScreen;
 
 import mezz.jei.api.IModPlugin;
 import mezz.jei.api.JeiPlugin;
 import mezz.jei.api.constants.RecipeTypes;
 import mezz.jei.api.recipe.transfer.IRecipeTransferHandlerHelper;
 import mezz.jei.api.recipe.transfer.IRecipeTransferInfo;
+import mezz.jei.api.registration.IGuiHandlerRegistration;
 import mezz.jei.api.registration.IRecipeTransferRegistration;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.inventory.CraftingMenu;
@@ -45,5 +47,14 @@ public class SprawlCraftingJeiPlugin implements IModPlugin {
         registration.addRecipeTransferHandler(
                 new DeferredCraftingTransferHandler(helper.createUnregisteredRecipeTransferHandler(tableInfo)),
                 RecipeTypes.CRAFTING);
+    }
+
+    @Override
+    public void registerGuiHandlers(IGuiHandlerRegistration registration) {
+        // Two halves of making R/U work on the gather-list screen (a plain Screen, not a container):
+        // the screen handler marks it as JEI-handled (R/U input is gated on getGuiProperties), and the
+        // global handler reports the hovered item as the ingredient under the mouse.
+        registration.addGuiScreenHandler(MissingIngredientsScreen.class, GatherListGuiHandler::guiProperties);
+        registration.addGlobalGuiHandler(new GatherListGuiHandler());
     }
 }

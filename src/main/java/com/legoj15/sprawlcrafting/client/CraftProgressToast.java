@@ -102,6 +102,9 @@ public class CraftProgressToast implements Toast {
             case CANCELLED -> guiGraphics.text(font,
                     Component.translatable("sprawlcrafting.toast.cancelled"),
                     TEXT_X, 12, CANCELLED_COLOR, false);
+            case READY_IN_GRID -> drawClipped(guiGraphics, font,
+                    Component.translatable("sprawlcrafting.toast.ready_in_grid", job.target().getHoverName()),
+                    12, FINISHED_COLOR);
         }
     }
 
@@ -160,6 +163,9 @@ public class CraftProgressToast implements Toast {
             case CANCELLED -> guiGraphics.drawString(font,
                     Component.translatable("sprawlcrafting.toast.cancelled"),
                     TEXT_X, 12, CANCELLED_COLOR, false);
+            case READY_IN_GRID -> drawClipped(guiGraphics, font,
+                    Component.translatable("sprawlcrafting.toast.ready_in_grid", job.target().getHoverName()),
+                    12, FINISHED_COLOR);
         }
         return Toast.Visibility.SHOW;
     }

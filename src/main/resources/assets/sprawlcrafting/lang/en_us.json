@@ -2,6 +2,7 @@
   "sprawlcrafting.craft.started": "Crafting %s — %s component crafts queued",
   "sprawlcrafting.craft.progress": "Crafting %s: %s (%s/%s)",
   "sprawlcrafting.craft.finished": "Crafted %s",
+  "sprawlcrafting.craft.ready_in_grid": "%s ready — grab it from your crafting grid",
   "sprawlcrafting.craft.missing": "Crafting %s cancelled — missing %s",
   "sprawlcrafting.craft.recipe_gone": "Crafting %s cancelled — recipe no longer exists",
   "sprawlcrafting.craft.cancelled": "Cancelled crafting %s",
@@ -14,6 +15,7 @@
   "sprawlcrafting.toast.step": "%s/%s",
   "sprawlcrafting.toast.paused": "Need a crafting table!",
   "sprawlcrafting.toast.finished": "Crafted %s",
+  "sprawlcrafting.toast.ready_in_grid": "Ready — grab %s",
   "sprawlcrafting.toast.cancelled": "Crafting cancelled",
   "sprawlcrafting.craft.status": "Crafting %s — %s/%s component crafts done",
   "sprawlcrafting.craft.none": "No craft in progress",
@@ -23,5 +25,15 @@
   "sprawlcrafting.recipe.deferred.click": "Click to queue the deferred craft",
   "sprawlcrafting.preview.header": "Craft %s from raw resources:",
   "sprawlcrafting.preview.step": "%s× %s",
-  "sprawlcrafting.preview.confirm": "Click again to start"
+  "sprawlcrafting.preview.confirm": "Click again to start",
+  "sprawlcrafting.gather.header": "Missing materials",
+  "sprawlcrafting.gather.title": "To craft %s, you still need:",
+  "sprawlcrafting.gather.line": "%s× %s",
+  "sprawlcrafting.gather.need": "Still need: %s",
+  "sprawlcrafting.gather.more": "…and %s more",
+  "sprawlcrafting.gather.click": "Click to see the full gather list",
+  "sprawlcrafting.gather.rightclick": "Right-click to see what you need",
+  "sprawlcrafting.gather.loading": "Working out what you need…",
+  "sprawlcrafting.gather.approximate": "List may be incomplete — recipe tree too complex",
+  "sprawlcrafting.gather.empty": "A 3×3 crafting table (you already have the materials)"
 }

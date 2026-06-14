@@ -125,17 +125,30 @@ neoForge {
 }
 
 dependencies {
+    // Which recipe viewer loads in the dev runtime (runClient/runServer) is selectable via
+    // -Pviewer=jei|rei|both|none (default jei). APIs stay compileOnly, so `build`/`test` are
+    // unaffected. REI is 1.21.1-only, so -Pviewer=rei is a no-op on 26.x.
+    val viewer = (project.findProperty("viewer") as String?) ?: "jei"
+
     // JEI: API for compile, full mod on the dev runtime so runClient exercises the integration.
     compileOnly("mezz.jei:jei-$minecraftVersion-common-api:$jeiVersion")
     compileOnly("mezz.jei:jei-$minecraftVersion-neoforge-api:$jeiVersion")
-    runtimeOnly("mezz.jei:jei-$minecraftVersion-neoforge:$jeiVersion")
+    if (viewer == "jei" || viewer == "both") {
+        runtimeOnly("mezz.jei:jei-$minecraftVersion-neoforge:$jeiVersion")
+    }
 
     if (hasRei) {
         // Compile against the full NeoForge jar for @REIPluginClient (not in the API jar);
-        // non-transitive to avoid pulling architectury/cloth. No runtimeOnly — REI is provided
-        // by the tester's own install to avoid double-loading.
+        // non-transitive to keep architectury/cloth off the COMPILE classpath.
         val reiVersion = property("rei_version") as String
         compileOnly("me.shedaniel:RoughlyEnoughItems-neoforge:$reiVersion") { isTransitive = false }
+        // REI's EntryStacks references architectury's FluidStack, needed at compile for the R/U
+        // ViewSearchBuilder lookup. compileOnly + non-transitive; the runtime gets it via REI below.
+        compileOnly("dev.architectury:architectury:13.0.6") { isTransitive = false }
+        if (viewer == "rei" || viewer == "both") {
+            // Transitive (pulls architectury/cloth) so runClient -Pviewer=rei actually loads REI.
+            runtimeOnly("me.shedaniel:RoughlyEnoughItems-neoforge:$reiVersion")
+        }
     }
 
     testImplementation(platform("org.junit:junit-bom:5.10.3"))

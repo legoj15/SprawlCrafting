@@ -21,10 +21,17 @@ public record CraftProgressPayload(State state, ItemStack target, ItemStack curr
                                    int done, int total) implements CustomPacketPayload {
 
     public enum State {
-        CRAFTING, PAUSED, FINISHED, CANCELLED;
+        // Wire format is ordinal-keyed (STATE_CODEC below) and PayloadCodecTest pins that
+        // out-of-range ordinals throw — only ever APPEND new states here, never reorder.
+        CRAFTING, PAUSED, FINISHED, CANCELLED, READY_IN_GRID;
 
+        /**
+         * The job is over for the client's purposes — the toast lingers, then slides out.
+         * READY_IN_GRID is terminal: the server has handed the final craft off to the open
+         * crafting grid and freed the job slot; the player just grabs the result.
+         */
         public boolean isTerminal() {
-            return this == FINISHED || this == CANCELLED;
+            return this == FINISHED || this == CANCELLED || this == READY_IN_GRID;
         }
     }
 

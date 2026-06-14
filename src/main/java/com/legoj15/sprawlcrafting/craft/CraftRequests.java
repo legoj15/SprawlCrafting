@@ -33,6 +33,10 @@ public final class CraftRequests {
         if (CraftQueueManager.activeJob(player.getUUID()).isPresent()) {
             return new StartOutcome.Busy();
         }
+        // Vanilla parity: clicking a recipe returns the grid's contents to the inventory before
+        // acting. We intercept the click, so replicate it here — and so the planner (which reads
+        // only the 36 main slots) can see items that were sitting in the grid.
+        CraftExecutor.clearOpenCraftingGrid(player);
         PlanOutcome outcome = CraftPlanner.plan(player, holder, GridContext.current(player));
         if (outcome instanceof PlanOutcome.Planned planned) {
             CraftQueueManager.start(player, planned.job());

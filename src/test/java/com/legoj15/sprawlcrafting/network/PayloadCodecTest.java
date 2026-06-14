@@ -1,8 +1,11 @@
 package com.legoj15.sprawlcrafting.network;
 
+import java.util.List;
 import java.util.Set;
 
 import org.junit.jupiter.api.Test;
+
+import com.legoj15.sprawlcrafting.craft.ItemDemand;
 
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
@@ -39,6 +42,16 @@ class PayloadCodecTest {
         ByteBuf b = buf();
         StartDeferredCraftPayload.STREAM_CODEC.encode(b, original);
         StartDeferredCraftPayload decoded = StartDeferredCraftPayload.STREAM_CODEC.decode(b);
+        assertEquals(original, decoded);
+        assertEquals(0, b.readableBytes(), "codec must consume the whole buffer");
+    }
+
+    @Test
+    void craftingScreenStatePayloadRoundTrips() {
+        CraftingScreenStatePayload original = new CraftingScreenStatePayload(3, 3);
+        ByteBuf b = buf();
+        CraftingScreenStatePayload.STREAM_CODEC.encode(b, original);
+        CraftingScreenStatePayload decoded = CraftingScreenStatePayload.STREAM_CODEC.decode(b);
         assertEquals(original, decoded);
         assertEquals(0, b.readableBytes(), "codec must consume the whole buffer");
     }
@@ -82,6 +95,49 @@ class PayloadCodecTest {
         assertTrue(decoded.recipeIds().isEmpty());
     }
 
+    @Test
+    void shortfallRequestPayloadsRoundTrip() {
+        ByteBuf b1 = buf();
+        RequestShortfallByDisplayPayload.STREAM_CODEC.encode(b1, new RequestShortfallByDisplayPayload(5, 4242));
+        assertEquals(new RequestShortfallByDisplayPayload(5, 4242),
+                RequestShortfallByDisplayPayload.STREAM_CODEC.decode(b1));
+        assertEquals(0, b1.readableBytes());
+
+        ByteBuf b2 = buf();
+        RequestShortfallByRecipePayload original = new RequestShortfallByRecipePayload(
+                9, ResourceLocation.fromNamespaceAndPath("minecraft", "piston"));
+        RequestShortfallByRecipePayload.STREAM_CODEC.encode(b2, original);
+        assertEquals(original, RequestShortfallByRecipePayload.STREAM_CODEC.decode(b2));
+        assertEquals(0, b2.readableBytes());
+    }
+
+    @Test
+    void shortfallPayloadRoundTrips() {
+        ShortfallPayload original = new ShortfallPayload(
+                7, ResourceLocation.fromNamespaceAndPath("minecraft", "piston"), 1, true,
+                List.of(new ItemDemand(List.of(ResourceLocation.fromNamespaceAndPath("minecraft", "iron_ingot")), 1),
+                        new ItemDemand(List.of(ResourceLocation.fromNamespaceAndPath("minecraft", "oak_log"),
+                                ResourceLocation.fromNamespaceAndPath("minecraft", "spruce_log")), 12)));
+        ByteBuf b = buf();
+        ShortfallPayload.STREAM_CODEC.encode(b, original);
+        ShortfallPayload decoded = ShortfallPayload.STREAM_CODEC.decode(b);
+        assertEquals(original, decoded);
+        assertEquals(0, b.readableBytes(), "codec must consume the whole buffer");
+    }
+
+    @Test
+    void shortfallPayloadWithEmptyDemandsRoundTripsToEmptyNotNull() {
+        // Empty demands is the "nothing to gather / not plannable" signal — pin that list() yields
+        // an empty list, not null, so the client can branch on isEmpty() safely.
+        ShortfallPayload original = new ShortfallPayload(
+                0, ResourceLocation.fromNamespaceAndPath("minecraft", "air"), 0, false, List.of());
+        ByteBuf b = buf();
+        ShortfallPayload.STREAM_CODEC.encode(b, original);
+        ShortfallPayload decoded = ShortfallPayload.STREAM_CODEC.decode(b);
+        assertEquals(original, decoded);
+        assertTrue(decoded.demands().isEmpty());
+    }
+
     // --- CraftProgressPayload.State: the one hand-rolled enum codec on the wire ---
 
     /** Mirror of the private STATE_CODEC (CraftProgressPayload.java:34) — same idMapper shape. */
@@ -103,6 +159,8 @@ class PayloadCodecTest {
         // The toast lifecycle keys on isTerminal(); guard the ordinal-derived semantics.
         assertTrue(CraftProgressPayload.State.FINISHED.isTerminal());
         assertTrue(CraftProgressPayload.State.CANCELLED.isTerminal());
+        // The grid hand-off frees the job slot, so its toast lingers then slides out like FINISHED.
+        assertTrue(CraftProgressPayload.State.READY_IN_GRID.isTerminal());
         assertFalse(CraftProgressPayload.State.CRAFTING.isTerminal());
         assertFalse(CraftProgressPayload.State.PAUSED.isTerminal());
     }

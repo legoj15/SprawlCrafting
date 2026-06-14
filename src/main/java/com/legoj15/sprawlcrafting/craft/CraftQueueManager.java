@@ -57,10 +57,12 @@ public final class CraftQueueManager {
 
     public static void clear(UUID playerId) {
         ACTIVE.remove(playerId);
+        ClientCraftingView.clear(playerId);
     }
 
     public static void clearAll() {
         ACTIVE.clear();
+        ClientCraftingView.clearAll();
     }
 
     /** Advances the player's job by one tick; performs a craft when one comes due. */
@@ -74,6 +76,31 @@ public final class CraftQueueManager {
             job.holdForRetry();
             sync(player, job, CraftProgressPayload.State.PAUSED, ItemStack.EMPTY);
             return;
+        }
+        // If the final craft is due and the player has a compatible crafting grid open, lay the
+        // recipe out in that grid for them to grab (a real vanilla craft) instead of auto-crafting
+        // it. Any case that can't cleanly hand off falls through to the normal auto-craft below.
+        if (job.isFinalStep() && job.isLastCraftOfStep() && canHandOff(player, job.currentStep())) {
+            switch (CraftExecutor.tryFillFinalGrid(player, job.currentStep().recipeId())) {
+                case CraftExecutor.FillOutcome.Filled filled -> {
+                    job.onCraftPerformed();
+                    ACTIVE.remove(player.getUUID());
+                    sync(player, job, CraftProgressPayload.State.READY_IN_GRID, filled.result());
+                    notify(player, Component.translatable("sprawlcrafting.craft.ready_in_grid",
+                            job.targetResult().getHoverName()).withStyle(ChatFormatting.GREEN));
+                    return;
+                }
+                case CraftExecutor.FillOutcome.RecipeGone gone -> {
+                    ACTIVE.remove(player.getUUID());
+                    sync(player, job, CraftProgressPayload.State.CANCELLED, ItemStack.EMPTY);
+                    notify(player, Component.translatable("sprawlcrafting.craft.recipe_gone",
+                            job.targetResult().getHoverName()).withStyle(ChatFormatting.RED));
+                    return;
+                }
+                case CraftExecutor.FillOutcome.Fallback fallback -> {
+                    // Couldn't hand off (recipe locked, grid uncleanable, …) — auto-craft below.
+                }
+            }
         }
         switch (CraftExecutor.craftOnce(player, job.currentStep().recipeId())) {
             case CraftExecutor.CraftResult.Success success -> {
@@ -100,6 +127,20 @@ public final class CraftQueueManager {
                         job.targetResult().getHoverName()).withStyle(ChatFormatting.RED));
             }
         }
+    }
+
+    /**
+     * Whether the player has a crafting grid open that the final craft can be handed off to.
+     * The grid must be reported open by the client ({@link ClientCraftingView}), agree with the
+     * server's view of the open menu ({@link GridContext#current}), and be large enough for the
+     * step (a full-grid recipe needs a 3×3 table, not the 2×2 inventory grid).
+     */
+    private static boolean canHandOff(ServerPlayer player, CraftStep step) {
+        GridContext open = ClientCraftingView.open(player);
+        if (open == null || GridContext.current(player) != open) {
+            return false;
+        }
+        return !step.needsFullGrid() || open == GridContext.CRAFTING_TABLE;
     }
 
     /** Player feedback line. 26.x renamed displayClientMessage -> sendSystemMessage(overlay). */

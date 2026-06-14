@@ -2,13 +2,18 @@ package com.legoj15.sprawlcrafting.platform.fabric;
 
 import com.legoj15.sprawlcrafting.CommonClass;
 import com.legoj15.sprawlcrafting.command.SprawlCraftingCommand;
+import com.legoj15.sprawlcrafting.craft.ClientCraftingView;
 import com.legoj15.sprawlcrafting.craft.CraftQueueManager;
 import com.legoj15.sprawlcrafting.craft.CraftRequests;
 import com.legoj15.sprawlcrafting.craft.DeferredCraftSync;
 import com.legoj15.sprawlcrafting.network.CraftPreviewPayload;
 import com.legoj15.sprawlcrafting.network.CraftProgressPayload;
+import com.legoj15.sprawlcrafting.network.CraftingScreenStatePayload;
 import com.legoj15.sprawlcrafting.network.DeferredCraftableSyncPayload;
 import com.legoj15.sprawlcrafting.network.RequestCraftPreviewPayload;
+import com.legoj15.sprawlcrafting.network.RequestShortfallByDisplayPayload;
+import com.legoj15.sprawlcrafting.network.RequestShortfallByRecipePayload;
+import com.legoj15.sprawlcrafting.network.ShortfallPayload;
 import com.legoj15.sprawlcrafting.network.StartDeferredCraftByDisplayPayload;
 import com.legoj15.sprawlcrafting.network.StartDeferredCraftPayload;
 
@@ -30,10 +35,15 @@ public class FabricMod implements ModInitializer {
 
         c2s().register(
                 StartDeferredCraftPayload.TYPE, StartDeferredCraftPayload.STREAM_CODEC);
+        c2s().register(
+                CraftingScreenStatePayload.TYPE, CraftingScreenStatePayload.STREAM_CODEC);
         s2c().register(
                 CraftProgressPayload.TYPE, CraftProgressPayload.STREAM_CODEC);
         ServerPlayNetworking.registerGlobalReceiver(StartDeferredCraftPayload.TYPE,
                 (payload, context) -> CraftRequests.handleStartRequest(context.player(), payload.recipeId()));
+        ServerPlayNetworking.registerGlobalReceiver(CraftingScreenStatePayload.TYPE,
+                (payload, context) -> ClientCraftingView.update(
+                        context.player().getUUID(), payload.gridWidth(), payload.gridHeight()));
 
         // 26.x server-driven recipe-book layer: the deferred-craftability sync + display-keyed
         // start + plan-preview round-trip. 1.21.1 computes all of this on the client (no payloads).
@@ -49,7 +59,19 @@ public class FabricMod implements ModInitializer {
         ServerPlayNetworking.registerGlobalReceiver(StartDeferredCraftByDisplayPayload.TYPE,
                 (payload, context) -> DeferredCraftSync.handleStartByDisplay(context.player(), payload.displayId()));
         ServerPlayNetworking.registerGlobalReceiver(RequestCraftPreviewPayload.TYPE,
-                (payload, context) -> DeferredCraftSync.handlePreviewRequest(context.player(), payload.displayId()));*/
+                (payload, context) -> DeferredCraftSync.handlePreviewRequest(context.player(), payload.displayId()));
+        c2s().register(
+                RequestShortfallByDisplayPayload.TYPE, RequestShortfallByDisplayPayload.STREAM_CODEC);
+        c2s().register(
+                RequestShortfallByRecipePayload.TYPE, RequestShortfallByRecipePayload.STREAM_CODEC);
+        s2c().register(
+                ShortfallPayload.TYPE, ShortfallPayload.STREAM_CODEC);
+        ServerPlayNetworking.registerGlobalReceiver(RequestShortfallByDisplayPayload.TYPE,
+                (payload, context) -> DeferredCraftSync.handleShortfallByDisplay(
+                        context.player(), payload.token(), payload.displayId()));
+        ServerPlayNetworking.registerGlobalReceiver(RequestShortfallByRecipePayload.TYPE,
+                (payload, context) -> DeferredCraftSync.handleShortfallByRecipe(
+                        context.player(), payload.token(), payload.recipeId()));*/
         //?}
 
         ServerTickEvents.END_SERVER_TICK.register(server -> {
