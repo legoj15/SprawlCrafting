@@ -22,8 +22,8 @@ val modAuthor = property("mod_author") as String
 val modDescription = property("description") as String
 val modLicense = property("license") as String
 val hasRei = project.findProperty("rei_version") != null
-// Mod Menu (Fabric config-screen button) is present only on nodes that pin a modmenu_version. No
-// 26.1 build is published, so this node leaves it unset → the integration class is excluded below.
+// Mod Menu (Fabric config-screen button) is present only on nodes that pin a modmenu_version. The
+// 26.1.x line pins 18.x (a pre-release; see gradle.properties), so hasModMenu is true here.
 val hasModMenu = project.findProperty("modmenu_version") != null
 
 // ─── Stonecutter source replacements (forward-port 1.21.1-canonical source to 26.x) ──────────
@@ -62,7 +62,7 @@ repositories {
     maven("https://maven.fabricmc.net/")
     maven("https://maven.blamejared.com")   // JEI
     maven("https://maven.shedaniel.me/")     // REI (unused on 26.x; kept for parity)
-    maven("https://maven.terraformersmc.com/releases") // Mod Menu (unused on 26.x; kept for parity)
+    maven("https://maven.terraformersmc.com/releases") // Mod Menu
     mavenCentral()
 }
 
@@ -97,8 +97,8 @@ dependencies {
         }
     }
 
-    // Mod Menu API (plain compileOnly on this unobfuscated node). Inert unless a 26.1 build is later
-    // pinned via modmenu_version; until then hasModMenu is false and the class is excluded below.
+    // Mod Menu API (plain compileOnly on this unobfuscated node). The 26.1.x line pins modmenu_version
+    // (18.x), so hasModMenu is true and SprawlModMenuIntegration is compiled in.
     if (hasModMenu) {
         compileOnly("com.terraformersmc:modmenu:${property("modmenu_version")}")
     }

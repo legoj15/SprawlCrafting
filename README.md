@@ -41,7 +41,7 @@ Right-click a **red** recipe (or left-click the **orange** gather button in JEI/
 - **Optional integrations:**
   - **JEI** - adds the deferred-craft and gather buttons (both Minecraft versions)
   - **REI** - same buttons (1.21.1 only)
-  - **Mod Menu** - in-game config button (Fabric and 1.21.1 only)
+  - **Mod Menu** - in-game config button (Fabric only; both Minecraft versions)
 
 Multiplayer is supported; install the mod on both the client and the server. A vanilla client can still join a SprawlCrafting server (it just won't see any of the features), and a SprawlCrafting client on a vanilla server simply gets no deferred-craft offers.
 
@@ -54,7 +54,7 @@ Settings live in `config/sprawlcrafting.json` and can also be changed in-game (M
 | `sound_effects` | the per-step craft "pop" sound |
 | `jei_integration` | master switch for all JEI buttons |
 | `rei_integration` | master switch for all REI buttons |
-| `needs_system` | the "what do I still need" helper — right-clicking red recipes, the tooltip hint, and the orange gather button |
+| `needs_system` | the "what do I still need" screen, right-clicking red recipes, the tooltip hint, and the orange gather button |
 
 ## Building from source
 
