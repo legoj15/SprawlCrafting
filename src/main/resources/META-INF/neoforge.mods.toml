@@ -2,6 +2,7 @@ modLoader = "javafml" #mandatory
 loaderVersion = "${neoforge_loader_version_range}" #mandatory
 license = "${license}" # Review your options at https://choosealicense.com/.
 issueTrackerURL = "https://github.com/legoj15/SprawlCrafting/issues" #optional
+logoFile = "assets/sprawlcrafting/icon.png" #optional — shared with Fabric; resolved from JAR root
 [[mods]] #mandatory
 modId = "${mod_id}" #mandatory
 version = "${version}" #mandatory
