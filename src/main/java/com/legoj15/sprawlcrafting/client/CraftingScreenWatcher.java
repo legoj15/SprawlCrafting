@@ -18,10 +18,14 @@ import net.minecraft.world.inventory.RecipeBookMenu;
  * craft's final step can be handed off to that grid for the player to grab. The server can't
  * observe the 2×2 inventory screen itself (see {@link CraftingScreenStatePayload}).
  *
- * <p>Only sends while a job is active ({@link ClientJobTracker}): this gates the optional
- * channel to SprawlCrafting servers (a modless server never starts a job, so the send can't
- * throw) and keeps it to a few packets per job. It pushes the current grid the moment a job
- * becomes active, then again whenever the open grid changes.
+ * <p>On 1.21.1 it only sends while a job is active ({@link ClientJobTracker}): this gates the
+ * optional channel to SprawlCrafting servers (a modless server never starts a job, so the send
+ * can't throw) and keeps it to a few packets per job. On 26.x it reports continuously — on every
+ * crafting-screen open/close — gated instead by {@code IPlatformHelper.canSendToServer} (so
+ * modless servers never see it), because the server also uses the open/closed signal to gate its
+ * deferred-craftable reclassification ({@code DeferredCraftSync.maybeSync}). Either way it only
+ * sends on change (the open grid's dimensions differ from the last send), so an idle player
+ * generates no traffic.
  */
 public final class CraftingScreenWatcher {
 
@@ -64,7 +68,18 @@ public final class CraftingScreenWatcher {
         }
         sawJob = hasJob;
 
+        //? if >=1.21.11 {
+        /*// 26.x: report the open crafting grid continuously (not only during jobs) so the server can
+        // gate its deferred-craftable reclassification to players who actually have a recipe screen
+        // open. canSendToServer keeps this off vanilla/modless servers, which never negotiate the
+        // channel (so a job-gate is no longer needed for that). 1.21.1 has no server sync, so it
+        // keeps the original job-gated reporting below (used only for the final-step hand-off).
+        net.minecraft.client.multiplayer.ClientPacketListener listener = minecraft.getConnection();
+        boolean active = listener != null
+                && Services.PLATFORM.canSendToServer(listener.getConnection(), CraftingScreenStatePayload.TYPE.id());*/
+        //?} else {
         boolean active = hasJob && minecraft.getConnection() != null;
+        //?}
         if (!active) {
             wasActive = false;
             return;

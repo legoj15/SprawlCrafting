@@ -3,6 +3,7 @@ package com.legoj15.sprawlcrafting.platform.neoforge;
 import java.nio.file.Path;
 
 import com.legoj15.sprawlcrafting.platform.services.IPlatformHelper;
+import net.minecraft.network.Connection;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerPlayer;
@@ -28,6 +29,12 @@ public class NeoForgePlatformHelper implements IPlatformHelper {
     @Override
     public boolean canReceive(ServerPlayer player, ResourceLocation payloadId) {
         return NetworkRegistry.hasChannel(player.connection, payloadId);
+    }
+
+    @Override
+    public boolean canSendToServer(Connection connection, ResourceLocation payloadId) {
+        // null protocol = check the negotiated channels across all protocols (we're in PLAY).
+        return NetworkRegistry.hasChannel(connection, null, payloadId);
     }
 
     @Override

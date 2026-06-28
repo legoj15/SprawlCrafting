@@ -17,9 +17,13 @@ import net.minecraft.resources.ResourceLocation;
  * step comes due, whether to hand the last craft off to an open grid for the player to
  * grab (see {@code CraftQueueManager}/{@code ClientCraftingView}).
  *
- * <p>The client only sends this while a job is active ({@code ClientJobTracker}), which
- * both gates it to SprawlCrafting servers (a modless server never starts a job, so the
- * optional channel is never exercised) and keeps it to a handful of packets per job.
+ * <p>On 1.21.1 the client only sends this while a job is active ({@code ClientJobTracker}),
+ * which both gates it to SprawlCrafting servers and keeps it to a handful of packets per job.
+ * On 26.x it is sent continuously (on every crafting-screen open/close), gated instead by
+ * {@code IPlatformHelper.canSendToServer} so vanilla/modless servers never see it — the server
+ * needs the open/closed signal to gate its deferred-craftable reclassification ({@code
+ * DeferredCraftSync.maybeSync}) to players who actually have a recipe screen open. Sent only on
+ * change (grid dimensions differ from the last send), so an idle player generates no traffic.
  */
 public record CraftingScreenStatePayload(int gridWidth, int gridHeight) implements CustomPacketPayload {
 

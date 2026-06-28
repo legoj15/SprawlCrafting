@@ -2,6 +2,7 @@ package com.legoj15.sprawlcrafting.platform.services;
 
 import java.nio.file.Path;
 
+import net.minecraft.network.Connection;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerPlayer;
@@ -36,6 +37,16 @@ public interface IPlatformHelper {
      * registers its payloads as optional, so modless clients are never kicked).
      */
     boolean canReceive(ServerPlayer player, ResourceLocation payloadId);
+
+    /**
+     * Client-side counterpart to {@link #canReceive}: whether the server has negotiated the given
+     * C2S channel — i.e. the client can send this payload without it erroring/being dropped on a
+     * vanilla or modless server. {@code connection} is the client's play connection, passed in by
+     * the (client-only) caller so this method stays free of client-only types; the Fabric
+     * implementation derives the connection from its own API and ignores the argument. Call only
+     * from client code.
+     */
+    boolean canSendToServer(Connection connection, ResourceLocation payloadId);
 
     /**
      * Checks if a mod with the given id is loaded.

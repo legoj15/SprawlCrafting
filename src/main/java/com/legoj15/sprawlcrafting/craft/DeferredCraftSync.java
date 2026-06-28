@@ -36,15 +36,39 @@ public final class DeferredCraftSync {
      */
     private static final Map<UUID, Long> LAST_SYNC = new ConcurrentHashMap<>();
 
+    /** Server tick of each player's last actual push, for the {@link #SYNC_THROTTLE_TICKS} coalesce. */
+    private static final Map<UUID, Integer> LAST_SYNC_TICK = new ConcurrentHashMap<>();
+
     /**
-     * If the player has a crafting grid open and its (menu, grid, inventory) state changed since
-     * the last push, reclassify all crafting recipes and sync the deferred-only set. No-op on 1.21.1.
+     * Coalesce window: at most one deferred-set reclassify+push per player per this many ticks, so a
+     * burst of inventory edits (shift-clicking a stack apart, an influx of items) collapses into one
+     * push instead of reclassifying ~all recipes every tick. A deferred change is never dropped — the
+     * debounce key still differs, so it re-fires once the window passes.
+     */
+    private static final int SYNC_THROTTLE_TICKS = 10;
+
+    /**
+     * If the player has a crafting screen open and its (menu, grid, inventory contents) state changed
+     * since the last push, reclassify all crafting recipes and sync the deferred-only set. Gated to a
+     * screen actually being open (and rate-limited) so idle/gathering players cost nothing. No-op on
+     * 1.21.1.
      */
     public static void maybeSync(ServerPlayer player) {
         //? if >=1.21.11 {
         /*if (!(player.containerMenu instanceof net.minecraft.world.inventory.AbstractCraftingMenu menu)) {
             LAST_SYNC.remove(player.getUUID());
-            return; // no crafting grid open — nothing to classify
+            LAST_SYNC_TICK.remove(player.getUUID());
+            return; // a non-crafting container (or nothing) — nothing to classify
+        }
+        // Only classify/push while the client actually has a crafting screen open (reported via
+        // CraftingScreenStatePayload — the server can't see the 2x2 inventory screen itself). The
+        // deferred set is only ever read by the open recipe book, so reclassifying the full recipe
+        // set for players merely walking around gathering (the bulk of inventory churn) is wasted
+        // work. Trade-off: a recipe that became craftable while the screen was CLOSED outlines
+        // correctly only after the open round-trip (a brief red->yellow on the first frames after
+        // opening). Don't touch LAST_SYNC here, so reopening re-pushes only if the inventory changed.
+        if (ClientCraftingView.open(player) == null) {
+            return;
         }
         GridContext grid = (menu.getGridWidth() >= 3 && menu.getGridHeight() >= 3)
                 ? GridContext.CRAFTING_TABLE : GridContext.INVENTORY;
@@ -67,10 +91,21 @@ public final class DeferredCraftSync {
         if (prev != null && prev == key) {
             return; // (menu, grid, inventory contents, recipes) unchanged since the last push
         }
-        LAST_SYNC.put(player.getUUID(), key);
-
+        // Coalesce bursts (see SYNC_THROTTLE_TICKS). The key still differs from prev, so a change
+        // deferred here re-fires on a later tick once the window passes — never dropped.
+        // Clock = the SERVER tick (monotonic for the server's lifetime, the scope of LAST_SYNC_TICK's
+        // UUID keys). NOT player.tickCount: that is per-entity and resets to 0 on death/respawn while
+        // the UUID-keyed entry survives, which would wedge the sync for minutes (the respawned entity's
+        // small tickCount minus the dead one's large value is negative, always < the window). The
+        // now >= lastTick guard makes any backwards clock (e.g. int overflow after years of uptime)
+        // self-heal by pushing immediately instead of stalling.
+        int now = player.level().getServer().getTickCount();
+        Integer lastTick = LAST_SYNC_TICK.get(player.getUUID());
+        if (lastTick != null && now >= lastTick && now - lastTick < SYNC_THROTTLE_TICKS) {
+            return;
+        }
         if (!Services.PLATFORM.canReceive(player, DeferredCraftableSyncPayload.TYPE.id())) {
-            return; // vanilla/modless client — it has no recipe book hook to feed
+            return; // vanilla/modless client — record nothing, so we retry if it can ever receive
         }
         CraftPlanner.Session session = CraftPlanner.session(recipes, player.registryAccess(),
                 player.getInventory(), grid);
@@ -84,7 +119,12 @@ public final class DeferredCraftSync {
             }
         }
         player.connection.send(new net.minecraft.network.protocol.common.ClientboundCustomPayloadPacket(
-                new DeferredCraftableSyncPayload(grid.ordinal(), displayIds, recipeIds)));*/
+                new DeferredCraftableSyncPayload(grid.ordinal(), displayIds, recipeIds)));
+        // Record only after a successful push, so a tick that was throttled or that the client could
+        // not receive doesn't poison the debounce (it would otherwise mark this state "synced" without
+        // the client ever getting it).
+        LAST_SYNC.put(player.getUUID(), key);
+        LAST_SYNC_TICK.put(player.getUUID(), now);*/
         //?}
     }
 
@@ -110,6 +150,7 @@ public final class DeferredCraftSync {
     /** Forget a player's debounce state (disconnect). No-op on 1.21.1. */
     public static void clear(UUID playerId) {
         LAST_SYNC.remove(playerId);
+        LAST_SYNC_TICK.remove(playerId);
     }
 
     /**
@@ -119,6 +160,7 @@ public final class DeferredCraftSync {
      */
     public static void clearAll() {
         LAST_SYNC.clear();
+        LAST_SYNC_TICK.clear();
     }
 
     /** Server handler: a recipe-book click confirmed by display index — map it back and start. No-op on 1.21.1. */

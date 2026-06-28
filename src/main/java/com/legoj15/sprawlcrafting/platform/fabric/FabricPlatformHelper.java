@@ -6,6 +6,7 @@ import com.legoj15.sprawlcrafting.platform.services.IPlatformHelper;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.fabricmc.loader.api.FabricLoader;
+import net.minecraft.network.Connection;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerPlayer;
@@ -25,6 +26,12 @@ public class FabricPlatformHelper implements IPlatformHelper {
     @Override
     public boolean canReceive(ServerPlayer player, ResourceLocation payloadId) {
         return ServerPlayNetworking.canSend(player, payloadId);
+    }
+
+    @Override
+    public boolean canSendToServer(Connection connection, ResourceLocation payloadId) {
+        // Fabric resolves the live client connection itself; the connection arg is unused here.
+        return ClientPlayNetworking.canSend(payloadId);
     }
 
     @Override
