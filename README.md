@@ -6,7 +6,7 @@ Factorio-style crafting for the vanilla inventory and crafting table. Request a 
 
 Works with the vanilla recipe book and with JEI/REI.
 
-**Minecraft 1.21.1 and 26.1.2 · Fabric and NeoForge.**
+**Minecraft 1.21.1, 26.1.2, and 26.2 · Fabric and NeoForge.**
 
 ## How it works
 
@@ -35,13 +35,13 @@ Right-click a **red** recipe (or left-click the **orange** gather button in JEI/
 
 ## Compatibility
 
-- **Minecraft:** 1.21.1 or 26.1.2
+- **Minecraft:** 1.21.1, 26.1.2, or 26.2
 - **Loaders:** Fabric or NeoForge
 - **Fabric** also requires **Fabric API** (like most mods)
 - **Optional integrations:**
-  - **JEI** - adds the deferred-craft and gather buttons (both Minecraft versions)
+  - **JEI** - adds the deferred-craft and gather buttons (all Minecraft versions)
   - **REI** - same buttons (1.21.1 only)
-  - **Mod Menu** - in-game config button (Fabric only; both Minecraft versions)
+  - **Mod Menu** - in-game config button (Fabric only; all Minecraft versions)
 
 Multiplayer is supported; install the mod on both the client and the server. A vanilla client can still join a SprawlCrafting server (it just won't see any of the features), and a SprawlCrafting client on a vanilla server simply gets no deferred-craft offers.
 
@@ -58,12 +58,12 @@ Settings live in `config/sprawlcrafting.json` and can also be changed in-game (M
 
 ## Building from source
 
-SprawlCrafting uses Stonecutter: one shared source set in `src/`, preprocessed per version into `versions/<node>/`. The four nodes are `1.21.1-fabric`, `1.21.1-neoforge`, `26.1.2-fabric`, and `26.1.2-neoforge`.
+SprawlCrafting uses Stonecutter: one shared source set in `src/`, preprocessed per version into `versions/<node>/`. The six nodes are `1.21.1-fabric`, `1.21.1-neoforge`, `26.1.2-fabric`, `26.1.2-neoforge`, `26.2-fabric`, and `26.2-neoforge`.
 
 **The required JDK depends on the Minecraft version:**
 
 - **1.21.1** nodes need **JDK 21**
-- **26.1.2** nodes need **JDK 25** (Minecraft 26.1+ requires the Java 25 toolchain)
+- **26.1.2** and **26.2** nodes need **JDK 25** (Minecraft 26.1+ requires the Java 25 toolchain)
 
 Build or run a single node with its node-prefixed task:
 

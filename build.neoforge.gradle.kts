@@ -33,6 +33,9 @@ val hasRei = project.findProperty("rei_version") != null
 // nothing in the canonical source (no-op), keeping the green 1.21.1 node untouched. Word
 // boundaries (\b) avoid clobbering substrings (e.g. ResourceLocationArgument, IdentifierException).
 val is1_21_11Plus = stonecutter.eval(stonecutter.current.version, ">=1.21.11")
+// 26.2 is the first MC line that diverges from the 26.1.x API (not just from 1.21.1), so it needs its
+// own forward-port tier layered on top of the >=1.21.11 one below.
+val is26_2Plus = stonecutter.eval(stonecutter.current.version, ">=26.2")
 stonecutter {
     replacements {
         // MC 1.21.11 renamed net.minecraft.resources.ResourceLocation -> Identifier (same package).
@@ -53,6 +56,30 @@ stonecutter {
         regex {
             direction.set(is1_21_11Plus)
             replace("net\\.minecraft\\.world\\.level\\.GameRules\\b", "net.minecraft.world.level.gamerules.GameRules", "net\\.minecraft\\.world\\.level\\.gamerules\\.GameRules\\b", "net.minecraft.world.level.GameRules")
+        }
+        // MC 26.2 moved screen/overlay/toast management off Minecraft and onto the Minecraft.gui (Gui)
+        // instance: minecraft.screen -> minecraft.gui.screen(); setScreen(..) -> gui.setScreen(..);
+        // getToastManager() -> gui.toastManager(). These run only on >=26.2 nodes (26.1.x keeps the
+        // Minecraft-level members), layering on top of the >=1.21.11 forward-port above.
+        regex {
+            direction.set(is26_2Plus)
+            replace("\\.getToastManager\\(\\)", ".gui.toastManager()", "\\.gui\\.toastManager\\(\\)", ".getToastManager()")
+        }
+        regex {
+            direction.set(is26_2Plus)
+            replace("\\.setScreen\\(", ".gui.setScreen(", "\\.gui\\.setScreen\\(", ".setScreen(")
+        }
+        regex {
+            direction.set(is26_2Plus)
+            replace("\\bMinecraft\\.getInstance\\(\\)\\.screen\\b", "Minecraft.getInstance().gui.screen()", "\\bMinecraft\\.getInstance\\(\\)\\.gui\\.screen\\(\\)", "Minecraft.getInstance().screen")
+        }
+        regex {
+            direction.set(is26_2Plus)
+            replace("\\bminecraft\\.screen\\b", "minecraft.gui.screen()", "\\bminecraft\\.gui\\.screen\\(\\)", "minecraft.screen")
+        }
+        regex {
+            direction.set(is26_2Plus)
+            replace("\\bmc\\.screen\\b", "mc.gui.screen()", "\\bmc\\.gui\\.screen\\(\\)", "mc.screen")
         }
     }
 }

@@ -35,7 +35,7 @@ stonecutter parameters {
 // Named `buildAndCollect` for uniformity with BuildCraft's task of the same purpose (theirs is
 // per-node and collects into build/libs/<version>/; this one is a single root task with an explicit
 // node list, collecting into testing/dist/ where the release matrix stages from).
-val releaseNodes = listOf("1.21.1-fabric", "1.21.1-neoforge", "26.1.2-neoforge", "26.1.2-fabric")
+val releaseNodes = listOf("1.21.1-fabric", "1.21.1-neoforge", "26.1.2-neoforge", "26.1.2-fabric", "26.2-neoforge", "26.2-fabric")
 // Project-scope reads: inside a task block `property()` resolves against the TASK, not the project.
 val modVersion = property("version") as String
 val distDir = layout.projectDirectory.dir("testing/dist").asFile.toPath()
