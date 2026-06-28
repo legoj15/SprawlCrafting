@@ -1,15 +1,22 @@
 {
   "homepage": "https://github.com/legoj15/SprawlCrafting/releases",
   "1.21.1": {
-    "1.0.0": "Initial release."
+    "1.0.0": "Initial release.",
+    "1.0.1": "- 26.2 Support\n- Performance improvements"
   },
   "26.1.2": {
-    "1.0.0": "Initial release."
+    "1.0.0": "Initial release.",
+    "1.0.1": "- 26.2 Support\n- Performance improvements"
+  },
+  "26.2": {
+    "1.0.1": "- 26.2 Support\n- Performance improvements"
   },
   "promos": {
-    "1.21.1-latest": "1.0.0",
-    "1.21.1-recommended": "1.0.0",
-    "26.1.2-latest": "1.0.0",
-    "26.1.2-recommended": "1.0.0"
+    "1.21.1-latest": "1.0.1",
+    "1.21.1-recommended": "1.0.1",
+    "26.1.2-latest": "1.0.1",
+    "26.1.2-recommended": "1.0.1",
+    "26.2-recommended": "1.0.1",
+    "26.2-latest": "1.0.1"
   }
 }
