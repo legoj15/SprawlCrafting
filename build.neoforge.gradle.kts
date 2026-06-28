@@ -129,6 +129,11 @@ neoForge {
                 programArgument("--quickPlayMultiplayer")
                 programArgument(it)
             }
+            // Dev diagnostic: -Psc.gfx=vulkan|opengl|default forces MC 26.2's graphics backend.
+            (project.findProperty("sc.gfx") as String?)?.let {
+                programArgument("--graphicsBackend")
+                programArgument(it)
+            }
         }
         register("server") {
             server()

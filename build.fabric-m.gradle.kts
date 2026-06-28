@@ -149,6 +149,8 @@ loom {
             runDir("run")
             // Test harness hook: -Psc.connect=host:port auto-connects the dev client (quick-play).
             (project.findProperty("sc.connect") as String?)?.let { programArgs("--quickPlayMultiplayer", it) }
+            // Dev diagnostic: -Psc.gfx=vulkan|opengl|default forces MC 26.2's graphics backend.
+            (project.findProperty("sc.gfx") as String?)?.let { programArgs("--graphicsBackend", it) }
         }
         named("server") {
             server()
