@@ -1,0 +1,30 @@
+{
+  "github": {
+    "repo": "legoj15/SprawlCrafting"
+  },
+  "modrinth": {
+    "enabled": true,
+    "projectId": "ILhtnhcE",
+    "projectSlug": "sprawlcrafting",
+    "jeiProjectId": "u6dRKJwZ",
+    "userAgent": "legoj15/SprawlCrafting-release/1.0 (legoj15@yahoo.com)",
+    "tokenEnvVar": "MODRINTH_TOKEN"
+  },
+  "curseforge": {
+    "enabled": true,
+    "projectId": "1575622",
+    "projectSlug": "sprawlcrafting",
+    "jeiSlug": "jei",
+    "environments": ["Client", "Server"],
+    "tagJavaVersion": true,
+    "tokenEnvVar": "CURSEFORGE_TOKEN"
+  },
+  "featuredMc": "26.2",
+  "ingameBold": "strip",
+  "endOfSupportLines": {},
+  "storeGameVersionsByMc": {
+    "1.21.1": ["1.21.1"],
+    "26.1.2": ["26.1.2"],
+    "26.2": ["26.2"]
+  }
+}

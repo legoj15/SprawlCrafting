@@ -29,5 +29,9 @@ logs
 # same convention as BuildCraft. Third-party clones run `test` + `runGameTestServer` instead.
 /testing/
 
+# Release tooling is versioned (release/Invoke-Release.ps1, the module, README, and release.json with
+# placeholder store IDs) — only the live publishing credentials are excluded.
+/release/config/secrets.ps1
+
 # Claude Code session state
 .claude/
