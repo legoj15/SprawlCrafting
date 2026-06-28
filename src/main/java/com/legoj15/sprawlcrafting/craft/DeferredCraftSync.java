@@ -26,11 +26,13 @@ public final class DeferredCraftSync {
     }
 
     /**
-     * Debounce key per player: a hash of (open-menu identity, grid, inventory generation,
+     * Debounce key per player: a hash of (open-menu identity, grid, main-inventory contents,
      * RecipeManager identity). Recompute only when one of those changes — opening/closing a
-     * grid, moving an item, or a datapack reload (which swaps the server's RecipeManager and
-     * reassigns every RecipeDisplayId, so the client's synced set must be replaced) — not
-     * every tick.
+     * grid, gaining/losing/moving an item, or a datapack reload (which swaps the server's
+     * RecipeManager and reassigns every RecipeDisplayId, so the client's synced set must be
+     * replaced) — not every tick. The inventory is hashed by contents, not via
+     * {@code getTimesChanged()}: that counter is not bumped by item pickup / {@code /give}
+     * on the server (see {@link #maybeSync}), so keying on it would miss gathered materials.
      */
     private static final Map<UUID, Long> LAST_SYNC = new ConcurrentHashMap<>();
 
@@ -49,13 +51,21 @@ public final class DeferredCraftSync {
         // /reload swaps MinecraftServer.resources (a fresh RecipeManager instance) and
         // reallocates all display ids, so the manager's identity must be part of the key.
         net.minecraft.world.item.crafting.RecipeManager recipes = player.level().getServer().getRecipeManager();
-        long key = (((long) System.identityHashCode(menu)) << 21)
-                ^ ((long) grid.ordinal() << 19)
-                ^ (player.getInventory().getTimesChanged() & 0x7FFFFL)
-                ^ (((long) System.identityHashCode(recipes)) << 32);
+        // Debounce on the real classification inputs: open menu, grid, recipe set, and the MAIN
+        // inventory contents. We HASH the contents rather than read getInventory().getTimesChanged():
+        // the server's player inventory only bumps timesChanged on container-slot edits, never on
+        // Inventory.add (the path item pickup and /give take — add -> addResource -> setItem, none
+        // of which call setChanged). A timesChanged-keyed debounce therefore misses a player
+        // gathering raw materials and leaves the deferred set stale — the recipe that just became
+        // craftable stays stuck on the red sprite until some unrelated slot edit forces a re-sync.
+        long key = 1469598103934665603L; // 64-bit FNV-1a basis
+        key = (key ^ System.identityHashCode(menu)) * 1099511628211L;
+        key = (key ^ grid.ordinal()) * 1099511628211L;
+        key = (key ^ System.identityHashCode(recipes)) * 1099511628211L;
+        key = (key ^ inventorySignature(player.getInventory())) * 1099511628211L;
         Long prev = LAST_SYNC.get(player.getUUID());
         if (prev != null && prev == key) {
-            return; // (menu, grid, inventory, recipes) unchanged since the last push
+            return; // (menu, grid, inventory contents, recipes) unchanged since the last push
         }
         LAST_SYNC.put(player.getUUID(), key);
 
@@ -77,6 +87,25 @@ public final class DeferredCraftSync {
                 new DeferredCraftableSyncPayload(grid.ordinal(), displayIds, recipeIds)));*/
         //?}
     }
+
+    //? if >=1.21.11 {
+    /*// Order-sensitive 64-bit fold over the 36 main inventory slots — the exact pool the planner
+    // reads ({@code CraftPlanner.snapshotInventory}). Cheap enough to run every tick, and unlike
+    // {@code getTimesChanged()} it reflects pickups/{@code /give} (see {@link #maybeSync}). It can
+    // over-detect (an item moved between slots re-syncs needlessly) but never under-detects a real
+    // change to which items, and how many, are held.
+    private static long inventorySignature(net.minecraft.world.entity.player.Inventory inventory) {
+        long sig = 1469598103934665603L;
+        for (int i = 0; i < net.minecraft.world.entity.player.Inventory.INVENTORY_SIZE; i++) {
+            net.minecraft.world.item.ItemStack stack = inventory.getItem(i);
+            int item = stack.isEmpty() ? 0 : System.identityHashCode(stack.getItem());
+            int count = stack.isEmpty() ? 0 : stack.getCount();
+            sig = (sig ^ item) * 1099511628211L;
+            sig = (sig ^ count) * 1099511628211L;
+        }
+        return sig;
+    }*/
+    //?}
 
     /** Forget a player's debounce state (disconnect). No-op on 1.21.1. */
     public static void clear(UUID playerId) {
