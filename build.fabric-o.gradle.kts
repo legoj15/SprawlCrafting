@@ -97,6 +97,8 @@ loom {
             runDir("run")
             // Test harness hook: -Psc.connect=host:port auto-connects the dev client (quick-play).
             (project.findProperty("sc.connect") as String?)?.let { programArgs("--quickPlayMultiplayer", it) }
+            // Test harness hook: -Psc.world="<save folder>" auto-loads a singleplayer world (quick-play).
+            (project.findProperty("sc.world") as String?)?.let { programArgs("--quickPlaySingleplayer", it) }
         }
         named("server") {
             server()

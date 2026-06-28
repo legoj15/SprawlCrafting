@@ -129,6 +129,11 @@ neoForge {
                 programArgument("--quickPlayMultiplayer")
                 programArgument(it)
             }
+            // Test harness hook: -Psc.world="<save folder>" auto-loads a singleplayer world (quick-play).
+            (project.findProperty("sc.world") as String?)?.let {
+                programArgument("--quickPlaySingleplayer")
+                programArgument(it)
+            }
             // Dev diagnostic: -Psc.gfx=vulkan|opengl|default forces MC 26.2's graphics backend.
             (project.findProperty("sc.gfx") as String?)?.let {
                 programArgument("--graphicsBackend")
