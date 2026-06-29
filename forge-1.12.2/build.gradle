@@ -44,6 +44,14 @@ sourceSets {
             srcDir '../solver-core/src/main/java'
         }
     }
+    // The solver core's own JUnit 5 suite (39 cases) compiles + runs HERE against the real
+    // auto-provisioned Java 8 toolchain — a stronger guarantee than the modern tree's Java 21
+    // run that the Java-8-dialect solver genuinely works on a Java 8 runtime.
+    test {
+        java {
+            srcDir '../solver-core/src/test/java'
+        }
+    }
 }
 
 minecraft {
@@ -97,6 +105,12 @@ dependencies {
     // deobfProvided gives compile-time access to the deobfuscated JEI API without bundling
     // JEI into the mod or forcing it at runtime.
     compileOnly rfg.deobf("mezz.jei:jei_1.12.2:${project.jei_version}")
+
+    // --- solver-core regression suite (compiled + run on the Java 8 toolchain) ------------
+    // Same JUnit 5 BOM the modern tree pins (build.*.gradle.kts) so behaviour matches across builds.
+    testImplementation platform('org.junit:junit-bom:5.10.3')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
 // Inject the mod identity from gradle.properties into mcmod.info / mixins json at build time.
@@ -130,6 +144,11 @@ jar {
                 'MixinConfigs': 'mixins.sprawlcrafting.json'
         )
     }
+}
+
+// Run the shared solver-core suite on the JUnit Platform (Jupiter engine), on the Java 8 toolchain.
+test {
+    useJUnitPlatform()
 }
 
 tasks.withType(JavaCompile).configureEach {
