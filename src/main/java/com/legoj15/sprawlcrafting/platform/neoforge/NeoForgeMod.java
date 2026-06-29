@@ -6,7 +6,6 @@ import com.legoj15.sprawlcrafting.client.ClientJobTracker;
 import com.legoj15.sprawlcrafting.client.DeferredClickState;
 import com.legoj15.sprawlcrafting.client.DeferredCraftableCache;
 import com.legoj15.sprawlcrafting.client.MissingIngredients;
-import com.legoj15.sprawlcrafting.command.SprawlCraftingCommand;
 import com.legoj15.sprawlcrafting.craft.ClientCraftingView;
 import com.legoj15.sprawlcrafting.craft.CraftQueueManager;
 import com.legoj15.sprawlcrafting.craft.CraftRequests;
@@ -26,7 +25,6 @@ import net.minecraft.server.level.ServerPlayer;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.neoforge.common.NeoForge;
-import net.neoforged.neoforge.event.RegisterCommandsEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerEvent;
 import net.neoforged.neoforge.event.server.ServerStoppingEvent;
 import net.neoforged.neoforge.event.tick.ServerTickEvent;
@@ -41,7 +39,6 @@ public class NeoForgeMod {
         // Payload registration is a mod-bus event; gameplay hooks live on the game bus.
         eventBus.addListener(NeoForgeMod::onRegisterPayloads);
         NeoForge.EVENT_BUS.addListener(NeoForgeMod::onServerTickPost);
-        NeoForge.EVENT_BUS.addListener(NeoForgeMod::onRegisterCommands);
         NeoForge.EVENT_BUS.addListener(NeoForgeMod::onPlayerLoggedOut);
         NeoForge.EVENT_BUS.addListener(NeoForgeMod::onServerStopping);
     }
@@ -132,10 +129,6 @@ public class NeoForgeMod {
             CraftQueueManager.tick(player);
             DeferredCraftSync.maybeSync(player); // no-op on 1.21.1
         }
-    }
-
-    private static void onRegisterCommands(RegisterCommandsEvent event) {
-        SprawlCraftingCommand.register(event.getDispatcher());
     }
 
     private static void onPlayerLoggedOut(PlayerEvent.PlayerLoggedOutEvent event) {

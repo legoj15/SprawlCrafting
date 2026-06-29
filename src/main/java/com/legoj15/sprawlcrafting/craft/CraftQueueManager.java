@@ -45,16 +45,6 @@ public final class CraftQueueManager {
         return true;
     }
 
-    /** @return the cancelled job, if there was one. The caller reports to the player. */
-    public static Optional<CraftJob> cancel(UUID playerId) {
-        return Optional.ofNullable(ACTIVE.remove(playerId));
-    }
-
-    /** Toast sync for a manual cancel (command path, which has the player at hand). */
-    public static void syncCancelled(ServerPlayer player, CraftJob job) {
-        sync(player, job, CraftProgressPayload.State.CANCELLED, ItemStack.EMPTY);
-    }
-
     public static void clear(UUID playerId) {
         ACTIVE.remove(playerId);
         ClientCraftingView.clear(playerId);

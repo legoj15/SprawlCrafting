@@ -1,20 +1,18 @@
 package com.legoj15.sprawlcrafting.forge;
 
-import com.legoj15.sprawlcrafting.forge.command.SprawlCraftingCommand;
 import com.legoj15.sprawlcrafting.forge.craft.CraftQueueManager;
 import com.legoj15.sprawlcrafting.forge.network.SprawlNetwork;
 
 import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.fml.common.SidedProxy;
 import net.minecraftforge.fml.common.event.FMLPreInitializationEvent;
-import net.minecraftforge.fml.common.event.FMLServerStartingEvent;
 import net.minecraftforge.fml.common.event.FMLServerStoppingEvent;
 import org.apache.logging.log4j.Logger;
 
 /**
  * Forge 1.12.2 entry point for SprawlCrafting — the legacy-loader counterpart of the modern
  * Fabric/NeoForge entry points. Wires the shared craft engine: the network channel, the per-tick
- * job driver (via the sided proxy), the {@code /sprawlcrafting} command, and shutdown cleanup.
+ * job driver (via the sided proxy), and shutdown cleanup.
  *
  * <p>All gameplay logic lives in {@code com.legoj15.sprawlcrafting.forge.craft} on top of the
  * shared, pure-Java-8 {@code com.legoj15.sprawlcrafting.craft.solver} core (compiled in from
@@ -46,11 +44,6 @@ public class SprawlCrafting {
         SprawlNetwork.initCommon();
         proxy.preInit();
         logger.info("{} {} loaded on Minecraft 1.12.2 (Forge).", MOD_NAME, VERSION);
-    }
-
-    @Mod.EventHandler
-    public void serverStarting(FMLServerStartingEvent event) {
-        event.registerServerCommand(new SprawlCraftingCommand());
     }
 
     @Mod.EventHandler

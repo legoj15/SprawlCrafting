@@ -1,7 +1,6 @@
 package com.legoj15.sprawlcrafting.platform.fabric;
 
 import com.legoj15.sprawlcrafting.CommonClass;
-import com.legoj15.sprawlcrafting.command.SprawlCraftingCommand;
 import com.legoj15.sprawlcrafting.craft.ClientCraftingView;
 import com.legoj15.sprawlcrafting.craft.CraftQueueManager;
 import com.legoj15.sprawlcrafting.craft.CraftRequests;
@@ -18,7 +17,6 @@ import com.legoj15.sprawlcrafting.network.StartDeferredCraftByDisplayPayload;
 import com.legoj15.sprawlcrafting.network.StartDeferredCraftPayload;
 
 import net.fabricmc.api.ModInitializer;
-import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
@@ -80,8 +78,6 @@ public class FabricMod implements ModInitializer {
                 DeferredCraftSync.maybeSync(player); // no-op on 1.21.1
             }
         });
-        CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
-                SprawlCraftingCommand.register(dispatcher));
         ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> {
             CraftQueueManager.clear(handler.getPlayer().getUUID());
             DeferredCraftSync.clear(handler.getPlayer().getUUID()); // no-op on 1.21.1

@@ -24,7 +24,6 @@ behaviour is not yet playtested** (a 1.12.2 client launch is needed — see "Ver
     inventory (2×2) and table (3×3) containers routes "+" into a deferred craft. It overwrites
     JEI's built-in crafting transfer (JEI's registry is last-write-wins). The button greys out for
     items that can't be made from current stock.
-  - **`/sprawlcrafting craft <recipe> | cancel | status`** command (aliases `/sprawlcraft`, `/sc`).
   - **Recipe book** (`forge.mixin`): two client mixins paint a yellow outline on recipes craftable
     only via intermediates and divert a click on them into a deferred craft. **These need a playtest
     to confirm they apply** (see "Mixin status").
@@ -130,7 +129,7 @@ loads the config (no coremod / TweakClass needed).
 
 ## Verification
 
-`setupDecompWorkspace build` is green: `solver-core`, the engine, networking, the command, the HUD,
+`setupDecompWorkspace build` is green: `solver-core`, the engine, networking, the HUD,
 the JEI plugin, and the two mixins all compile against the deobfuscated 1.12.2 Forge + JEI classpath;
 the reobf jar is produced with the refmap and `MixinConfigs` in place; and `:test` runs the 39-case
 solver suite under the real Java 8 toolchain.
@@ -138,5 +137,5 @@ solver suite under the real Java 8 toolchain.
 **Not yet done — runtime playtest.** No part of the runtime has been exercised in a live client (the
 engine, the JEI "+", the HUD, and especially the mixin application/visuals). Run `./gradlew runClient`
 on JDK 25 with JEI in `run/mods/` and confirm: a deferred recipe yellows in the book and crafts on
-click; the JEI "+" starts a craft and greys for unmakeable items; `/sprawlcrafting craft …` works;
+click; the JEI "+" starts a craft and greys for unmakeable items;
 the HUD flyout tracks progress; and a 3×3 chain pauses away from a table.
