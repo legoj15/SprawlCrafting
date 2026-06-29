@@ -1,0 +1,13 @@
+sprawlcrafting.craft.started=Sprawl-crafting %s (%s steps queued).
+sprawlcrafting.craft.busy=A sprawl-craft is already running. Cancel it first.
+sprawlcrafting.craft.cancelled=Cancelled the sprawl-craft of %s. Items already made are kept.
+sprawlcrafting.craft.none=You have no sprawl-craft running.
+sprawlcrafting.craft.status=Sprawl-crafting %s: %s / %s components done.
+sprawlcrafting.craft.finished=Finished sprawl-crafting %s.
+sprawlcrafting.craft.missing=Sprawl-craft of %s stopped: ran out of %s.
+sprawlcrafting.craft.recipe_gone=Sprawl-craft of %s stopped: a recipe is no longer available.
+sprawlcrafting.craft.unknown_recipe=No such crafting recipe: %s
+sprawlcrafting.craft.unsupported=That recipe cannot be sprawl-crafted (special or dynamic recipe).
+sprawlcrafting.craft.needs_table=That recipe needs a 3x3 crafting table; open one and try again.
+sprawlcrafting.craft.too_complex=That recipe tree is too complex to plan.
+sprawlcrafting.craft.unsolvable=Not enough raw materials. Still need: %s

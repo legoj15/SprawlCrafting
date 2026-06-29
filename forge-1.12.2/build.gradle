@@ -1,0 +1,200 @@
+// =====================================================================================
+// SprawlCrafting :: Minecraft 1.12.2 Forge module
+//
+// SELF-CONTAINED Gradle build. Uses RetroFuturaGradle (RFG) 2.0.2 — the actively
+// maintained (2025/2026) successor to ForgeGradle 2.3 for 1.12.2. RFG runs on modern
+// Gradle (9.5.x) and modern JDKs, while compiling the mod against a Java 8 toolchain,
+// which is exactly what 1.12.2's runtime requires.
+//
+// The GTNH Nexus that serves the RFG plugin is declared in settings.gradle's
+// pluginManagement block, NOT here.
+// =====================================================================================
+
+plugins {
+    id 'java'
+    // RetroFuturaGradle: the 1.12.2 dev environment (deobf Minecraft, runClient/runServer,
+    // reobf jar, MCP mappings). Verified latest = 2.0.2.
+    id 'com.gtnewhorizons.retrofuturagradle' version '2.0.2'
+}
+
+version = project.mod_version
+group = project.mod_group
+base {
+    archivesName = project.mod_id
+}
+
+// 1.12.2 runs on Java 8. The toolchain pins compilation to JDK 8 regardless of the JDK
+// running Gradle, so the same artifacts build on a contributor's JDK 21. Azul Zulu has the
+// widest Java 8 platform coverage (incl. Apple Silicon), matching the upstream template.
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(8)
+        vendor = JvmVendorSpec.AZUL
+    }
+}
+
+// -------------------------------------------------------------------------------------
+// Shared solver core: the single source of truth, authored in pure Java 8 with no
+// Minecraft types, lives one directory up in ../solver-core. We compile it straight into
+// this mod via an extra source directory rather than as a separate published artifact.
+// -------------------------------------------------------------------------------------
+sourceSets {
+    main {
+        java {
+            srcDir '../solver-core/src/main/java'
+        }
+    }
+    // The solver core's own JUnit 5 suite (39 cases) compiles + runs HERE against the real
+    // auto-provisioned Java 8 toolchain — a stronger guarantee than the modern tree's Java 21
+    // run that the Java-8-dialect solver genuinely works on a Java 8 runtime.
+    test {
+        java {
+            srcDir '../solver-core/src/test/java'
+        }
+    }
+}
+
+minecraft {
+    mcVersion = '1.12.2'
+
+    // MCP names channel + version. From gradle.properties: stable + 39 => "stable_39".
+    mcpMappingChannel = project.mapping_channel
+    mcpMappingVersion = project.mapping_version
+
+    // Player name shown in the dev runClient.
+    username = 'Developer'
+
+    // SpongePowered Mixin (via MixinBooter) wants these on the JVM during dev runs so the
+    // mixin processor is active and exports transformed classes for debugging. Harmless
+    // until actual mixins exist; wired now so adding the first mixin needs no build change.
+    extraRunJvmArguments.addAll([
+            '-Dmixin.hotSwap=true',
+            '-Dmixin.checks.interfaces=true',
+            '-Dmixin.debug.export=true'
+    ])
+}
+
+repositories {
+    maven {
+        // MixinBooter + SpongePowered Mixin for 1.12.2. Use the canonical repo host directly:
+        // maven.cleanroommc.com 301-redirects here, and not every resolver follows redirects for
+        // metadata/POMs, so point straight at the destination (verified: mixinbooter 11.0 + 10.7
+        // both return HTTP 200 under /releases).
+        name = 'CleanroomMC Maven'
+        url = 'https://repo.cleanroommc.com/releases'
+    }
+    maven {
+        // JEI 1.12.2 (mezz.jei).
+        name = 'BlameJared / modmaven'
+        url = 'https://modmaven.dev'
+    }
+    maven {
+        // SpongePowered Mixin — for the annotation processor (':processor' classifier). MixinBooter
+        // bundles the Mixin runtime but not the dev-time AP that generates the refmap.
+        name = 'SpongePowered'
+        url = 'https://repo.spongepowered.org/repository/maven-public/'
+    }
+}
+
+dependencies {
+    // --- Mixin tooling -------------------------------------------------------------------
+    // MixinBooter ships the SpongePowered Mixin RUNTIME and the FML tweaker that runs it on 1.12.2,
+    // but NOT the dev-time annotation processor. The processor — which generates the refmap that
+    // remaps the mixins' deobf @At targets to production SRG names — comes from the ':processor'
+    // classifier, a shaded jar bundling the AP plus asm/guava/gson. 0.8.5 matches MixinBooter 11.0's
+    // Mixin lineage; the refmap format is stable across the 0.8.x line.
+    String mixin = "zone.rong:mixinbooter:${project.mixin_booter_version}"
+    annotationProcessor 'org.spongepowered:mixin:0.8.5:processor'
+    implementation (mixin) { transitive = false }
+
+    // --- JEI integration (compile dependency) --------------------------------------------
+    // deobfProvided gives compile-time access to the deobfuscated JEI API without bundling
+    // JEI into the mod or forcing it at runtime.
+    compileOnly rfg.deobf("mezz.jei:jei_1.12.2:${project.jei_version}")
+
+    // --- solver-core regression suite (compiled + run on the Java 8 toolchain) ------------
+    // Same JUnit 5 BOM the modern tree pins (build.*.gradle.kts) so behaviour matches across builds.
+    testImplementation platform('org.junit:junit-bom:5.10.3')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+// Inject the mod identity from gradle.properties into mcmod.info / mixins json at build time.
+processResources {
+    inputs.property 'mod_id', project.mod_id
+    inputs.property 'mod_name', project.mod_name
+    inputs.property 'mod_version', project.mod_version
+    inputs.property 'mod_description', project.mod_description
+    inputs.property 'mod_author', project.mod_author
+
+    filesMatching('mcmod.info') {
+        expand(
+                'mod_id': project.mod_id,
+                'mod_name': project.mod_name,
+                'mod_version': project.mod_version,
+                'mod_description': project.mod_description,
+                'mod_author': project.mod_author
+        )
+    }
+}
+
+// MixinBooter discovers a mod's mixin configs from the jar manifest's `MixinConfigs` attribute
+// (space/comma-separated list of config filenames). With MixinBooter present this is the ONLY
+// wiring needed — no coremod, FMLCorePlugin, or TweakClass. Declared now against the (empty)
+// scaffold config so adding the first mixin needs no build-script change: drop the class in
+// com.legoj15.sprawlcrafting.forge.mixin and list it in mixins.sprawlcrafting.json. RFG's reobfJar
+// reobfuscates this jar output and preserves the manifest, so it carries into the production jar.
+jar {
+    // Bundle the Mixin-AP-generated refmap (see the JavaCompile block below) into the jar root,
+    // where MixinBooter looks for it. Without it the recipe-book mixins cannot remap their deobf
+    // @At targets to the SRG names present at production runtime, and silently fail to apply.
+    from(layout.buildDirectory.dir('mixinRefmap')) {
+        include 'mixins.sprawlcrafting.refmap.json'
+    }
+    manifest {
+        attributes(
+                'MixinConfigs': 'mixins.sprawlcrafting.json'
+        )
+    }
+}
+
+// Run the shared solver-core suite on the JUnit Platform (Jupiter engine), on the Java 8 toolchain.
+test {
+    useJUnitPlatform()
+}
+
+// Note: in the RFG dev runClient, FML loads this mod from the classpath dev jar and fails to serve
+// its lang file from that jar's FMLFileResourcePack, so translation keys would render raw in dev
+// only. That is handled at runtime by com.legoj15.sprawlcrafting.forge.client.DevLangInjector
+// (dev-environment-gated); a production install loads the lang normally. No build-side workaround
+// is needed, so resources keep their standard output location.
+
+// -------------------------------------------------------------------------------------
+// Mixin annotation-processor refmap wiring (RFG).
+//
+// The SpongePowered Mixin AP translates the deobf (MCP) names used in @Inject/@At targets into
+// the SRG names present at production runtime, emitting them into the refmap MixinBooter consults.
+// It needs the MCP->SRG mappings to do so. RFG stages that srg in its MCP cache, keyed by the
+// mapping channel + version from gradle.properties (stable_39 -> mcp_stable/39). Without
+// -AreobfSrgFile no refmap is produced and the recipe-book mixins, while compiling fine, would
+// silently no-op in an obfuscated install (they carry require = 0, so they degrade rather than
+// crash). The JEI/command/HUD features use no mixins and are unaffected either way.
+// -------------------------------------------------------------------------------------
+def mcpToSrgFile = new File(gradle.gradleUserHomeDir,
+        "caches/minecraft/de/oceanlabs/mcp/mcp_${project.mapping_channel}/${project.mapping_version}/rfg_srgs/mcp-srg.srg")
+def mixinRefmapFile = layout.buildDirectory
+        .file('mixinRefmap/mixins.sprawlcrafting.refmap.json').get().asFile
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    if (mcpToSrgFile.exists()) {
+        options.compilerArgs += [
+                "-AreobfSrgFile=${mcpToSrgFile.absolutePath}".toString(),
+                "-AoutRefMapFile=${mixinRefmapFile.absolutePath}".toString()
+        ]
+    } else {
+        logger.warn('SprawlCrafting: MCP->SRG srg not found at {} — mixin refmap will not be ' +
+                'generated (run setupDecompWorkspace first). Recipe-book mixins will be inert in ' +
+                'an obfuscated install until this is present.', mcpToSrgFile)
+    }
+}

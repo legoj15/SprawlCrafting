@@ -1,0 +1,35 @@
+// SprawlCrafting :: legacy Minecraft 1.12.2 Forge module.
+//
+// This is a SELF-CONTAINED Gradle build, deliberately kept OUTSIDE the modern
+// Stonecutter/Gradle-9.5 tree above it. It has its own wrapper and its own
+// settings.gradle so it can use RetroFuturaGradle (the actively-maintained 2025/2026
+// build plugin for 1.12.2) without colliding with the modern multi-loader build.
+//
+// RetroFuturaGradle is NOT published to the Gradle Plugin Portal as resolvable
+// artifacts; it is served from the GTNewHorizons Nexus. That maven MUST be declared
+// here in pluginManagement, or the `plugins { id 'com.gtnewhorizons.retrofuturagradle' }`
+// block in build.gradle will fail to resolve.
+pluginManagement {
+    repositories {
+        maven {
+            // RetroFuturaGradle
+            name = 'GTNH Maven'
+            url = 'https://nexus.gtnewhorizons.com/repository/public/'
+            mavenContent {
+                includeGroup 'com.gtnewhorizons'
+                includeGroup 'com.gtnewhorizons.retrofuturagradle'
+            }
+        }
+        gradlePluginPortal()
+        mavenCentral()
+        mavenLocal()
+    }
+}
+
+plugins {
+    // Lets Gradle auto-download the Java 8 toolchain RFG compiles 1.12.2 against,
+    // so a contributor on JDK 21 does not need a hand-installed JDK 8.
+    id 'org.gradle.toolchains.foojay-resolver-convention' version '1.0.0'
+}
+
+rootProject.name = 'sprawlcrafting-forge-1.12.2'

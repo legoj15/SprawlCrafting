@@ -1,0 +1,16 @@
+# RetroFuturaGradle / Gradle build outputs for the 1.12.2 module (regenerable).
+.gradle/
+build/
+run/
+runClient/
+runServer/
+run-gametest/
+
+# IDE
+*.iml
+.idea/
+.classpath
+.project
+.settings/
+bin/
+out/

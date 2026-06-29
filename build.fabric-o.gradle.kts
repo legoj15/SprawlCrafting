@@ -29,6 +29,15 @@ java {
     toolchain { languageVersion = JavaLanguageVersion.of(javaVersion) }
 }
 
+// ─── Shared solver-core module ───────────────────────────────────────────────────────────────
+// The loader/version-agnostic craft solver (RecipeGraphSolver + PlannedStep + its test suite) lives
+// in its own pure-Java-8 module at solver-core/, so the planned legacy-Forge 1.12.2 build can compile
+// the EXACT same source (Java 8 has no records/sealed types). It carries no Stonecutter directives and
+// no Minecraft imports, so it just folds into this node's main+test source sets and ships inside the
+// mod jar like any other source — single source of truth, zero duplication.
+sourceSets["main"].java.srcDir(rootProject.file("solver-core/src/main/java"))
+sourceSets["test"].java.srcDir(rootProject.file("solver-core/src/test/java"))
+
 repositories {
     mavenLocal()
     maven("https://maven.fabricmc.net/")

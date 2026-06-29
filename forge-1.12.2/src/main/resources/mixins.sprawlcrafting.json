@@ -1,0 +1,14 @@
+{
+	"required": true,
+	"minVersion": "0.8.5",
+	"package": "com.legoj15.sprawlcrafting.forge.mixin",
+	"refmap": "mixins.sprawlcrafting.refmap.json",
+	"target": "@env(DEFAULT)",
+	"compatibilityLevel": "JAVA_8",
+	"mixins": [],
+	"client": [
+		"GuiButtonRecipeMixin",
+		"GuiRecipeBookMixin"
+	],
+	"server": []
+}
