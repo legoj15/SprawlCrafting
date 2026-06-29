@@ -1,6 +1,7 @@
 package com.legoj15.sprawlcrafting.craft.solver;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
@@ -15,6 +16,12 @@ import java.util.function.UnaryOperator;
  * inventory, produce an ordered list of crafts where every step's ingredients are either
  * already in the inventory or produced by an earlier step. Pure Java — no Minecraft types —
  * so the whole algorithm is unit-testable; {@code CraftPlanner} adapts game types onto it.
+ *
+ * <p>Authored in Java 8 (plain classes/interfaces, no records or sealed types) because this is
+ * the single source of truth compiled into every loader build — including the legacy-Forge
+ * 1.12.2 target, whose runtime is Java 8. The public surface (accessor method names, the
+ * {@code Result.Success}/{@code Result.Failure} subtypes) is unchanged from the former record
+ * form, so the modern callers and the test suite need no edits.
  *
  * <p>Resolution rules (DESIGN.md):
  * <ul>
@@ -57,15 +64,43 @@ public final class RecipeGraphSolver<R, K> {
     }
 
     /** Outcome of a solve: either an executable plan or a best-effort set of missing items. */
-    public sealed interface Result<R, K> {
-        record Success<R, K>(List<PlannedStep<R>> steps) implements Result<R, K> {}
+    public interface Result<R, K> {
+
+        /** An executable plan: the ordered, merged list of steps to run. */
+        final class Success<R, K> implements Result<R, K> {
+            private final List<PlannedStep<R>> steps;
+
+            public Success(List<PlannedStep<R>> steps) {
+                this.steps = steps;
+            }
+
+            public List<PlannedStep<R>> steps() {
+                return steps;
+            }
+        }
 
         /**
          * @param missing        representative items from failed branches — UX hints, not exhaustive
          * @param budgetExceeded true if the search was aborted because the recipe graph was
          *                       too branchy to prove solvable or unsolvable within budget
          */
-        record Failure<R, K>(Set<K> missing, boolean budgetExceeded) implements Result<R, K> {}
+        final class Failure<R, K> implements Result<R, K> {
+            private final Set<K> missing;
+            private final boolean budgetExceeded;
+
+            public Failure(Set<K> missing, boolean budgetExceeded) {
+                this.missing = missing;
+                this.budgetExceeded = budgetExceeded;
+            }
+
+            public Set<K> missing() {
+                return missing;
+            }
+
+            public boolean budgetExceeded() {
+                return budgetExceeded;
+            }
+        }
     }
 
     /**
@@ -79,8 +114,30 @@ public final class RecipeGraphSolver<R, K> {
      * @param approximate  true if the depth/attempt budget was hit during the walk, so the map
      *                     may undercount; a UX caveat, not an error
      */
-    public record ShortfallResult<K>(Map<K, Integer> demands, Map<K, List<K>> alternatives,
-                                     boolean approximate) {}
+    public static final class ShortfallResult<K> {
+        private final Map<K, Integer> demands;
+        private final Map<K, List<K>> alternatives;
+        private final boolean approximate;
+
+        public ShortfallResult(Map<K, Integer> demands, Map<K, List<K>> alternatives,
+                               boolean approximate) {
+            this.demands = demands;
+            this.alternatives = alternatives;
+            this.approximate = approximate;
+        }
+
+        public Map<K, Integer> demands() {
+            return demands;
+        }
+
+        public Map<K, List<K>> alternatives() {
+            return alternatives;
+        }
+
+        public boolean approximate() {
+            return approximate;
+        }
+    }
 
     private final Function<K, List<? extends RecipeInfo<R, K>>> producers;
     private final UnaryOperator<K> remainder;
@@ -349,7 +406,7 @@ public final class RecipeGraphSolver<R, K> {
             // First producer (deterministic — CraftPlanner sorts by id). A cycle (the item is being
             // crafted higher up) or no producer at all means it bottoms out as a gatherable.
             List<? extends RecipeInfo<R, K>> candidates =
-                    crafting.contains(item) ? List.of() : producers.apply(item);
+                    crafting.contains(item) ? Collections.<RecipeInfo<R, K>>emptyList() : producers.apply(item);
             if (candidates.isEmpty()) {
                 recordLeaf(item, qty, slotAlternatives, shortfall, alts);
                 return;

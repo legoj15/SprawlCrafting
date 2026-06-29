@@ -1,9 +1,12 @@
 package com.legoj15.sprawlcrafting.craft.solver;
 
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 import org.junit.jupiter.api.Test;
 
@@ -18,13 +21,43 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class RecipeGraphSolverTest {
 
     /** String-typed recipe for tests: id, slots (each "a|b" = alternatives), result, count. */
-    private record TestRecipe(String id, List<List<String>> ingredientSlots, String result,
-                              int resultCount) implements RecipeInfo<String, String> {
+    private static final class TestRecipe implements RecipeInfo<String, String> {
+        private final String id;
+        private final List<List<String>> ingredientSlots;
+        private final String result;
+        private final int resultCount;
+
+        TestRecipe(String id, List<List<String>> ingredientSlots, String result, int resultCount) {
+            this.id = id;
+            this.ingredientSlots = ingredientSlots;
+            this.result = result;
+            this.resultCount = resultCount;
+        }
+
+        @Override
+        public String id() {
+            return id;
+        }
+
+        @Override
+        public List<List<String>> ingredientSlots() {
+            return ingredientSlots;
+        }
+
+        @Override
+        public String result() {
+            return result;
+        }
+
+        @Override
+        public int resultCount() {
+            return resultCount;
+        }
 
         static TestRecipe of(String id, String result, int resultCount, String... slots) {
             List<List<String>> parsed = new ArrayList<>();
             for (String slot : slots) {
-                parsed.add(List.of(slot.split("\\|")));
+                parsed.add(Arrays.asList(slot.split("\\|")));
             }
             return new TestRecipe(id, parsed, result, resultCount);
         }
@@ -39,7 +72,7 @@ class RecipeGraphSolverTest {
 
     private RecipeGraphSolver<String, String> solver(int maxDepth, int maxAttempts) {
         return new RecipeGraphSolver<>(
-                item -> recipes.stream().filter(r -> r.result().equals(item)).toList(),
+                item -> recipes.stream().filter(r -> r.result().equals(item)).collect(Collectors.toList()),
                 remainders::get,
                 maxDepth, maxAttempts);
     }
@@ -61,7 +94,7 @@ class RecipeGraphSolverTest {
     @Test
     void allIngredientsInStockYieldsSingleStep() {
         TestRecipe stick = TestRecipe.of("stick", "stick", 4, "planks", "planks");
-        assertEquals(List.of(new PlannedStep<>("stick", 1)),
+        assertEquals(Arrays.asList(new PlannedStep<>("stick", 1)),
                 solveOk(stick, inv("planks", 2)));
     }
 
@@ -71,7 +104,7 @@ class RecipeGraphSolverTest {
         TestRecipe chest = TestRecipe.of("chest", "chest", 1,
                 "planks", "planks", "planks", "planks", "planks", "planks", "planks", "planks");
         // 8 planks needed, none in stock: 2 plank crafts (4 each) from 2 logs, then the chest.
-        assertEquals(List.of(new PlannedStep<>("planks", 2), new PlannedStep<>("chest", 1)),
+        assertEquals(Arrays.asList(new PlannedStep<>("planks", 2), new PlannedStep<>("chest", 1)),
                 solveOk(chest, inv("log", 2)));
     }
 
@@ -81,7 +114,7 @@ class RecipeGraphSolverTest {
         TestRecipe chest = TestRecipe.of("chest", "chest", 1,
                 "planks", "planks", "planks", "planks", "planks", "planks", "planks", "planks");
         // 6 planks in stock + one craft of 4 covers the remaining 2.
-        assertEquals(List.of(new PlannedStep<>("planks", 1), new PlannedStep<>("chest", 1)),
+        assertEquals(Arrays.asList(new PlannedStep<>("planks", 1), new PlannedStep<>("chest", 1)),
                 solveOk(chest, inv("planks", 6, "log", 1)));
     }
 
@@ -91,7 +124,7 @@ class RecipeGraphSolverTest {
         recipes.add(TestRecipe.of("stick", "stick", 4, "planks", "planks"));
         TestRecipe pickaxe = TestRecipe.of("pickaxe", "pickaxe", 1,
                 "cobble", "cobble", "cobble", "stick", "stick");
-        assertEquals(List.of(
+        assertEquals(Arrays.asList(
                         new PlannedStep<>("planks", 1),
                         new PlannedStep<>("stick", 1),
                         new PlannedStep<>("pickaxe", 1)),
@@ -104,7 +137,7 @@ class RecipeGraphSolverTest {
         TestRecipe stick = TestRecipe.of("stick", "stick", 4,
                 "oak_planks|birch_planks", "oak_planks|birch_planks");
         // No oak anywhere; birch is craftable, so the slot falls through to it.
-        assertEquals(List.of(new PlannedStep<>("birch_planks", 1), new PlannedStep<>("stick", 1)),
+        assertEquals(Arrays.asList(new PlannedStep<>("birch_planks", 1), new PlannedStep<>("stick", 1)),
                 solveOk(stick, inv("birch_log", 1)));
     }
 
@@ -114,7 +147,7 @@ class RecipeGraphSolverTest {
         TestRecipe stick = TestRecipe.of("stick", "stick", 4,
                 "oak_planks|birch_planks", "oak_planks|birch_planks");
         // Birch planks already in stock: no oak crafting even though oak is listed first.
-        assertEquals(List.of(new PlannedStep<>("stick", 1)),
+        assertEquals(Arrays.asList(new PlannedStep<>("stick", 1)),
                 solveOk(stick, inv("birch_planks", 2, "oak_log", 1)));
     }
 
@@ -124,7 +157,7 @@ class RecipeGraphSolverTest {
         recipes.add(TestRecipe.of("gem_from_dust", "gem", 1, "dust", "dust"));
         TestRecipe ring = TestRecipe.of("ring", "ring", 1, "gem");
         // No ore: the first producer fails, the second resolves.
-        assertEquals(List.of(new PlannedStep<>("gem_from_dust", 1), new PlannedStep<>("ring", 1)),
+        assertEquals(Arrays.asList(new PlannedStep<>("gem_from_dust", 1), new PlannedStep<>("ring", 1)),
                 solveOk(ring, inv("dust", 2)));
     }
 
@@ -145,7 +178,7 @@ class RecipeGraphSolverTest {
         recipes.add(TestRecipe.of("ingots_from_block", "ingot", 9, "block"));
         TestRecipe pick = TestRecipe.of("pick", "pick", 1, "ingot", "ingot", "ingot");
         // One block in stock: decompress once, craft the pick.
-        assertEquals(List.of(new PlannedStep<>("ingots_from_block", 1), new PlannedStep<>("pick", 1)),
+        assertEquals(Arrays.asList(new PlannedStep<>("ingots_from_block", 1), new PlannedStep<>("pick", 1)),
                 solveOk(pick, inv("block", 1)));
     }
 
@@ -155,7 +188,7 @@ class RecipeGraphSolverTest {
         TestRecipe cake = TestRecipe.of("cake", "cake", 1,
                 "milk_bucket", "milk_bucket", "milk_bucket", "wheat", "wheat", "wheat");
         List<PlannedStep<String>> steps = solveOk(cake, inv("milk_bucket", 3, "wheat", 3));
-        assertEquals(List.of(new PlannedStep<>("cake", 1)), steps);
+        assertEquals(Arrays.asList(new PlannedStep<>("cake", 1)), steps);
     }
 
     @Test
@@ -176,7 +209,7 @@ class RecipeGraphSolverTest {
         // The gift needs a cake and an empty bucket. Crafting the cake consumes the milk
         // bucket and frees the empty bucket as that step executes, in time for the gift.
         TestRecipe gift = TestRecipe.of("gift", "gift", 1, "cake", "bucket");
-        assertEquals(List.of(new PlannedStep<>("cake", 1), new PlannedStep<>("gift", 1)),
+        assertEquals(Arrays.asList(new PlannedStep<>("cake", 1), new PlannedStep<>("gift", 1)),
                 solveOk(gift, inv("milk_bucket", 1)));
     }
 
@@ -223,7 +256,7 @@ class RecipeGraphSolverTest {
     void consecutiveIdenticalCraftsAreMerged() {
         recipes.add(TestRecipe.of("planks", "planks", 1, "log"));
         TestRecipe bundle = TestRecipe.of("bundle", "bundle", 1, "planks", "planks", "planks");
-        assertEquals(List.of(new PlannedStep<>("planks", 3), new PlannedStep<>("bundle", 1)),
+        assertEquals(Arrays.asList(new PlannedStep<>("planks", 3), new PlannedStep<>("bundle", 1)),
                 solveOk(bundle, inv("log", 3)));
     }
 
@@ -233,7 +266,7 @@ class RecipeGraphSolverTest {
         TestRecipe frame = TestRecipe.of("frame", "frame", 1,
                 "stick", "stick", "stick", "stick", "stick", "stick");
         // 6 sticks needed: two crafts of 4 (one would only give 4), planks from stock.
-        assertEquals(List.of(new PlannedStep<>("stick", 2), new PlannedStep<>("frame", 1)),
+        assertEquals(Arrays.asList(new PlannedStep<>("stick", 2), new PlannedStep<>("frame", 1)),
                 solveOk(frame, inv("planks", 4)));
     }
 
@@ -265,7 +298,7 @@ class RecipeGraphSolverTest {
         recipes.add(TestRecipe.of("x", "x", 1, "rawx"));
         recipes.add(TestRecipe.of("y", "y", 1, "rawy"));
         TestRecipe target = TestRecipe.of("t", "t", 1, "x", "y", "x");
-        assertEquals(List.of(
+        assertEquals(Arrays.asList(
                         new PlannedStep<>("x", 1),
                         new PlannedStep<>("y", 1),
                         new PlannedStep<>("x", 1),
@@ -282,7 +315,7 @@ class RecipeGraphSolverTest {
         recipes.add(TestRecipe.of("a", "a", 1, "p"));
         recipes.add(TestRecipe.of("b", "b", 1, "p"));
         TestRecipe target = TestRecipe.of("t", "t", 1, "a", "b");
-        assertEquals(List.of(
+        assertEquals(Arrays.asList(
                         new PlannedStep<>("p", 1),
                         new PlannedStep<>("a", 1),
                         new PlannedStep<>("b", 1),
@@ -333,7 +366,7 @@ class RecipeGraphSolverTest {
     void shortfallOfFullyStockedRecipeIsEmpty() {
         TestRecipe stick = TestRecipe.of("stick", "stick", 4, "planks", "planks");
         RecipeGraphSolver.ShortfallResult<String> r = solver().shortfall(stick, inv("planks", 2));
-        assertEquals(Map.of(), r.demands());
+        assertEquals(Collections.emptyMap(), r.demands());
         assertFalse(r.approximate());
     }
 
@@ -379,7 +412,7 @@ class RecipeGraphSolverTest {
         TestRecipe stick = TestRecipe.of("stick", "stick", 4,
                 "oak_planks|birch_planks", "oak_planks|birch_planks");
         // Birch planks in stock satisfy both slots; nothing to gather even though oak is listed first.
-        assertEquals(Map.of(), solver().shortfall(stick, inv("birch_planks", 2)).demands());
+        assertEquals(Collections.emptyMap(), solver().shortfall(stick, inv("birch_planks", 2)).demands());
     }
 
     @Test
@@ -399,8 +432,8 @@ class RecipeGraphSolverTest {
         // each slot here are raw leaves, so the chosen representative is the first, keyed in demands.
         TestRecipe thing = TestRecipe.of("thing", "thing", 1, "coal|charcoal", "oak_log|spruce_log");
         RecipeGraphSolver.ShortfallResult<String> r = solver().shortfall(thing, inv());
-        assertEquals(List.of("coal", "charcoal"), r.alternatives().get("coal"));
-        assertEquals(List.of("oak_log", "spruce_log"), r.alternatives().get("oak_log"));
+        assertEquals(Arrays.asList("coal", "charcoal"), r.alternatives().get("coal"));
+        assertEquals(Arrays.asList("oak_log", "spruce_log"), r.alternatives().get("oak_log"));
     }
 
     @Test
@@ -412,7 +445,7 @@ class RecipeGraphSolverTest {
         recipes.add(TestRecipe.of("stick", "stick", 4,
                 "oak_planks|spruce_planks", "oak_planks|spruce_planks"));
         TestRecipe rod = TestRecipe.of("rod", "rod", 1, "stick");
-        assertEquals(Map.of(), solver().shortfall(rod, inv("spruce_log", 1)).demands());
+        assertEquals(Collections.emptyMap(), solver().shortfall(rod, inv("spruce_log", 1)).demands());
     }
 
     @Test
