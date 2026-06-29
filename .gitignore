@@ -35,3 +35,6 @@ logs
 
 # Claude Code session state
 .claude/
+
+# qwen background-review opt-in marker + artifacts
+.qwen/
