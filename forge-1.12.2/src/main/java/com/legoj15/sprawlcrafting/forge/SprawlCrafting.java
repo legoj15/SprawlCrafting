@@ -1,17 +1,24 @@
 package com.legoj15.sprawlcrafting.forge;
 
+import com.legoj15.sprawlcrafting.forge.command.SprawlCraftingCommand;
+import com.legoj15.sprawlcrafting.forge.craft.CraftQueueManager;
+import com.legoj15.sprawlcrafting.forge.network.SprawlNetwork;
+
 import net.minecraftforge.fml.common.Mod;
+import net.minecraftforge.fml.common.SidedProxy;
 import net.minecraftforge.fml.common.event.FMLPreInitializationEvent;
+import net.minecraftforge.fml.common.event.FMLServerStartingEvent;
+import net.minecraftforge.fml.common.event.FMLServerStoppingEvent;
 import org.apache.logging.log4j.Logger;
 
 /**
- * Minimal Forge 1.12.2 entry point for SprawlCrafting.
+ * Forge 1.12.2 entry point for SprawlCrafting — the legacy-loader counterpart of the modern
+ * Fabric/NeoForge entry points. Wires the shared craft engine: the network channel, the per-tick
+ * job driver (via the sided proxy), the {@code /sprawlcrafting} command, and shutdown cleanup.
  *
- * <p>This is the legacy-loader counterpart to the modern Fabric/NeoForge entry points in
- * the Stonecutter tree. For now it is only a scaffold: it loads, logs once, and proves the
- * module compiles against the deobfuscated 1.12.2 Forge classpath produced by
- * RetroFuturaGradle. The deferred-craft behaviour will be ported on top of the shared
- * {@code com.legoj15.sprawlcrafting.craft.solver} core (compiled in from ../solver-core).
+ * <p>All gameplay logic lives in {@code com.legoj15.sprawlcrafting.forge.craft} on top of the
+ * shared, pure-Java-8 {@code com.legoj15.sprawlcrafting.craft.solver} core (compiled in from
+ * ../solver-core).
  */
 @Mod(
         modid = SprawlCrafting.MOD_ID,
@@ -25,11 +32,29 @@ public class SprawlCrafting {
     public static final String MOD_NAME = "SprawlCrafting";
     public static final String VERSION = "1.0.1";
 
+    @SidedProxy(
+            clientSide = "com.legoj15.sprawlcrafting.forge.client.ClientProxy",
+            serverSide = "com.legoj15.sprawlcrafting.forge.CommonProxy"
+    )
+    public static CommonProxy proxy;
+
     private static Logger logger;
 
     @Mod.EventHandler
     public void preInit(FMLPreInitializationEvent event) {
         logger = event.getModLog();
+        SprawlNetwork.initCommon();
+        proxy.preInit();
         logger.info("{} {} loaded on Minecraft 1.12.2 (Forge).", MOD_NAME, VERSION);
+    }
+
+    @Mod.EventHandler
+    public void serverStarting(FMLServerStartingEvent event) {
+        event.registerServerCommand(new SprawlCraftingCommand());
+    }
+
+    @Mod.EventHandler
+    public void serverStopping(FMLServerStoppingEvent event) {
+        CraftQueueManager.clearAll();
     }
 }

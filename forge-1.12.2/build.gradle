@@ -88,17 +88,23 @@ repositories {
         name = 'BlameJared / modmaven'
         url = 'https://modmaven.dev'
     }
+    maven {
+        // SpongePowered Mixin — for the annotation processor (':processor' classifier). MixinBooter
+        // bundles the Mixin runtime but not the dev-time AP that generates the refmap.
+        name = 'SpongePowered'
+        url = 'https://repo.spongepowered.org/repository/maven-public/'
+    }
 }
 
 dependencies {
-    // --- Mixin tooling (WIRED, no mixins shipped yet) ------------------------------------
-    // MixinBooter ships SpongePowered Mixin and the FML tweaker that runs it on 1.12.2.
-    // The annotationProcessor entries generate the refmap once real mixins are added.
+    // --- Mixin tooling -------------------------------------------------------------------
+    // MixinBooter ships the SpongePowered Mixin RUNTIME and the FML tweaker that runs it on 1.12.2,
+    // but NOT the dev-time annotation processor. The processor — which generates the refmap that
+    // remaps the mixins' deobf @At targets to production SRG names — comes from the ':processor'
+    // classifier, a shaded jar bundling the AP plus asm/guava/gson. 0.8.5 matches MixinBooter 11.0's
+    // Mixin lineage; the refmap format is stable across the 0.8.x line.
     String mixin = "zone.rong:mixinbooter:${project.mixin_booter_version}"
-    annotationProcessor 'org.ow2.asm:asm-debug-all:5.2'
-    annotationProcessor 'com.google.guava:guava:32.1.2-jre'
-    annotationProcessor 'com.google.code.gson:gson:2.8.9'
-    annotationProcessor (mixin) { transitive = false }
+    annotationProcessor 'org.spongepowered:mixin:0.8.5:processor'
     implementation (mixin) { transitive = false }
 
     // --- JEI integration (compile dependency) --------------------------------------------
@@ -139,6 +145,12 @@ processResources {
 // com.legoj15.sprawlcrafting.forge.mixin and list it in mixins.sprawlcrafting.json. RFG's reobfJar
 // reobfuscates this jar output and preserves the manifest, so it carries into the production jar.
 jar {
+    // Bundle the Mixin-AP-generated refmap (see the JavaCompile block below) into the jar root,
+    // where MixinBooter looks for it. Without it the recipe-book mixins cannot remap their deobf
+    // @At targets to the SRG names present at production runtime, and silently fail to apply.
+    from(layout.buildDirectory.dir('mixinRefmap')) {
+        include 'mixins.sprawlcrafting.refmap.json'
+    }
     manifest {
         attributes(
                 'MixinConfigs': 'mixins.sprawlcrafting.json'
@@ -151,6 +163,38 @@ test {
     useJUnitPlatform()
 }
 
+// Note: in the RFG dev runClient, FML loads this mod from the classpath dev jar and fails to serve
+// its lang file from that jar's FMLFileResourcePack, so translation keys would render raw in dev
+// only. That is handled at runtime by com.legoj15.sprawlcrafting.forge.client.DevLangInjector
+// (dev-environment-gated); a production install loads the lang normally. No build-side workaround
+// is needed, so resources keep their standard output location.
+
+// -------------------------------------------------------------------------------------
+// Mixin annotation-processor refmap wiring (RFG).
+//
+// The SpongePowered Mixin AP translates the deobf (MCP) names used in @Inject/@At targets into
+// the SRG names present at production runtime, emitting them into the refmap MixinBooter consults.
+// It needs the MCP->SRG mappings to do so. RFG stages that srg in its MCP cache, keyed by the
+// mapping channel + version from gradle.properties (stable_39 -> mcp_stable/39). Without
+// -AreobfSrgFile no refmap is produced and the recipe-book mixins, while compiling fine, would
+// silently no-op in an obfuscated install (they carry require = 0, so they degrade rather than
+// crash). The JEI/command/HUD features use no mixins and are unaffected either way.
+// -------------------------------------------------------------------------------------
+def mcpToSrgFile = new File(gradle.gradleUserHomeDir,
+        "caches/minecraft/de/oceanlabs/mcp/mcp_${project.mapping_channel}/${project.mapping_version}/rfg_srgs/mcp-srg.srg")
+def mixinRefmapFile = layout.buildDirectory
+        .file('mixinRefmap/mixins.sprawlcrafting.refmap.json').get().asFile
+
 tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8'
+    if (mcpToSrgFile.exists()) {
+        options.compilerArgs += [
+                "-AreobfSrgFile=${mcpToSrgFile.absolutePath}".toString(),
+                "-AoutRefMapFile=${mixinRefmapFile.absolutePath}".toString()
+        ]
+    } else {
+        logger.warn('SprawlCrafting: MCP->SRG srg not found at {} — mixin refmap will not be ' +
+                'generated (run setupDecompWorkspace first). Recipe-book mixins will be inert in ' +
+                'an obfuscated install until this is present.', mcpToSrgFile)
+    }
 }
