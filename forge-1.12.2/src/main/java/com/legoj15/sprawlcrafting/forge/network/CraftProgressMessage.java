@@ -16,8 +16,9 @@ import net.minecraftforge.fml.relauncher.SideOnly;
 
 /**
  * S2C: streams a deferred-craft job's progress to the client HUD flyout. Mirrors the modern
- * {@code CraftProgressPayload}. The {@link Handler} is client-only and must never be class-loaded
- * on a dedicated server (it is registered solely from the client proxy).
+ * {@code CraftProgressPayload}. The {@link Handler}'s {@code onMessage} is
+ * {@code @SideOnly(Side.CLIENT)} — FML strips the body on a dedicated server, so the handler
+ * class is safe to load on both sides (required for discriminator registration).
  */
 public class CraftProgressMessage implements IMessage {
 

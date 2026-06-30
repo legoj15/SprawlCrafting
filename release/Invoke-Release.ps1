@@ -11,9 +11,11 @@
       4. uploads one CurseForge file per node (loader + MC version),
       5. resets changelog.md and (for a prerelease) bumps `version` to the next prerelease.
 
-    SprawlCrafting ships SIX jars (fabric + neoforge x 1.21.1 / 26.1.2 / 26.2). Each store upload is
-    per-node and tags its own loader. The update manifest is keyed by MC version (loader-agnostic), so
-    both loaders of one MC version share a block.
+    SprawlCrafting ships SEVEN jars: fabric + neoforge x 1.21.1 / 26.1.2 / 26.2 (the modern Stonecutter
+    tree), plus a single Forge jar for the legacy 1.12.2 line (its own self-contained build under
+    forge-1.12.2/, injected as a synthetic release node via release.json's `legacyForge` block). Each
+    store upload is per-node and tags its own loader. The update manifest is keyed by MC version
+    (loader-agnostic), so both loaders of one MC version share a block (1.12.2 has the one Forge jar).
 
     Changelog lines of the form "- {MC.VER} text" are routed only to that MC version's manifest block
     and store upload (tag stripped); GitHub always gets changelog.md verbatim. A tag naming an unknown
@@ -30,7 +32,7 @@
 .PARAMETER Execute      Actually perform writes / commits / uploads. Omit for a dry run.
 .PARAMETER Only         Restrict to a subset of stages: Manifest, GitHub, Modrinth, CurseForge, PostFlight. Default: all.
 .PARAMETER NextVersion  Override the post-flight version bump (required when releasing a final, suffix-less version).
-.PARAMETER Build        Run `./gradlew buildAndCollect` first (collects all six jars into testing/dist/).
+.PARAMETER Build        Build first: `./gradlew buildAndCollect` (six modern jars -> testing/dist/) plus the 1.12.2 Forge build (forge-1.12.2/build/libs/, host JDK 25 via legacyForge.javaHome).
 .PARAMETER ModrinthStaging  Target staging-api.modrinth.com for the Modrinth leg (see release/README.md caveat).
 
 .EXAMPLE  ./release/Invoke-Release.ps1                 # full dry run of the current version
@@ -83,7 +85,7 @@ if (-not $Execute) { Write-ScWarn 'Dry run — pass -Execute to publish for real
 
 # ── Optional build ───────────────────────────────────────────────────────────
 if ($Build) {
-    Write-ScStep 'Build all node jars (./gradlew buildAndCollect)'
+    Write-ScStep 'Build modern node jars (./gradlew buildAndCollect)'
     if (-not $Execute) {
         Write-ScDry "would run: ./gradlew buildAndCollect"
     } else {
@@ -93,6 +95,33 @@ if ($Build) {
             if ($LASTEXITCODE -ne 0) { throw "buildAndCollect failed (exit $LASTEXITCODE)." }
         } finally { Pop-Location }
         Write-ScOk 'buildAndCollect succeeded.'
+    }
+
+    # The legacy 1.12.2 jar is produced by its OWN self-contained Gradle build (separate wrapper, RFG,
+    # host JDK 25) — root buildAndCollect never produces it. Build each legacy node with a second gradlew
+    # invocation, switching JAVA_HOME to the configured JDK (the modern build needs JDK 21, the forge build
+    # needs JDK 25 — they can't share one host JDK in a single run).
+    foreach ($ln in @($nodes | Where-Object { $_.IsLegacy })) {
+        $lnDir = Join-Path $root $ln.BuildDir
+        Write-ScStep "Build legacy $($ln.McVersion) jar ($($ln.BuildDir)/gradlew $($ln.BuildTask))"
+        if (-not $Execute) {
+            Write-ScDry "would run: $($ln.BuildDir)/gradlew.bat $($ln.BuildTask)  [JAVA_HOME=$(if($ln.JavaHome){$ln.JavaHome}else{'(current)'})]"
+            continue
+        }
+        if (-not $ln.JavaHome) {
+            Write-ScWarn "legacyForge.javaHome not set — building $($ln.McVersion) with the current JAVA_HOME. RFG requires a JDK 25 host; set legacyForge.javaHome in release.json if this fails."
+        }
+        $savedJavaHome = $env:JAVA_HOME
+        Push-Location $lnDir
+        try {
+            if ($ln.JavaHome) { $env:JAVA_HOME = $ln.JavaHome }
+            & (Join-Path $lnDir 'gradlew.bat') $ln.BuildTask
+            if ($LASTEXITCODE -ne 0) { throw "legacy $($ln.McVersion) build failed (exit $LASTEXITCODE)." }
+        } finally {
+            Pop-Location
+            $env:JAVA_HOME = $savedJavaHome
+        }
+        Write-ScOk "Built legacy $($ln.McVersion) jar."
     }
 }
 
@@ -199,6 +228,8 @@ if (Want 'PostFlight') {
     Write-ScStep 'Post-flight: reset changelog + bump version'
     Reset-ScChangelog -RepoRoot $root -ReleasedVersion $ver -Execute:$Execute
     $next = Step-ScVersion -RepoRoot $root -Split $split -NextVersion $NextVersion -Execute:$Execute
+    # The version is single-sourced in root gradle.properties (the 1.12.2 build reads it from there), so the
+    # bump only ever touches this one file alongside the changelog reset.
     Invoke-ScGitCommit -RepoRoot $root -Paths @('changelog.md','gradle.properties') `
         -Message "Reset changelog and bump $ver -> $next" -Execute:$Execute
     Invoke-ScGitPush -RepoRoot $root -Execute:$Execute

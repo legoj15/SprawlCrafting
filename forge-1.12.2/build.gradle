@@ -17,7 +17,19 @@ plugins {
     id 'com.gtnewhorizons.retrofuturagradle' version '2.0.2'
 }
 
-version = project.mod_version
+// SINGLE SOURCE OF TRUTH for the mod version, repo-wide: the root gradle.properties one directory up
+// (the same `version` the modern Stonecutter build uses). This legacy build stays otherwise standalone,
+// but reads the version from root so a release bumps exactly ONE line. mcmod.info (${mod_version}) and
+// the generated BuildInfo.VERSION (the @Mod annotation constant) both derive from this.
+def rootVersion = {
+    def p = new Properties()
+    file('../gradle.properties').withInputStream { p.load(it) }
+    def v = p.getProperty('version')
+    if (!v?.trim()) { throw new GradleException("No 'version' in ../gradle.properties — the 1.12.2 build reads the mod version from there.") }
+    return v.trim()
+}()
+version = rootVersion
+ext.mod_version = rootVersion          // consumed by processResources -> mcmod.info ${mod_version}
 group = project.mod_group
 base {
     archivesName = project.mod_id
@@ -53,6 +65,37 @@ sourceSets {
         }
     }
 }
+
+// -------------------------------------------------------------------------------------
+// Generated version constant. Bakes the single-source version (rootVersion, read from the root
+// gradle.properties) into a compile-time Java constant so the @Mod annotation and the startup log
+// never duplicate a hardcoded literal. A generated `public static final String` initialised from a
+// string literal IS a Java compile-time constant (JLS 15.29), so it is legal inside @Mod(version=...).
+// The output lands under build/ (gitignored) and is regenerated whenever the version changes — never
+// edit it by hand.
+// -------------------------------------------------------------------------------------
+def generatedVersionDir = layout.buildDirectory.dir('generated/sources/buildinfo/java')
+def generateBuildInfo = tasks.register('generateBuildInfo') {
+    def outDir = generatedVersionDir
+    def ver = rootVersion
+    inputs.property 'version', ver
+    outputs.dir outDir
+    doLast {
+        def pkgDir = outDir.get().dir('com/legoj15/sprawlcrafting/forge').asFile
+        pkgDir.mkdirs()
+        new File(pkgDir, 'BuildInfo.java').text = """\
+package com.legoj15.sprawlcrafting.forge;
+
+/** Generated at build time from the root gradle.properties `version`. DO NOT EDIT. */
+public final class BuildInfo {
+    public static final String VERSION = "${ver}";
+    private BuildInfo() {}
+}
+"""
+    }
+}
+sourceSets.main.java.srcDir(generatedVersionDir)
+tasks.named('compileJava') { dependsOn generateBuildInfo }
 
 minecraft {
     mcVersion = '1.12.2'
@@ -136,6 +179,11 @@ processResources {
                 'mod_author': project.mod_author
         )
     }
+
+    // Pull the shared mod logo from the root source tree so all builds reference one file.
+    from('../src/main/resources/assets/sprawlcrafting/icon.png') {
+        rename { 'logo.png' }
+    }
 }
 
 // MixinBooter discovers a mod's mixin configs from the jar manifest's `MixinConfigs` attribute
@@ -163,11 +211,12 @@ test {
     useJUnitPlatform()
 }
 
-// Note: in the RFG dev runClient, FML loads this mod from the classpath dev jar and fails to serve
-// its lang file from that jar's FMLFileResourcePack, so translation keys would render raw in dev
-// only. That is handled at runtime by com.legoj15.sprawlcrafting.forge.client.DevLangInjector
-// (dev-environment-gated); a production install loads the lang normally. No build-side workaround
-// is needed, so resources keep their standard output location.
+// Note: a pack.mcmeta (pack_format 3) is included in src/main/resources so that FML does NOT wrap
+// the mod's resource pack in a LegacyV2Adapter. Without it, FML's dummy pack.mcmeta says format 2,
+// the adapter's fudgePath transforms "lang/en_us.lang" lookups into "lang/en_US.lang", and the
+// lang file (correctly named en_us.lang for 1.12.2) silently fails to load. In the dev environment,
+// a separate issue exists (RFG splits classes and resources into different directories, so
+// FMLFolderResourcePack can't find assets at all) — DevLangInjector handles that case.
 
 // -------------------------------------------------------------------------------------
 // Mixin annotation-processor refmap wiring (RFG).

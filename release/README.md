@@ -7,9 +7,13 @@ idiom (PowerShell module + JSON config; secrets via env vars).
 Everything is derived from a single input — `version` in the root `gradle.properties` — plus the
 per-node `versions/<node>/gradle.properties`. You bump `version`, build the jars, run this.
 
-SprawlCrafting ships **six jars** (Fabric + NeoForge × 1.21.1 / 26.1.2 / 26.2). Each store upload is
-**per-node** and tags its own loader. The update manifest is keyed by **MC version** (loader-agnostic),
-so both loaders of one MC version share a block.
+SprawlCrafting ships **seven jars**: Fabric + NeoForge × 1.21.1 / 26.1.2 / 26.2 (the modern Stonecutter
+tree), plus one **Forge** jar for the legacy **1.12.2** line. The 1.12.2 build lives under `forge-1.12.2/`
+(its own self-contained Gradle build) and is wired in as a synthetic release node via the `legacyForge`
+block in `config/release.json` — it builds with a second `gradlew` invocation (host JDK 25) and its jar
+is named `sprawlcrafting-<ver>.jar` (no `+mc…-loader` tag). Each store upload is **per-node** and tags
+its own loader. The update manifest is keyed by **MC version** (loader-agnostic), so both loaders of one
+MC version share a block (1.12.2 has the single Forge jar).
 
 ## Safe by default
 
@@ -22,7 +26,7 @@ no tokens.
 # preview the whole release (no tokens needed)
 ./release/Invoke-Release.ps1
 
-# build all six jars first, then preview
+# build all seven jars first (six modern + the 1.12.2 Forge jar), then preview
 ./release/Invoke-Release.ps1 -Build
 
 # publish for real
@@ -32,30 +36,30 @@ no tokens.
 ./release/Invoke-Release.ps1 -Only GitHub -Execute
 ```
 
-## Stores are OFF until you set them up
+## Stores are LIVE
 
-`modrinth.enabled` and `curseforge.enabled` in `config/release.json` are **`false`** — you have not
-created those store projects yet. A dry run still **previews** a disabled store (clearly labelled);
-`-Execute` **skips** it. **GitHub works today** via your existing `gh auth` (`repo` scope present).
+`modrinth.enabled` and `curseforge.enabled` in `config/release.json` are **`true`** with real project
+IDs (Modrinth `ILhtnhcE`, CurseForge `1575622`, both slug `sprawlcrafting`). 1.0.1 was published to all
+three platforms via `-Execute`, so the pipeline is proven end-to-end. **GitHub** works via your existing
+`gh auth` (`repo` scope present).
 
-When you're ready to publish to a store:
+Tokens come from `config/secrets.ps1` (gitignored — copy from `config/secrets.ps1.example`, or export
+`$env:MODRINTH_TOKEN` / `$env:CURSEFORGE_TOKEN` yourself). **A dry run needs no tokens** — it previews
+every upload without touching the network; only `-Execute` publishes.
 
-1. Create the project on [Modrinth](https://modrinth.com) / [CurseForge](https://authors.curseforge.com)
-   (set the page-level **Client/Server** support on Modrinth, and the JEI optional dependency).
-2. Put the real project ID into `config/release.json` (Modrinth ID like `cg00eho3`; CurseForge is the
-   numeric project ID) and flip that store's `"enabled"` to `true`.
-3. Copy `config/secrets.ps1.example` → `config/secrets.ps1` and fill in the token(s). That file is
-   gitignored. (Or export `$env:MODRINTH_TOKEN` / `$env:CURSEFORGE_TOKEN` yourself.)
+> Toggling a store back off: set its `"enabled"` to `false` in `config/release.json`. A dry run still
+> **previews** a disabled store (clearly labelled); `-Execute` **skips** it.
 
-Once SprawlCrafting is on Modrinth, the Fabric update check lights up automatically (Mod Menu's
-default checker), and NeoForge's native checker keeps reading `update.json` from the repo.
+Update-check wiring: the **Fabric** check is Mod Menu's default Modrinth-backed checker (automatic once a
+version is on Modrinth); **NeoForge** and **Forge 1.12.2** both read `update.json` from the repo via their
+native checkers (see the 1.12.2 build's `mcmod.info` `updateJSON` and the NeoForge `updateJSONURL`).
 
 ## What it does, in order
 
 | Stage | Action |
 |---|---|
 | **Manifest** | Adds this version's changelog to every MC block of `update.json` (general lines + that block's `{mc}`-tagged lines, Markdown stripped to plain text), seeds blocks/promos for any new MC line, repoints promos per policy, ASCII-escapes + validates, commits (`Announce <ver> in update manifest`). This commit is what gets tagged. |
-| **GitHub** | `gh release create <ver>` — tag = `version`, title expanded (e.g. `1.0.0 Release Candidate 4`), body = `changelog.md` verbatim, **all six** node jars attached, `--latest` unless an `ar`/`br` build (then `--prerelease`). |
+| **GitHub** | `gh release create <ver>` — tag = `version`, title expanded (e.g. `1.0.0 Release Candidate 4`), body = `changelog.md` verbatim, **all seven** node jars attached (six modern + the 1.12.2 Forge jar), `--latest` unless an `ar`/`br` build (then `--prerelease`). |
 | **Modrinth** | One version per node, `version_number = <ver>+mc<mc>-<loader>` (unique), `loaders = [<loader>]`. Title includes the loader. |
 | **CurseForge** | One file per node, tagged with its MC version, loader (`Fabric`/`NeoForge`), the **environment** (`Client`+`Server`), and the **Java tier** (`Java <n>` from the node's `java_version`). |
 | **PostFlight** | Resets `changelog.md` to `###### Changes since <ver>:` (empty body) and, for a prerelease, bumps `version` to the next prerelease (`rc4`→`rc5`); commits + pushes. A **final** release leaves the version alone unless you pass `-NextVersion 1.0.1`. |
@@ -92,7 +96,7 @@ End-of-support lines can be pinned via `endOfSupportLines` in `config/release.js
 
 ## Prerequisites checklist before `-Execute`
 
-- [ ] `./gradlew buildAndCollect` passed → `testing/dist/` has all six jars (or pass `-Build`).
+- [ ] `./gradlew buildAndCollect` passed → `testing/dist/` has the six modern jars, **and** the 1.12.2 Forge jar is built at `forge-1.12.2/build/libs/sprawlcrafting-<ver>.jar` (or pass `-Build` to do both — the Forge build needs a JDK 25 host; set `legacyForge.javaHome` if your default JDK isn't 25).
 - [ ] `changelog.md` finalized for this version.
 - [ ] On `main`, working tree otherwise clean (the script commits `update.json`, then `changelog.md`+`gradle.properties`).
 - [ ] `gh auth status` OK (already is).

@@ -8,7 +8,8 @@
 #   * SprawlCrafting ships TWO loaders per MC version (fabric + neoforge), so every store upload is
 #     PER-NODE and tags its own loader — BuildCraft was NeoForge-only with one universal jar per MC.
 #   * Every node gets the SAME full changelog (general lines + its own {mc}-tagged lines). There is no
-#     "primary vs backport" framing: all six nodes are built from one shared source and are equals.
+#     "primary vs backport" framing: every release node is an equal (the modern six share one Stonecutter
+#     source; the legacy 1.12.2 Forge node is a separate build sharing the solver-core, injected via config).
 #   * The in-game update manifest is the STANDARD Forge/NeoForge update.json (homepage + per-MC
 #     {version:changelog} + promos), rendered as PLAIN text — not BuildCraft's in-game §-formatted file.
 #
@@ -170,6 +171,38 @@ function Get-ScNodes {
             LoaderDisplay = $cfName                     # human-facing loader label (store titles)
             Java          = if ($p.ContainsKey('java_version')) { $p['java_version'] } elseif ($rootProps.ContainsKey('java_version')) { $rootProps['java_version'] } else { $null }
             IsFeatured    = ($p['minecraft_version'] -eq $featuredMc)
+            IsLegacy      = $false                      # a standard Stonecutter node (modern jar name + buildAndCollect)
+        }
+    }
+    # The legacy 1.12.2 Forge build lives OUTSIDE versions/ (its own self-contained Gradle build), so the
+    # directory walk above never sees it. Inject it as a synthetic node from the config's `legacyForge`
+    # block. Its store identity (Forge loader, Java 8, 1.12.2 game version) and its jar name/location differ
+    # from the modern nodes, so it carries IsLegacy + BuildDir/BuildTask/JavaHome that Test-ScJars and the
+    # -Build stage special-case. Java is taken from config (NOT inherited) because the forge gradle.properties
+    # has no java_version key — without it the CurseForge upload would tag the wrong (or no) Java tier.
+    $lf = Get-ScProp $Config 'legacyForge'
+    if ($lf -and [bool](Get-ScProp $lf 'enabled' $false)) {
+        $lfDir = Get-ScProp $lf 'dir' 'forge-1.12.2'
+        if (Test-Path (Join-Path $RepoRoot (Join-Path $lfDir 'gradle.properties'))) {
+            $lfMc     = Get-ScProp $lf 'mcVersion' '1.12.2'
+            $lfLoader = Get-ScProp $lf 'loader' 'forge'
+            $lfCf     = Get-ScProp $lf 'cfLoaderName' 'Forge'
+            $nodes += [pscustomobject]@{
+                Node          = "$lfMc-$lfLoader"
+                McVersion     = $lfMc
+                Loader        = $lfLoader
+                MrLoader      = $lfLoader               # Modrinth loader id ('forge')
+                CfLoaderName  = $lfCf                   # CurseForge loader entry ('Forge')
+                LoaderDisplay = $lfCf
+                Java          = Get-ScProp $lf 'java' '8'
+                IsFeatured    = ($lfMc -eq $featuredMc)
+                IsLegacy      = $true
+                BuildDir      = $lfDir
+                BuildTask     = Get-ScProp $lf 'buildTask' 'reobfJar'
+                JavaHome      = Get-ScProp $lf 'javaHome' ''
+            }
+        } else {
+            Write-ScWarn "legacyForge.enabled but '$lfDir/gradle.properties' not found — skipping the 1.12.2 node."
         }
     }
     if ($featuredMc -and -not ($nodes | Where-Object IsFeatured)) {
@@ -193,6 +226,17 @@ function Get-ScJarPath {
     return $candidates[0]
 }
 
+function Get-ScLegacyForgeJarPath {
+    # The reobf jar produced by the self-contained 1.12.2 Forge build: <dir>/build/libs/sprawlcrafting-<ver>.jar
+    # (RFG: archivesName=mod_id, version=mod_version; NO '+mc<mc>-<loader>' classifier, unlike the modern jars).
+    # We name the classifier-less jar EXACTLY so the sibling '-dev'/'-sources' jars are never picked up. This
+    # assumes the forge mod_version is kept in lockstep with the root version (Step-ScVersion bumps both).
+    param([Parameter(Mandatory)][string]$RepoRoot, [Parameter(Mandatory)][string]$BuildDir, [Parameter(Mandatory)][string]$Version)
+    $path = Join-Path $RepoRoot (Join-Path $BuildDir "build/libs/sprawlcrafting-$Version.jar")
+    if (Test-Path $path) { return (Resolve-Path $path).Path }
+    return $path
+}
+
 function Test-ScJars {
     # Resolve every node's jar. Returns { Map = node->path; Missing = path[] }. Does NOT throw — the
     # orchestrator warns (dry run) or fails (execute) so a dry run can preview the plan unbuilt.
@@ -200,7 +244,11 @@ function Test-ScJars {
     $map = @{}
     $missing = @()
     foreach ($n in $Nodes) {
-        $jar = Get-ScJarPath -RepoRoot $RepoRoot -Version $Version -McVersion $n.McVersion -Loader $n.MrLoader
+        if (Get-ScProp $n 'IsLegacy' $false) {
+            $jar = Get-ScLegacyForgeJarPath -RepoRoot $RepoRoot -BuildDir $n.BuildDir -Version $Version
+        } else {
+            $jar = Get-ScJarPath -RepoRoot $RepoRoot -Version $Version -McVersion $n.McVersion -Loader $n.MrLoader
+        }
         $map[$n.Node] = $jar
         if (-not (Test-Path $jar)) { $missing += $jar }
     }
@@ -652,6 +700,9 @@ function Step-ScVersion {
         else { Write-ScWarn 'Final release: no -NextVersion given; leaving version unchanged.'; return $Split.Full }
     }
     $path = Join-Path $RepoRoot 'gradle.properties'
+    # ONE version source for the whole repo: root gradle.properties `version`. The legacy 1.12.2 Forge build
+    # reads this same value (forge-1.12.2/build.gradle's `rootVersion` -> mcmod.info + the generated
+    # BuildInfo.VERSION), so bumping this single line covers every jar — modern and legacy alike.
     if (-not $Execute) { Write-ScDry "gradle.properties version $($Split.Full) -> $NextVersion"; return $NextVersion }
     $content = Get-Content -Raw $path
     $new = [regex]::Replace($content, '(?m)^(version=).*$', "`${1}$NextVersion")

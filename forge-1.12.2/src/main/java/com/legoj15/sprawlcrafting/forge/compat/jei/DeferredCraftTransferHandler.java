@@ -34,10 +34,23 @@ public class DeferredCraftTransferHandler<C extends Container> implements IRecip
 
     private final Class<C> containerClass;
     private final IRecipeTransferHandlerHelper helper;
+    private final GridContext gridOverride;
 
     public DeferredCraftTransferHandler(Class<C> containerClass, IRecipeTransferHandlerHelper helper) {
+        this(containerClass, helper, null);
+    }
+
+    /**
+     * @param gridOverride if non-null, forces this grid context instead of inferring from
+     *                     {@code instanceof ContainerWorkbench}. Required for modded crafting
+     *                     containers that provide a 3x3 grid without extending ContainerWorkbench
+     *                     (e.g. TConstruct's Crafting Station).
+     */
+    public DeferredCraftTransferHandler(Class<C> containerClass, IRecipeTransferHandlerHelper helper,
+                                        GridContext gridOverride) {
         this.containerClass = containerClass;
         this.helper = helper;
+        this.gridOverride = gridOverride;
     }
 
     @Override
@@ -53,7 +66,8 @@ public class DeferredCraftTransferHandler<C extends Container> implements IRecip
             // Not a recipe whose result we can read; let JEI hide our button rather than mislead.
             return helper.createInternalError();
         }
-        GridContext grid = container instanceof ContainerWorkbench
+        GridContext grid = gridOverride != null ? gridOverride
+                : container instanceof ContainerWorkbench
                 ? GridContext.CRAFTING_TABLE : GridContext.INVENTORY;
         if (doTransfer) {
             SprawlNetwork.startByResult(result);

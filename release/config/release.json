@@ -25,6 +25,17 @@
   "storeGameVersionsByMc": {
     "1.21.1": ["1.21.1"],
     "26.1.2": ["26.1.2"],
-    "26.2": ["26.2"]
+    "26.2": ["26.2"],
+    "1.12.2": ["1.12.2"]
+  },
+  "legacyForge": {
+    "enabled": true,
+    "dir": "forge-1.12.2",
+    "mcVersion": "1.12.2",
+    "loader": "forge",
+    "cfLoaderName": "Forge",
+    "java": "8",
+    "buildTask": "reobfJar",
+    "javaHome": ""
   }
 }

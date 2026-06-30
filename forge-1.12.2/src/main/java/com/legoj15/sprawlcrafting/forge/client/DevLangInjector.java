@@ -13,17 +13,17 @@ import org.apache.logging.log4j.Logger;
 /**
  * Dev-environment workaround for translation keys rendering raw in {@code runClient}.
  *
- * <p>In the RetroFuturaGradle dev run the mod is loaded from the classpath dev jar, and FML's
- * resource layer fails to serve the lang file from that jar's {@code FMLFileResourcePack} — its
- * {@code getAllResources("sprawlcrafting:lang/en_us.lang")} (exactly what {@code LanguageManager}
- * calls) finds nothing, even though the entry is verifiably present in the jar. So the deferred
- * {@code TextComponentTranslation}s show their raw keys. A production install (mod jar in
- * {@code mods/}) loads the lang the normal way, so this only affects the dev environment.
+ * <p>In the RetroFuturaGradle dev run, FML wraps the mod in an {@code FMLFolderResourcePack}
+ * rooted at the classes directory ({@code build/classes/java/main}), but resources live in a
+ * separate directory ({@code build/resources/main}), so the resource pack never finds
+ * {@code assets/sprawlcrafting/lang/en_us.lang}. Production installs don't have this problem
+ * because the jar bundles classes and resources together, and the mod's {@code pack.mcmeta}
+ * ({@code pack_format: 3}) prevents the {@code LegacyV2Adapter} wrapping that would otherwise
+ * transform {@code en_us} lookups into {@code en_US}.
  *
- * <p>The fix injects the lang straight into the translation {@link LanguageMap} from the classpath
- * (where the file always resolves), and re-injects if a resource reload clears the map. It is
- * registered only in a deobfuscated (dev) environment, so production — where the lang loads
- * normally — never runs it (the {@code canTranslate} guard would no-op there anyway).
+ * <p>The fix injects the lang straight into the translation {@link LanguageMap} from the
+ * classpath (where the file always resolves), and re-injects if a resource reload clears the
+ * map. Registered only in a deobfuscated (dev) environment.
  */
 public final class DevLangInjector {
 
