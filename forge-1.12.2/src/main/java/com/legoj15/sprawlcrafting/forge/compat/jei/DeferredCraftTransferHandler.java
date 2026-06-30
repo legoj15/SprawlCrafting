@@ -1,6 +1,7 @@
 package com.legoj15.sprawlcrafting.forge.compat.jei;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -15,8 +16,11 @@ import mezz.jei.api.gui.IRecipeLayout;
 import mezz.jei.api.recipe.transfer.IRecipeTransferError;
 import mezz.jei.api.recipe.transfer.IRecipeTransferHandler;
 import mezz.jei.api.recipe.transfer.IRecipeTransferHandlerHelper;
+import net.minecraft.client.Minecraft;
 import net.minecraft.entity.player.EntityPlayer;
+import net.minecraft.inventory.ClickType;
 import net.minecraft.inventory.Container;
+import net.minecraft.inventory.ContainerPlayer;
 import net.minecraft.inventory.ContainerWorkbench;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.crafting.CraftingManager;
@@ -25,19 +29,15 @@ import net.minecraft.item.crafting.Ingredient;
 import net.minecraft.util.NonNullList;
 
 /**
- * Routes JEI's recipe-transfer "+" button on a vanilla crafting recipe into a SprawlCrafting
- * deferred craft. Registered for {@link ContainerWorkbench} (3x3) and {@code ContainerPlayer}
- * (2x2) on the crafting category, it overwrites JEI's built-in crafting transfer handler (JEI's
- * registry is last-write-wins, and third-party plugins register after the vanilla one).
+ * Routes JEI's recipe-transfer "+" button on a vanilla crafting recipe. For recipes that need
+ * intermediate steps (DEFERRED), clicking the button starts a SprawlCrafting deferred craft.
+ * For recipes where all ingredients are already in stock (DIRECT), clicking fills the crafting
+ * grid directly — matching vanilla JEI's behaviour — so simple one-step crafts don't go through
+ * the engine.
  *
- * <p>On a real press ({@code doTransfer}) it identifies the specific recipe shown in the layout and
- * sends its registry name to the server, so the solver uses that exact recipe rather than picking
- * whichever producer of the same item resolves first (which, in modpacks with many alternative
- * recipes, can differ from what the player clicked). On JEI's validation pass it enables the button
- * only when the specific displayed recipe can be made from current stock (directly or via
- * intermediates), so unsolvable recipes grey out as players expect. Unlike vanilla "+", even a
- * directly-craftable recipe runs through the engine — the result lands in the inventory rather than
- * the grid, after the engine's half-second cadence.
+ * <p>Registered for {@link ContainerWorkbench} (3x3) and {@code ContainerPlayer} (2x2) on the
+ * crafting category. On JEI's validation pass the button is enabled when the recipe can be made
+ * from current stock (directly or via intermediates).
  */
 public class DeferredCraftTransferHandler<C extends Container> implements IRecipeTransferHandler<C> {
 
@@ -80,6 +80,13 @@ public class DeferredCraftTransferHandler<C extends Container> implements IRecip
         IRecipe recipe = findRecipe(recipeLayout, result);
         if (doTransfer) {
             if (recipe != null) {
+                CraftPlanner.Session session = ClientPlanCache.get(player, grid);
+                if (session.classify(recipe) == CraftPlanner.Craftability.DIRECT
+                        && vanillaGridFill(container, recipeLayout, player, maxTransfer)) {
+                    return null;
+                }
+            }
+            if (recipe != null) {
                 SprawlNetwork.startByRecipe(recipe.getRegistryName());
             } else {
                 SprawlNetwork.startByResult(result);
@@ -97,6 +104,137 @@ public class DeferredCraftTransferHandler<C extends Container> implements IRecip
             return null;
         }
         return new MissingResourcesError(session.shortfallByResult(result));
+    }
+
+    /**
+     * Fills the crafting grid using Minecraft's drag mechanic: right-drag places 1 per slot
+     * (single craft), left-drag distributes evenly (shift-click / max transfer). Ingredients
+     * that share the same item across multiple grid positions are grouped into a single drag
+     * so they split correctly from one inventory stack.
+     */
+    private boolean vanillaGridFill(C container, IRecipeLayout recipeLayout, EntityPlayer player,
+                                    boolean maxTransfer) {
+        int gridStart, gridSize, gridWidth, invStart, invEnd;
+        if (container instanceof ContainerWorkbench) {
+            gridStart = 1; gridSize = 9; gridWidth = 3;
+            int total = container.inventorySlots.size();
+            invStart = total - 36; invEnd = total - 1;
+        } else if (container instanceof ContainerPlayer) {
+            gridStart = 1; gridSize = 4; gridWidth = 2;
+            invStart = 9; invEnd = 44;
+        } else if (GridContext.isModded3x3Crafter(container)) {
+            gridStart = 1; gridSize = 9; gridWidth = 3;
+            int total = container.inventorySlots.size();
+            invStart = total - 36; invEnd = total - 1;
+        } else {
+            return false;
+        }
+
+        Minecraft mc = Minecraft.getMinecraft();
+        int wid = container.windowId;
+
+        if (!player.inventory.getItemStack().isEmpty()) {
+            for (int i = invStart; i <= invEnd; i++) {
+                if (!container.getSlot(i).getHasStack()) {
+                    mc.playerController.windowClick(wid, i, 0, ClickType.PICKUP, player);
+                    break;
+                }
+            }
+            if (!player.inventory.getItemStack().isEmpty()) {
+                return false;
+            }
+        }
+
+        for (int i = gridStart; i < gridStart + gridSize; i++) {
+            if (container.getSlot(i).getHasStack()) {
+                mc.playerController.windowClick(wid, i, 0, ClickType.QUICK_MOVE, player);
+            }
+        }
+
+        Map<Integer, ? extends IGuiIngredient<ItemStack>> guiIngredients =
+                recipeLayout.getItemStacks().getGuiIngredients();
+        Map<ItemKey, List<Integer>> slotsByIngredient = new LinkedHashMap<ItemKey, List<Integer>>();
+
+        for (int jeiSlot = 1; jeiSlot <= 9; jeiSlot++) {
+            IGuiIngredient<ItemStack> gui = guiIngredients.get(Integer.valueOf(jeiSlot));
+            if (gui == null || !gui.isInput()) {
+                continue;
+            }
+            List<ItemStack> options = gui.getAllIngredients();
+            if (options == null || options.isEmpty()) {
+                continue;
+            }
+
+            int jeiRow = (jeiSlot - 1) / 3;
+            int jeiCol = (jeiSlot - 1) % 3;
+            if (jeiCol >= gridWidth || jeiRow >= (gridSize / gridWidth)) {
+                continue;
+            }
+            int containerSlot = gridStart + jeiRow * gridWidth + jeiCol;
+
+            ItemKey matchKey = null;
+            for (int inv = invStart; inv <= invEnd && matchKey == null; inv++) {
+                ItemStack inSlot = container.getSlot(inv).getStack();
+                if (inSlot.isEmpty()) {
+                    continue;
+                }
+                ItemKey invKey = ItemKey.of(inSlot);
+                for (ItemStack option : options) {
+                    if (!option.isEmpty() && invKey.equals(ItemKey.of(option))) {
+                        matchKey = invKey;
+                        break;
+                    }
+                }
+            }
+
+            if (matchKey == null) {
+                return false;
+            }
+
+            List<Integer> slots = slotsByIngredient.get(matchKey);
+            if (slots == null) {
+                slots = new ArrayList<Integer>();
+                slotsByIngredient.put(matchKey, slots);
+            }
+            slots.add(containerSlot);
+        }
+
+        int dragStart = maxTransfer ? 0 : 4;
+        int dragAdd   = maxTransfer ? 1 : 5;
+        int dragEnd   = maxTransfer ? 2 : 6;
+
+        for (Map.Entry<ItemKey, List<Integer>> entry : slotsByIngredient.entrySet()) {
+            ItemKey ingredient = entry.getKey();
+            List<Integer> gridSlots = entry.getValue();
+
+            for (int inv = invStart; inv <= invEnd; inv++) {
+                ItemStack inSlot = container.getSlot(inv).getStack();
+                if (inSlot.isEmpty() || !ItemKey.of(inSlot).equals(ingredient)) {
+                    continue;
+                }
+
+                mc.playerController.windowClick(wid, inv, 0, ClickType.PICKUP, player);
+                if (player.inventory.getItemStack().isEmpty()) {
+                    continue;
+                }
+
+                mc.playerController.windowClick(wid, -999, dragStart, ClickType.QUICK_CRAFT, player);
+                for (int gridSlot : gridSlots) {
+                    mc.playerController.windowClick(wid, gridSlot, dragAdd, ClickType.QUICK_CRAFT, player);
+                }
+                mc.playerController.windowClick(wid, -999, dragEnd, ClickType.QUICK_CRAFT, player);
+
+                if (!player.inventory.getItemStack().isEmpty()) {
+                    mc.playerController.windowClick(wid, inv, 0, ClickType.PICKUP, player);
+                }
+
+                if (!maxTransfer) {
+                    break;
+                }
+            }
+        }
+
+        return true;
     }
 
     /** The crafting category's output is GUI ingredient slot 0; fall back to the first output slot. */

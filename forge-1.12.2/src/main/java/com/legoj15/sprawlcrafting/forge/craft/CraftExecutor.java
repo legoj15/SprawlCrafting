@@ -145,6 +145,8 @@ public final class CraftExecutor {
             gridSlots = 9;
         } else if (menu instanceof ContainerPlayer) {
             gridSlots = 4;
+        } else if (GridContext.isModded3x3Crafter(menu)) {
+            gridSlots = 9;
         } else {
             return;
         }
