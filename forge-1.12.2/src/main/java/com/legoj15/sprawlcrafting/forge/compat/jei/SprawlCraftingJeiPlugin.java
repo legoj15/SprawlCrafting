@@ -18,6 +18,12 @@ import net.minecraftforge.fml.common.Loader;
  * loaded when JEI is absent, so JEI stays a soft, compile-only dependency. Registers the deferred
  * craft transfer handler for the 2x2 inventory grid, the 3x3 table, and any modded crafting
  * containers detected at runtime (FastWorkbench, TConstruct Crafting Station).
+ *
+ * <p>JEI's registry is last-write-wins, and {@code @JEIPlugin} iteration order is an unordered
+ * {@code Set} — so another mod's handler can silently overwrite ours. To guarantee priority,
+ * handler instances are also stored in {@link DeferredHandlerRegistry}; a Mixin on JEI's
+ * {@code RecipeRegistry.getRecipeTransferHandler()} checks that registry first, walking the class
+ * hierarchy so every {@code ContainerWorkbench} subclass resolves to our handler automatically.
  */
 @JEIPlugin
 public class SprawlCraftingJeiPlugin implements IModPlugin {
@@ -27,22 +33,30 @@ public class SprawlCraftingJeiPlugin implements IModPlugin {
         IRecipeTransferHandlerHelper helper = registry.getJeiHelpers().recipeTransferHandlerHelper();
         IRecipeTransferRegistry transfer = registry.getRecipeTransferRegistry();
 
-        // Vanilla containers.
-        transfer.addRecipeTransferHandler(
-                new DeferredCraftTransferHandler<ContainerWorkbench>(ContainerWorkbench.class, helper),
-                VanillaRecipeCategoryUid.CRAFTING);
-        transfer.addRecipeTransferHandler(
-                new DeferredCraftTransferHandler<ContainerPlayer>(ContainerPlayer.class, helper),
-                VanillaRecipeCategoryUid.CRAFTING);
+        // Vanilla containers — registered in both JEI's table and DeferredHandlerRegistry.
+        registerAndStore(transfer, ContainerWorkbench.class,
+                new DeferredCraftTransferHandler<>(ContainerWorkbench.class, helper));
+        registerAndStore(transfer, ContainerPlayer.class,
+                new DeferredCraftTransferHandler<>(ContainerPlayer.class, helper));
 
         // FastWorkbench: extends ContainerWorkbench, so grid context auto-detects as 3x3.
+        // The Mixin's hierarchy walk catches all ContainerWorkbench subclasses via the
+        // registration above, but explicit table entries help if the Mixin doesn't apply.
         registerModdedCrafter(transfer, helper, "fastbench",
                 "shadows.fastbench.gui.ContainerFastBench", null);
+        registerModdedCrafter(transfer, helper, "fastbench",
+                "shadows.fastbench.gui.ClientContainerFastBench", null);
 
         // TConstruct Crafting Station: does NOT extend ContainerWorkbench, needs explicit 3x3.
         registerModdedCrafter(transfer, helper, "tconstruct",
                 "slimeknights.tconstruct.tools.common.inventory.ContainerCraftingStation",
                 GridContext.CRAFTING_TABLE);
+    }
+
+    private static <C extends Container> void registerAndStore(IRecipeTransferRegistry transfer,
+            Class<C> containerClass, DeferredCraftTransferHandler<C> handler) {
+        transfer.addRecipeTransferHandler(handler, VanillaRecipeCategoryUid.CRAFTING);
+        DeferredHandlerRegistry.register(containerClass, handler);
     }
 
     @SuppressWarnings({"unchecked", "rawtypes"})
@@ -54,9 +68,10 @@ public class SprawlCraftingJeiPlugin implements IModPlugin {
         }
         try {
             Class cls = Class.forName(containerClassName);
-            transfer.addRecipeTransferHandler(
-                    new DeferredCraftTransferHandler(cls, helper, gridOverride),
-                    VanillaRecipeCategoryUid.CRAFTING);
+            DeferredCraftTransferHandler handler =
+                    new DeferredCraftTransferHandler(cls, helper, gridOverride);
+            transfer.addRecipeTransferHandler(handler, VanillaRecipeCategoryUid.CRAFTING);
+            DeferredHandlerRegistry.register(cls, handler);
         } catch (ClassNotFoundException ignored) {
             // Mod's internal layout changed; silently skip.
         }

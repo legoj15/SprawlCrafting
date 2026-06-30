@@ -201,7 +201,7 @@ jar {
     }
     manifest {
         attributes(
-                'MixinConfigs': 'mixins.sprawlcrafting.json'
+                'MixinConfigs': 'mixins.sprawlcrafting.json mixins.sprawlcrafting.jei.json'
         )
     }
 }
