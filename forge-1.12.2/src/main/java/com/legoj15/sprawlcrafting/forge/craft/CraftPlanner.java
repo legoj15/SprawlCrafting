@@ -118,7 +118,28 @@ public final class CraftPlanner {
     }
 
     public static Session session(EntityPlayer player, GridContext grid) {
-        return new Session(grid, snapshotInventory(player.inventory));
+        return new Session(grid, snapshotMaterials(player));
+    }
+
+    /**
+     * The materials available to {@code player} for planning right now: the 36 main inventory slots
+     * plus the open crafting container's other input slots — its crafting grid and, when a recognised
+     * station is open, its connected side inventory (a Tinkers' Construct Crafting Station's adjacent
+     * chest — see {@link ExternalSlots#materialSlots}). All pools are keyed by {@link ItemKey} and
+     * filtered by the same {@link CraftExecutor#usableAsIngredient} predicate the executor uses, so the
+     * plan never counts an item execution would refuse, and no source is held to a different standard.
+     */
+    private static Map<ItemKey, Integer> snapshotMaterials(EntityPlayer player) {
+        Map<ItemKey, Integer> counts = snapshotInventory(player.inventory);
+        for (net.minecraft.inventory.Slot slot : ExternalSlots.materialSlots(player)) {
+            ItemStack stack = slot.getStack();
+            if (!stack.isEmpty() && CraftExecutor.usableAsIngredient(stack)) {
+                ItemKey key = ItemKey.of(stack);
+                Integer current = counts.get(key);
+                counts.put(key, (current == null ? 0 : current) + stack.getCount());
+            }
+        }
+        return counts;
     }
 
     public static final class Session {

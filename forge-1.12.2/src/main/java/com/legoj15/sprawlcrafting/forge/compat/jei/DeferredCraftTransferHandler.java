@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.Map;
 
 import com.legoj15.sprawlcrafting.forge.client.ClientPlanCache;
+import com.legoj15.sprawlcrafting.forge.craft.CraftExecutor;
 import com.legoj15.sprawlcrafting.forge.craft.CraftPlanner;
 import com.legoj15.sprawlcrafting.forge.craft.GridContext;
 import com.legoj15.sprawlcrafting.forge.craft.ItemKey;
@@ -81,7 +82,11 @@ public class DeferredCraftTransferHandler<C extends Container> implements IRecip
         if (doTransfer) {
             if (recipe != null) {
                 CraftPlanner.Session session = ClientPlanCache.get(player, grid);
+                // Vanilla grid-fill only sources from the player inventory, so reserve it for recipes
+                // the player can make from their own slots. A recipe that is direct only thanks to the
+                // station's connected chest goes through the engine instead (which pulls the chest).
                 if (session.classify(recipe) == CraftPlanner.Craftability.DIRECT
+                        && CraftExecutor.canCraftFromPlayerInventory(player, recipe)
                         && vanillaGridFill(container, recipeLayout, player, maxTransfer)) {
                     return null;
                 }

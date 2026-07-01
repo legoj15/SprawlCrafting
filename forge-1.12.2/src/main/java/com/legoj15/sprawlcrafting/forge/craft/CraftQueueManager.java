@@ -56,10 +56,10 @@ public final class CraftQueueManager {
         if (job == null || !job.tick()) {
             return;
         }
-        // 3x3 steps only run with a crafting table in reach; re-check every half second.
-        if (job.currentStep().needsFullGrid() && !CraftingTableReach.isInReach(player)) {
+        // 3x3 steps only run with full-grid access; re-check every half second.
+        if (job.currentStep().needsFullGrid() && !hasFullGridAccess(player)) {
             job.holdForRetry();
-            sync(player, job, CraftProgressMessage.State.PAUSED, ItemStack.EMPTY);
+            sync(player, job, pausedState(job), ItemStack.EMPTY);
             return;
         }
         CraftExecutor.CraftResult result = CraftExecutor.craftOnce(player, job.currentStep().recipeId());
@@ -75,6 +75,15 @@ public final class CraftQueueManager {
                 sync(player, job, CraftProgressMessage.State.CRAFTING, crafted);
             }
         } else if (result instanceof CraftExecutor.CraftResult.MissingIngredient) {
+            // A chest-dependent job whose station is currently closed can't see the connected
+            // inventory; the missing item may be sitting in it, so wait for the player to reopen
+            // the station rather than cancelling. (With the station open the chest IS visible, so a
+            // genuine shortfall — e.g. a hopper drained it — still cancels, as before.)
+            if (job.externalDependent() && !ExternalSlots.present(player)) {
+                job.holdForRetry();
+                sync(player, job, CraftProgressMessage.State.PAUSED_STATION, ItemStack.EMPTY);
+                return;
+            }
             ACTIVE.remove(player.getUniqueID());
             sync(player, job, CraftProgressMessage.State.CANCELLED, ItemStack.EMPTY);
             notify(player, message("sprawlcrafting.craft.missing", TextFormatting.RED,
@@ -86,6 +95,29 @@ public final class CraftQueueManager {
             notify(player, message("sprawlcrafting.craft.recipe_gone", TextFormatting.RED,
                     job.targetResult().getDisplayName()));
         }
+    }
+
+    /**
+     * Whether a 3x3 step may run right now: a vanilla crafting table within reach, or a 3x3 crafter
+     * open this instant. The open-container clause covers a Tinkers' Construct Crafting Station,
+     * which {@link CraftingTableReach} (it scans only for the vanilla table block) cannot see — so a
+     * chain started at a station no longer wedges forever on a base with no vanilla table.
+     */
+    private static boolean hasFullGridAccess(EntityPlayerMP player) {
+        return CraftingTableReach.isInReach(player)
+                || GridContext.current(player) == GridContext.CRAFTING_TABLE;
+    }
+
+    /**
+     * Which pause to report: a job started at a Crafting Station points the player back to it
+     * ("open station" — its grid and its chest both live there), otherwise the classic "need table".
+     * Without this a station-only base, where the resolution is to reopen the station rather than
+     * place a vanilla table, would show a misleading hint and look wedged.
+     */
+    private static CraftProgressMessage.State pausedState(CraftJob job) {
+        return job.externalDependent()
+                ? CraftProgressMessage.State.PAUSED_STATION
+                : CraftProgressMessage.State.PAUSED;
     }
 
     private static void notify(EntityPlayerMP player, ITextComponent message) {

@@ -22,12 +22,18 @@ import net.minecraftforge.fml.relauncher.SideOnly;
  */
 public class CraftProgressMessage implements IMessage {
 
-    /** Terminal states get an action-bar line; transient states only repaint the flyout. */
+    /**
+     * Terminal states get an action-bar line; transient states only repaint the flyout.
+     * {@code PAUSED} = waiting on a crafting table; {@code PAUSED_STATION} = waiting on the player to
+     * (re)open the Crafting Station whose grid/chest the job depends on. Appended last so the
+     * ordinals the wire format uses stay stable.
+     */
     public enum State {
         CRAFTING,
         PAUSED,
         FINISHED,
-        CANCELLED
+        CANCELLED,
+        PAUSED_STATION
     }
 
     private State state = State.CRAFTING;

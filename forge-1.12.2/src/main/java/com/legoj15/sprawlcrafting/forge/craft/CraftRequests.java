@@ -79,6 +79,10 @@ public final class CraftRequests {
     private static StartOutcome finish(EntityPlayerMP player, PlanOutcome outcome) {
         if (outcome instanceof PlanOutcome.Planned) {
             CraftJob job = ((PlanOutcome.Planned) outcome).job();
+            // Remember whether a station chest was in the pool at plan time, so a later step that
+            // can't be satisfied while the station is closed waits for it to reopen instead of
+            // cancelling on a chest item it simply can't currently see.
+            job.setExternalDependent(ExternalSlots.present(player));
             CraftQueueManager.start(player, job);
             return new StartOutcome.Started(job);
         }

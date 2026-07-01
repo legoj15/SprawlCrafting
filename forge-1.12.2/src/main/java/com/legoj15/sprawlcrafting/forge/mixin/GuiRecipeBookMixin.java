@@ -7,8 +7,10 @@ import org.spongepowered.asm.mixin.injection.Redirect;
 import com.legoj15.sprawlcrafting.forge.client.ClientPlanCache;
 import com.legoj15.sprawlcrafting.forge.client.DeferredClickState;
 import com.legoj15.sprawlcrafting.forge.client.GuiMissingResources;
+import com.legoj15.sprawlcrafting.forge.craft.CraftExecutor;
 import com.legoj15.sprawlcrafting.forge.craft.CraftJob;
 import com.legoj15.sprawlcrafting.forge.craft.CraftPlanner;
+import com.legoj15.sprawlcrafting.forge.craft.ExternalSlots;
 import com.legoj15.sprawlcrafting.forge.craft.GridContext;
 import com.legoj15.sprawlcrafting.forge.craft.ShortfallView;
 import com.legoj15.sprawlcrafting.forge.network.SprawlNetwork;
@@ -69,6 +71,17 @@ public class GuiRecipeBookMixin {
                     ShortfallView shortfall = CraftPlanner.shortfall(player, recipe);
                     Minecraft mc = Minecraft.getMinecraft();
                     mc.displayGuiScreen(new GuiMissingResources(shortfall, mc.currentScreen));
+                    return;
+                }
+                // DIRECT (white): normally falls through to vanilla placement. But if it is direct
+                // only thanks to an open station's connected chest (not satisfiable from the player's
+                // own 36 slots), route it through the engine — vanilla placement fills from the
+                // player inventory alone and would not pull the chest items. Plain player-direct
+                // recipes still fall through, so non-station behaviour is unchanged.
+                if (ExternalSlots.present(player)
+                        && !CraftExecutor.canCraftFromPlayerInventory(player, recipe)) {
+                    DeferredClickState.disarm();
+                    SprawlNetwork.startByRecipe(id);
                     return;
                 }
             }

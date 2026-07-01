@@ -89,6 +89,8 @@ public final class HudOverlay {
         switch (state) {
             case PAUSED:
                 return "Paused — need table";
+            case PAUSED_STATION:
+                return "Paused — open station";
             case FINISHED:
                 return "Done!";
             case CANCELLED:
@@ -102,6 +104,7 @@ public final class HudOverlay {
     private static int statusColor(CraftProgressMessage.State state) {
         switch (state) {
             case PAUSED:
+            case PAUSED_STATION:
                 return 0xFFFFC04D; // orange
             case FINISHED:
                 return 0xFF5CE65C; // green

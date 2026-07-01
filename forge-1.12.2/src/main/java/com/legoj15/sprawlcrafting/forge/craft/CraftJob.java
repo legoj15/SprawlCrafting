@@ -34,6 +34,13 @@ public final class CraftJob {
     private int stepIndex;
     private int craftsDoneInStep;
     private int progressTicks;
+    /**
+     * True if this job was started with a connected station inventory (a Crafting Station's chest)
+     * available, so its plan may rely on chest items. When set, a step that can't find an ingredient
+     * while the station is closed PAUSES (the materials may be in the unseen chest) instead of
+     * cancelling — see {@code CraftQueueManager}.
+     */
+    private boolean externalDependent;
 
     public CraftJob(ResourceLocation targetRecipe, ItemStack targetResult, List<CraftStep> steps) {
         if (steps.isEmpty()) {
@@ -51,6 +58,14 @@ public final class CraftJob {
 
     public ResourceLocation targetRecipe() {
         return targetRecipe;
+    }
+
+    public boolean externalDependent() {
+        return externalDependent;
+    }
+
+    public void setExternalDependent(boolean externalDependent) {
+        this.externalDependent = externalDependent;
     }
 
     /** The final output, for chat/HUD display. Do not mutate. */
