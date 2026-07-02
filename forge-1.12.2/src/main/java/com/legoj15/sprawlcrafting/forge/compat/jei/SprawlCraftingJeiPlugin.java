@@ -1,5 +1,6 @@
 package com.legoj15.sprawlcrafting.forge.compat.jei;
 
+import com.legoj15.sprawlcrafting.forge.client.GuiMissingResources;
 import com.legoj15.sprawlcrafting.forge.craft.GridContext;
 
 import mezz.jei.api.IModPlugin;
@@ -61,6 +62,13 @@ public class SprawlCraftingJeiPlugin implements IModPlugin {
         // after verifying the open container structurally.
         DeferredHandlerRegistry.setStructuralFallback(
                 new DeferredCraftTransferHandler<>(Container.class, helper, GridContext.CRAFTING_TABLE));
+
+        // The gather screen as a JEI-active screen: R/U on its items, panel-aware overlay.
+        // Needs-helper-gated at runtime inside the handler; both registrations exist in JEI 4.15
+        // (SF4's version) and 4.16 alike — javap-verified.
+        GatherListGuiHandler gatherHandler = new GatherListGuiHandler();
+        registry.addGuiScreenHandler(GuiMissingResources.class, gatherHandler);
+        registry.addGlobalGuiHandlers(gatherHandler);
     }
 
     private static <C extends Container> void registerAndStore(IRecipeTransferRegistry transfer,

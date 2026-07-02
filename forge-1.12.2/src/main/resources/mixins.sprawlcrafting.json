@@ -8,7 +8,8 @@
 	"mixins": [],
 	"client": [
 		"GuiButtonRecipeMixin",
-		"GuiRecipeBookMixin"
+		"GuiRecipeBookMixin",
+		"RecipeListMixin"
 	],
 	"server": []
 }

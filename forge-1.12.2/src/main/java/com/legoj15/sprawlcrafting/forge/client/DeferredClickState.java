@@ -6,6 +6,7 @@ import java.util.List;
 import com.legoj15.sprawlcrafting.forge.craft.CraftJob;
 import com.legoj15.sprawlcrafting.forge.craft.CraftStep;
 
+import net.minecraft.client.resources.I18n;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.crafting.CraftingManager;
 import net.minecraft.item.crafting.IRecipe;
@@ -51,8 +52,10 @@ public final class DeferredClickState {
         if (plan == null) {
             return lines;
         }
-        lines.add(TextFormatting.YELLOW + "Sprawl-craft: " + plan.targetResult().getDisplayName());
-        lines.add(TextFormatting.GRAY + "" + plan.totalCrafts() + " component craft(s):");
+        lines.add(TextFormatting.YELLOW + I18n.format("sprawlcrafting.preview.header",
+                plan.targetResult().getDisplayName()));
+        lines.add(TextFormatting.GRAY + I18n.format("sprawlcrafting.preview.steps",
+                plan.totalCrafts()));
         List<CraftStep> steps = plan.steps();
         int shown = 0;
         for (int i = 0; i < steps.size() && shown < 6; i++) {
@@ -64,13 +67,13 @@ public final class DeferredClickState {
             ItemStack output = recipe.getRecipeOutput();
             String name = output.isEmpty() ? step.recipeId().toString() : output.getDisplayName();
             int total = step.crafts() * Math.max(1, output.getCount());
-            lines.add(TextFormatting.DARK_GRAY + " - " + total + "x " + name);
+            lines.add(TextFormatting.DARK_GRAY + I18n.format("sprawlcrafting.preview.step", total, name));
             shown++;
         }
         if (steps.size() > shown) {
             lines.add(TextFormatting.DARK_GRAY + " ...");
         }
-        lines.add(TextFormatting.GREEN + "Click again to confirm.");
+        lines.add(TextFormatting.GREEN + I18n.format("sprawlcrafting.preview.confirm"));
         return lines;
     }
 }

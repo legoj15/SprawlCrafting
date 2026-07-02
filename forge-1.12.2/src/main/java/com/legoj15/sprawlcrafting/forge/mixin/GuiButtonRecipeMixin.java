@@ -5,6 +5,7 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 import com.legoj15.sprawlcrafting.forge.client.ClientPlanCache;
 import com.legoj15.sprawlcrafting.forge.craft.CraftPlanner;
@@ -61,6 +62,44 @@ public class GuiButtonRecipeMixin {
         }
         if (isDisplayedRecipeDeferred()) {
             drawOutline(self.x, self.y, self.width, self.height);
+        }
+    }
+
+    /**
+     * Discoverability, appended to the button's hover tooltip (modern parity): a yellow
+     * "craftable from raw materials" line on deferred recipes, and — needs-helper-gated — a gold
+     * "click to see what you need" hint on red ones, which is how a player learns the
+     * missing-resources screen exists at all.
+     */
+    @Inject(method = "getToolTipText", at = @At("RETURN"), require = 0)
+    private void sprawlcrafting$appendHints(net.minecraft.client.gui.GuiScreen screen,
+                                            CallbackInfoReturnable<java.util.List<String>> cir) {
+        try {
+            java.util.List<String> lines = cir.getReturnValue();
+            if (lines == null) {
+                return;
+            }
+            Minecraft mc = Minecraft.getMinecraft();
+            if (mc.player == null) {
+                return;
+            }
+            IRecipe recipe = ((GuiButtonRecipe) (Object) this).getRecipe();
+            if (recipe == null || recipe.getRegistryName() == null) {
+                return;
+            }
+            GridContext grid = GridContext.current(mc.player);
+            CraftPlanner.Craftability craftability =
+                    ClientPlanCache.get(mc.player, grid).classify(recipe);
+            if (craftability == CraftPlanner.Craftability.DEFERRED) {
+                lines.add(net.minecraft.util.text.TextFormatting.YELLOW
+                        + net.minecraft.client.resources.I18n.format("sprawlcrafting.recipe.deferred"));
+            } else if (craftability == CraftPlanner.Craftability.UNSOLVABLE
+                    && com.legoj15.sprawlcrafting.forge.SprawlConfig.needsSystem) {
+                lines.add(net.minecraft.util.text.TextFormatting.GOLD
+                        + net.minecraft.client.resources.I18n.format("sprawlcrafting.gather.click"));
+            }
+        } catch (Throwable ignored) {
+            // Tooltip decoration must never break the recipe book.
         }
     }
 

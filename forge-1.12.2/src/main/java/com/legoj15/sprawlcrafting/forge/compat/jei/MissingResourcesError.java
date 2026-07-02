@@ -13,6 +13,7 @@ import mezz.jei.api.gui.IGuiIngredient;
 import mezz.jei.api.gui.IRecipeLayout;
 import mezz.jei.api.recipe.transfer.IRecipeTransferError;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.resources.I18n;
 import net.minecraft.item.ItemStack;
 import net.minecraft.util.text.TextFormatting;
 
@@ -68,29 +69,32 @@ public class MissingResourcesError implements IRecipeTransferError {
             return cachedLines;
         }
         List<String> out = new ArrayList<String>();
-        out.add(TextFormatting.RED + "Can't sprawl-craft this yet.");
+        out.add(TextFormatting.RED + I18n.format("sprawlcrafting.gather.cant"));
         if (shortfall.isEmpty()) {
-            out.add(TextFormatting.GRAY + "Needs a crafting table, or a recipe I can't plan.");
+            out.add(TextFormatting.GRAY + I18n.format("sprawlcrafting.gather.none"));
             cachedLines = out;
             return out;
         }
-        out.add(TextFormatting.GRAY + "Raw materials still needed:");
+        out.add(TextFormatting.GRAY + I18n.format("sprawlcrafting.gather.header"));
         List<ItemDemand> demands = shortfall.demands();
         int shown = 0;
         for (ItemDemand demand : demands) {
             if (shown >= MAX_LINES) {
-                out.add(TextFormatting.DARK_GRAY + " +" + (demands.size() - shown) + " more...");
+                out.add(TextFormatting.DARK_GRAY
+                        + I18n.format("sprawlcrafting.gather.more", demands.size() - shown));
                 break;
             }
             String name = demand.representative().toStack().getDisplayName();
             if (demand.items().size() > 1) {
-                name = name + TextFormatting.DARK_GRAY + " (or alt.)";
+                name = name + TextFormatting.DARK_GRAY
+                        + I18n.format("sprawlcrafting.gather.alt", demand.items().size() - 1);
             }
-            out.add(TextFormatting.WHITE + "  " + demand.count() + "x " + TextFormatting.GRAY + name);
+            out.add(TextFormatting.WHITE
+                    + I18n.format("sprawlcrafting.gather.line", demand.count(), TextFormatting.GRAY + name));
             shown++;
         }
         if (shortfall.approximate()) {
-            out.add(TextFormatting.DARK_GRAY + "(estimate — may undercount)");
+            out.add(TextFormatting.DARK_GRAY + I18n.format("sprawlcrafting.gather.approximate"));
         }
         cachedLines = out;
         return out;

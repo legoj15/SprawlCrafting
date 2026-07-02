@@ -18,7 +18,6 @@ public class ClientProxy extends CommonProxy {
     public void preInit() {
         requireMixinBooter();
         super.preInit();
-        MinecraftForge.EVENT_BUS.register(new HudOverlay());
         MinecraftForge.EVENT_BUS.register(new DeferredPreviewRenderer());
         MinecraftForge.EVENT_BUS.register(new ServerPresence());
         MinecraftForge.EVENT_BUS.register(new CraftingScreenWatcher());

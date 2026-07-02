@@ -10,6 +10,7 @@ import net.minecraft.client.gui.GuiButton;
 import net.minecraft.client.gui.GuiScreen;
 import net.minecraft.client.renderer.GlStateManager;
 import net.minecraft.client.renderer.RenderHelper;
+import net.minecraft.client.resources.I18n;
 import net.minecraft.item.ItemStack;
 import net.minecraft.util.text.TextFormatting;
 
@@ -53,7 +54,8 @@ public class GuiMissingResources extends GuiScreen {
         listTop = panelTop + (data.approximate() ? 38 : 28);
         int listBottom = panelBottom - 28;
         visibleRows = Math.max(1, (listBottom - listTop) / ROW_HEIGHT);
-        this.addButton(new GuiButton(DONE_BUTTON, this.width / 2 - 50, panelBottom - 24, 100, 20, "Done"));
+        this.addButton(new GuiButton(DONE_BUTTON, this.width / 2 - 50, panelBottom - 24, 100, 20,
+                I18n.format("gui.done")));
         clampScroll();
     }
 
@@ -72,7 +74,7 @@ public class GuiMissingResources extends GuiScreen {
         drawRect(panelLeft, panelTop, panelRight, panelTop + 1, 0xFF000000);
 
         ItemStack target = data.target();
-        String title = TextFormatting.WHITE + "Materials needed"
+        String title = TextFormatting.WHITE + I18n.format("sprawlcrafting.gather.title")
                 + (target.isEmpty() ? "" : ": " + target.getDisplayName());
         if (!target.isEmpty()) {
             renderIcon(target, panelLeft + 8, panelTop + 6);
@@ -81,7 +83,8 @@ public class GuiMissingResources extends GuiScreen {
             this.drawString(this.fontRenderer, title, panelLeft + 8, panelTop + 10, 0xFFFFFF);
         }
         if (data.approximate()) {
-            this.drawString(this.fontRenderer, TextFormatting.GRAY + "(estimate — may undercount)",
+            this.drawString(this.fontRenderer,
+                    TextFormatting.GRAY + I18n.format("sprawlcrafting.gather.approximate"),
                     panelLeft + 8, panelTop + 24, 0xA0A0A0);
         }
 
@@ -89,7 +92,7 @@ public class GuiMissingResources extends GuiScreen {
         ItemStack hovered = null;
         if (demands.isEmpty()) {
             this.drawCenteredString(this.fontRenderer,
-                    TextFormatting.GREEN + "You already have the raw materials — try a crafting table.",
+                    TextFormatting.GREEN + I18n.format("sprawlcrafting.gather.have_raws"),
                     this.width / 2, listTop + 12, 0xFFFFFF);
         } else {
             for (int row = 0; row < visibleRows; row++) {
@@ -103,7 +106,8 @@ public class GuiMissingResources extends GuiScreen {
                 renderIcon(icon, panelLeft + 10, y);
                 String name = icon.getDisplayName();
                 if (demand.items().size() > 1) {
-                    name = name + TextFormatting.DARK_GRAY + " (or " + (demand.items().size() - 1) + " alt.)";
+                    name = name + TextFormatting.DARK_GRAY
+                            + I18n.format("sprawlcrafting.gather.alt", demand.items().size() - 1);
                 }
                 this.drawString(this.fontRenderer, name, panelLeft + 32, y + 4, 0xFFFFFF);
                 String need = TextFormatting.GOLD + "× " + demand.count();
@@ -160,6 +164,45 @@ public class GuiMissingResources extends GuiScreen {
 
     private void returnToParent() {
         this.mc.displayGuiScreen(parent);
+    }
+
+    /**
+     * The demand item under the mouse, for JEI's global-handler hookup (R/U recipe lookups on the
+     * gather list, like modern). Mirrors the row layout drawn in {@link #drawScreen}, over the full
+     * row width rather than just the icon.
+     */
+    public ItemStack ingredientAt(int mouseX, int mouseY) {
+        List<ItemDemand> demands = data.demands();
+        if (mouseX < panelLeft + 8 || mouseX > panelRight - 8) {
+            return ItemStack.EMPTY;
+        }
+        for (int row = 0; row < visibleRows; row++) {
+            int index = scrollOffset + row;
+            if (index >= demands.size()) {
+                break;
+            }
+            int y = listTop + row * ROW_HEIGHT;
+            if (mouseY >= y && mouseY <= y + 16) {
+                return demands.get(index).representative().toStack();
+            }
+        }
+        return ItemStack.EMPTY;
+    }
+
+    public int panelLeft() {
+        return panelLeft;
+    }
+
+    public int panelTop() {
+        return panelTop;
+    }
+
+    public int panelWidth() {
+        return PANEL_WIDTH;
+    }
+
+    public int panelHeight() {
+        return panelBottom - panelTop;
     }
 
     @Override

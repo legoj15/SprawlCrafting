@@ -4,6 +4,7 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Redirect;
 
+import com.legoj15.sprawlcrafting.forge.SprawlConfig;
 import com.legoj15.sprawlcrafting.forge.client.ClientPlanCache;
 import com.legoj15.sprawlcrafting.forge.client.DeferredClickState;
 import com.legoj15.sprawlcrafting.forge.client.GuiMissingResources;
@@ -63,10 +64,15 @@ public class GuiRecipeBookMixin {
                         CraftJob plan = outcome instanceof CraftPlanner.PlanOutcome.Planned
                                 ? ((CraftPlanner.PlanOutcome.Planned) outcome).job() : null;
                         DeferredClickState.arm(id, plan);
+                        // Ghost the recipe into the real grid alongside the tooltip preview —
+                        // vanilla's own uncraftable-click visual, and modern's first-click look.
+                        // Vanilla cleared any previous ghost just before the call we redirect.
+                        ((GuiRecipeBook) (Object) this)
+                                .setupGhostRecipe(recipe, player.openContainer.inventorySlots);
                     }
                     return;
                 }
-                if (craftability == CraftPlanner.Craftability.UNSOLVABLE) {
+                if (craftability == CraftPlanner.Craftability.UNSOLVABLE && SprawlConfig.needsSystem) {
                     DeferredClickState.disarm();
                     ShortfallView shortfall = CraftPlanner.shortfall(player, recipe);
                     Minecraft mc = Minecraft.getMinecraft();

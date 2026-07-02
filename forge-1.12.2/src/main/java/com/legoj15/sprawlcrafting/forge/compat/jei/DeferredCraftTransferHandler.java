@@ -6,6 +6,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import com.legoj15.sprawlcrafting.forge.SprawlConfig;
 import com.legoj15.sprawlcrafting.forge.client.ClientPlanCache;
 import com.legoj15.sprawlcrafting.forge.client.PendingGatherScreen;
 import com.legoj15.sprawlcrafting.forge.client.ServerPresence;
@@ -25,6 +26,7 @@ import mezz.jei.api.recipe.wrapper.ICraftingRecipeWrapper;
 import mezz.jei.api.recipe.transfer.IRecipeTransferHandler;
 import mezz.jei.api.recipe.transfer.IRecipeTransferHandlerHelper;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.resources.I18n;
 import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.entity.player.InventoryPlayer;
 import net.minecraft.inventory.ClickType;
@@ -100,7 +102,10 @@ public class DeferredCraftTransferHandler<C extends Container> implements IRecip
                     // The orange gather button: "transferring" an unsolvable recipe opens the
                     // missing-resources screen (next tick — see PendingGatherScreen) instead of
                     // asking the engine for a craft it would only reject with a chat error.
-                    PendingGatherScreen.open(session.shortfall(recipe));
+                    // Gated live: a click landing after the needs helper was toggled off no-ops.
+                    if (SprawlConfig.needsSystem && SprawlConfig.jeiIntegration) {
+                        PendingGatherScreen.open(session.shortfall(recipe));
+                    }
                     return null;
                 }
                 if (session.classify(recipe) == CraftPlanner.Craftability.DIRECT) {
@@ -129,12 +134,24 @@ public class DeferredCraftTransferHandler<C extends Container> implements IRecip
                 SprawlNetwork.startByRecipe(recipe.getRegistryName());
             } else {
                 if (!session.canDeferCraft(result)) {
-                    PendingGatherScreen.open(session.shortfallByResult(result));
+                    if (SprawlConfig.needsSystem && SprawlConfig.jeiIntegration) {
+                        PendingGatherScreen.open(session.shortfallByResult(result));
+                    }
                     return null;
                 }
                 SprawlNetwork.startByResult(result);
             }
             return null;
+        }
+        if (!SprawlConfig.jeiIntegration) {
+            // Integration off (modern's jei toggle): direct recipes keep a working "+" — that's
+            // core placement, not polish — and everything else greys out with JEI's own stock
+            // message. No tint, no highlights, no gather button.
+            JeiTintState.put(recipeLayout, null);
+            boolean direct = recipe != null
+                    && session.classify(recipe) == CraftPlanner.Craftability.DIRECT;
+            return direct ? null : helper.createUserErrorWithTooltip(
+                    I18n.format("jei.tooltip.error.recipe.transfer.missing"));
         }
         if (recipe != null) {
             if (session.isSolvable(recipe)) {
@@ -145,6 +162,11 @@ public class DeferredCraftTransferHandler<C extends Container> implements IRecip
                                 ? JeiTintState.Tint.DEFERRED : null);
                 return null;
             }
+            if (!SprawlConfig.needsSystem) {
+                JeiTintState.put(recipeLayout, null);
+                return helper.createUserErrorWithTooltip(
+                        I18n.format("jei.tooltip.error.recipe.transfer.missing"));
+            }
             JeiTintState.put(recipeLayout, JeiTintState.Tint.GATHER);
             return new MissingResourcesError(session.shortfall(recipe),
                     missingSlots(recipeLayout, player, session));
@@ -152,6 +174,11 @@ public class DeferredCraftTransferHandler<C extends Container> implements IRecip
         if (session.canDeferCraft(result)) {
             JeiTintState.put(recipeLayout, JeiTintState.Tint.DEFERRED);
             return null;
+        }
+        if (!SprawlConfig.needsSystem) {
+            JeiTintState.put(recipeLayout, null);
+            return helper.createUserErrorWithTooltip(
+                    I18n.format("jei.tooltip.error.recipe.transfer.missing"));
         }
         JeiTintState.put(recipeLayout, JeiTintState.Tint.GATHER);
         return new MissingResourcesError(session.shortfallByResult(result),
