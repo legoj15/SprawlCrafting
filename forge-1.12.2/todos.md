@@ -1,9 +1,12 @@
-### Parity with modern versions
-- Translation string Parity (36 missing keys + ~15 hardcoded English strings: HUD, preview, gather screen, JEI error tooltip)
-- Config system (Forge @Config + GuiConfig; sound/JEI/needs toggles + modern gate composition for the yellow/orange buttons)
-- Real vanilla toasts (GuiToast exists on 1.12.2) replacing the custom HUD card + step sound (UI_TOAST_IN)
-- Recipe book refinements: craftable-only filter still hides deferred recipes; variant-overlay styling; ghost-recipe preview into the grid; tooltip hint on red recipes ("click to see what you need" — the gather screen has zero discoverability today)
-- Gather screen: JEI R/U keys on its items (IAdvancedGuiHandler)
+### Remaining (cosmetic / nice-to-have)
+- Variant-overlay (alternates bubble) deferred styling — cut deliberately: its craftable flag is a final ctor arg in an SRG-named inner class; fragile hook, rarely-seen UI
+- Playtest pass over items 2-5 (config screen, toasts+sound, recipe-book filter/tooltips/ghost, JEI R/U on gather screen, orange gather button)
+### Done (2026-07-02, items 2-5 + review hardening; committed 142c528 + 49f9282)
+- Config: Forge @Config → config/sprawlcrafting.cfg + free mod-list Config screen; soundEffects / jeiIntegration / needsSystem with modern gate composition, live-read
+- Translation parity: every user-facing string through the lang system (toast/preview/gather/config/recipe keys)
+- Real vanilla toast (persistent per-job, progress bar, state colors) + UI_TOAST_IN step sound; HudOverlay deleted
+- Recipe book: craftable-only filter keeps deferred recipes; tooltip hints (yellow deferred line, gold gather hint = discoverability); first click ghosts the recipe into the grid; gather screen is JEI-active (R/U keys)
+- Review fixes: chest-pull transmutation dupe (meta-exact predicate + grow guard), place() self-heal + ghost, gate-pool alignment, modless-server EngineWatchdog notice
 ### Done (2026-07-02, JEI polish — tint/highlights user-verified in-game; orange gather path needs a quick look)
 - JEI red missing-slot highlights restored (native drawHighlight, chain-aware slot selection: red = genuinely unobtainable, chain-craftable slots stay quiet, stock-parity fallback).
 - Colored "+" buttons: yellow = deferred sprawl-craft, orange = unsolvable (and now CLICKABLE — opens the missing-resources gather screen next tick, modern's orange button), white = plain move. Tint mixin carries SRG+MCP dual names (require=0) against the prod-silent-no-op trap.
