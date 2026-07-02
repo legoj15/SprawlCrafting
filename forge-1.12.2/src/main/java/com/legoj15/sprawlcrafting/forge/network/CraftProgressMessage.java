@@ -107,6 +107,7 @@ public class CraftProgressMessage implements IMessage {
         @Override
         @SideOnly(Side.CLIENT)
         public IMessage onMessage(final CraftProgressMessage message, MessageContext ctx) {
+            com.legoj15.sprawlcrafting.forge.client.EngineWatchdog.engineResponded();
             Minecraft.getMinecraft().addScheduledTask(new Runnable() {
                 @Override
                 public void run() {

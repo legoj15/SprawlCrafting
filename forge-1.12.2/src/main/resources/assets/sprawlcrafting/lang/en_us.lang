@@ -31,6 +31,7 @@ sprawlcrafting.gather.none=Needs a crafting table, or a recipe I can't plan.
 sprawlcrafting.gather.header=Raw materials still needed:
 sprawlcrafting.gather.line=  %sx %s
 sprawlcrafting.gather.more= +%s more...
+sprawlcrafting.server_missing=This server is not running SprawlCrafting - deferred crafting is unavailable here.
 sprawlcrafting.config.sound=Sound effects
 sprawlcrafting.config.jei=JEI integration
 sprawlcrafting.config.needs="Needs" helper

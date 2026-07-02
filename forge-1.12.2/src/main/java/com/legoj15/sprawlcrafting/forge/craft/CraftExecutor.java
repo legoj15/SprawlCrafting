@@ -167,13 +167,15 @@ public final class CraftExecutor {
 
     /**
      * Non-mutating: whether {@code recipe} can be crafted once from the 36 main slots plus the
-     * open station's bound chest — the exact pool {@code ServerGridPlacer} can pull from. Gates
-     * the JEI "+" server-placement path, so a recipe direct only thanks to the chest is staged
-     * into the grid (stock TConstruct+JEI behavior) rather than routed through the engine.
+     * open container's material slots (its grid leftovers and any station chest) — the same pool
+     * the solver classified with, and a subset of what {@code ServerGridPlacer} counts, so a
+     * DIRECT classification and this gate can never disagree. Gates the JEI "+" server-placement
+     * path, so a recipe direct only thanks to the chest is staged into the grid (stock
+     * TConstruct+JEI behavior) rather than routed through the engine.
      */
     public static boolean canCraftFromPlayerAndStation(EntityPlayer player, IRecipe recipe) {
         InventoryPlayer inventory = player.inventory;
-        List<Slot> external = ExternalSlots.of(player);
+        List<Slot> external = ExternalSlots.materialSlots(player);
         int[] reserved = new int[MAIN + external.size()];
         for (Ingredient ingredient : recipe.getIngredients()) {
             if (ingredient == Ingredient.EMPTY) {

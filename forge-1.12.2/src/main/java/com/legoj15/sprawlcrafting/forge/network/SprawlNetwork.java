@@ -76,10 +76,12 @@ public final class SprawlNetwork {
     }
 
     public static void startByResult(ItemStack result) {
+        com.legoj15.sprawlcrafting.forge.client.EngineWatchdog.engineRequestSent();
         CHANNEL.sendToServer(new StartDeferredCraftByResultMessage(result));
     }
 
     public static void startByRecipe(ResourceLocation recipeId) {
+        com.legoj15.sprawlcrafting.forge.client.EngineWatchdog.engineRequestSent();
         CHANNEL.sendToServer(new StartDeferredCraftMessage(recipeId));
     }
 

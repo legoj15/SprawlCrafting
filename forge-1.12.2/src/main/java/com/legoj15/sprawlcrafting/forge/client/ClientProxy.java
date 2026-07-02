@@ -22,6 +22,7 @@ public class ClientProxy extends CommonProxy {
         MinecraftForge.EVENT_BUS.register(new ServerPresence());
         MinecraftForge.EVENT_BUS.register(new CraftingScreenWatcher());
         MinecraftForge.EVENT_BUS.register(new PendingGatherScreen.Ticker());
+        MinecraftForge.EVENT_BUS.register(new EngineWatchdog.Ticker());
         // Dev-only: RFG loads mod classes from build/classes/ but resources live in build/resources/,
         // so FMLFolderResourcePack can't serve the lang file. DevLangInjector injects from the
         // classpath instead. Production uses pack.mcmeta (pack_format 3) to avoid the

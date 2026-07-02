@@ -35,6 +35,7 @@ public final class ServerPresence {
             @Override
             public void run() {
                 ClientCraftState.clear();
+                EngineWatchdog.reset();
             }
         });
     }

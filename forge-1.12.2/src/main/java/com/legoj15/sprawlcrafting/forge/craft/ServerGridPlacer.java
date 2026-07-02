@@ -110,9 +110,15 @@ public final class ServerGridPlacer {
             finishSync(player, container);
             return false;
         }
-        place(player, grid, recipe, helper, maxTransfer);
+        boolean placed = place(player, grid, recipe, helper, maxTransfer);
+        if (!placed) {
+            // Counting can overpromise (NBT-carrying stacks are counted but never pulled — a
+            // vanilla-inherited gap the chest pool widens). Rather than leave a dead half-fill,
+            // the failed fill was already returned; show the ghost like the not-enough case.
+            player.connection.sendPacket(new SPacketPlaceGhostRecipe(container.windowId, recipe));
+        }
         finishSync(player, container);
-        return true;
+        return placed;
     }
 
     /**
@@ -154,9 +160,13 @@ public final class ServerGridPlacer {
         return HandOffResult.FILLED;
     }
 
-    /** Vanilla {@code func_194329_b}: early-out, pick the count, clamp, clear, distribute. */
-    private static void place(EntityPlayerMP player, Grid grid, IRecipe recipe,
-                              RecipeItemHelper helper, boolean maxTransfer) {
+    /**
+     * Vanilla {@code func_194329_b}: early-out, pick the count, clamp, clear, distribute — plus
+     * the hand-off's self-heal: if the fill doesn't actually form the recipe (count/pull
+     * asymmetry), everything is returned and false is reported so the caller can ghost instead.
+     */
+    private static boolean place(EntityPlayerMP player, Grid grid, IRecipe recipe,
+                                 RecipeItemHelper helper, boolean maxTransfer) {
         boolean alreadyMatches = recipe.matches(grid.matrix, player.world);
         int biggest = helper.getBiggestCraftableStack(recipe, null);
 
@@ -171,14 +181,14 @@ public final class ServerGridPlacer {
                 }
             }
             if (atCap) {
-                return;
+                return true;
             }
         }
 
         int count = placeCount(grid, biggest, alreadyMatches, maxTransfer);
         IntList packed = new IntArrayList();
         if (!helper.canCraft(recipe, packed, count)) {
-            return;
+            return true;
         }
         // Clamp to the smallest max-stack among the concrete items chosen (a shift-fill of 3
         // ender pearls + 3 blaze powder must stop at 16, the pearls' stack cap). Looped until the
@@ -191,12 +201,18 @@ public final class ServerGridPlacer {
             count = clamped;
             packed.clear();
             if (!helper.canCraft(recipe, packed, count)) {
-                return;
+                return true;
             }
         }
         returnGridToInventory(player, grid);
         distribute(player, grid, recipe, count, packed);
         player.openContainer.onCraftMatrixChanged(grid.matrix);
+        if (!recipe.matches(grid.matrix, player.world)) {
+            returnGridToInventory(player, grid);
+            player.openContainer.onCraftMatrixChanged(grid.matrix);
+            return false;
+        }
+        return true;
     }
 
     /**
@@ -316,8 +332,12 @@ public final class ServerGridPlacer {
         taken.setCount(1);
         if (cell.getStack().isEmpty()) {
             cell.putStack(taken);
-        } else {
+        } else if (CraftExecutor.sameItem(cell.getStack(), taken)) {
             cell.getStack().grow(1);
+        } else {
+            // Defense-in-depth: a pull that doesn't match the cell must never be credited as the
+            // cell's item (that IS the transmutation dupe). Give it back instead of growing.
+            CraftExecutor.insertIntoMainInventory(player, taken);
         }
     }
 
@@ -335,15 +355,22 @@ public final class ServerGridPlacer {
     }
 
     /**
-     * Chest counterpart of {@code findSlotMatchingUnusedItem}: same predicate (item match, never
-     * damaged/enchanted/renamed), consuming through {@link Slot#decrStackSize} so a station's
-     * item-handler write-through applies. Deposits still only ever go to the player —
-     * consume-from-chest, deposit-to-player, like the engine.
+     * Chest counterpart of {@code findSlotMatchingUnusedItem}, using vanilla's ACTUAL predicate
+     * ({@code stackEqualExact}): item, metadata for subtyped items, and NBT-tag equality against
+     * the unpacked ingredient, plus the unused-item filters. Meta-exactness is load-bearing, not
+     * pedantry — the counting that authorized this pull ({@code RecipeItemHelper}) is meta-aware,
+     * so an item-only scan could consume a same-item-different-meta stack (ink sac for lapis; the
+     * review demonstrated a repeatable transmutation dupe through the grow path below). Consumes
+     * through {@link Slot#decrStackSize} so a station's item-handler write-through applies;
+     * deposits still only ever go to the player.
      */
     private static ItemStack takeOneFromStationChest(EntityPlayerMP player, ItemStack ingredient) {
         for (Slot slot : ExternalSlots.of(player)) {
             ItemStack inSlot = slot.getStack();
-            if (!inSlot.isEmpty() && inSlot.getItem() == ingredient.getItem()
+            if (!inSlot.isEmpty()
+                    && inSlot.getItem() == ingredient.getItem()
+                    && (!inSlot.getHasSubtypes() || inSlot.getMetadata() == ingredient.getMetadata())
+                    && ItemStack.areItemStackTagsEqual(inSlot, ingredient)
                     && CraftExecutor.usableAsIngredient(inSlot)) {
                 ItemStack taken = inSlot.copy();
                 slot.decrStackSize(1);
