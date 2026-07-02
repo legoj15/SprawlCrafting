@@ -97,6 +97,7 @@ End-of-support lines can be pinned via `endOfSupportLines` in `config/release.js
 ## Prerequisites checklist before `-Execute`
 
 - [ ] `./gradlew buildAndCollect` passed → `testing/dist/` has the six modern jars, **and** the 1.12.2 Forge jar is built at `forge-1.12.2/build/libs/sprawlcrafting-<ver>.jar` (or pass `-Build` to do both — the Forge build needs a JDK 25 host; set `legacyForge.javaHome` if your default JDK isn't 25).
+- [ ] `./testing/Invoke-ReleaseTests.ps1` gate is green — **including the `1.12.2-forge` leg**, which boots the reobf jar in a real Forge 1.12.2 + MixinBooter client and verifies both mixin configs registered (this is the only automated check of the jar-manifest `MixinConfigs` wiring; see `testing/README.md`).
 - [ ] `changelog.md` finalized for this version.
 - [ ] On `main`, working tree otherwise clean (the script commits `update.json`, then `changelog.md`+`gradle.properties`).
 - [ ] `gh auth status` OK (already is).
