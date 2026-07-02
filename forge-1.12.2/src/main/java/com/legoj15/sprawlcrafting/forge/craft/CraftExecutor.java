@@ -7,8 +7,6 @@ import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraft.entity.player.InventoryPlayer;
 import net.minecraft.inventory.Container;
-import net.minecraft.inventory.ContainerPlayer;
-import net.minecraft.inventory.ContainerWorkbench;
 import net.minecraft.inventory.Slot;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
@@ -37,9 +35,9 @@ import net.minecraft.util.ResourceLocation;
  *       recipe book refuses to auto-fill.</li>
  * </ul>
  *
- * <p>Unlike the modern tree this port does not hand the final craft off into an open crafting
- * grid; it always auto-crafts the result into the inventory. That hand-off was a later modern
- * refinement; the core "intermediates and final become real items" behaviour is unchanged.
+ * <p>The final craft of a job is normally handed off into an open crafting grid by
+ * {@link ServerGridPlacer} (see {@code CraftQueueManager}); this executor is the fallback that
+ * auto-crafts it — and every intermediate — directly into the inventory.
  */
 public final class CraftExecutor {
 
@@ -168,6 +166,39 @@ public final class CraftExecutor {
     }
 
     /**
+     * Non-mutating: whether {@code recipe} can be crafted once from the 36 main slots plus the
+     * open station's bound chest — the exact pool {@code ServerGridPlacer} can pull from. Gates
+     * the JEI "+" server-placement path, so a recipe direct only thanks to the chest is staged
+     * into the grid (stock TConstruct+JEI behavior) rather than routed through the engine.
+     */
+    public static boolean canCraftFromPlayerAndStation(EntityPlayer player, IRecipe recipe) {
+        InventoryPlayer inventory = player.inventory;
+        List<Slot> external = ExternalSlots.of(player);
+        int[] reserved = new int[MAIN + external.size()];
+        for (Ingredient ingredient : recipe.getIngredients()) {
+            if (ingredient == Ingredient.EMPTY) {
+                continue;
+            }
+            int idx = findMatchingSlot(inventory, ingredient, reserved);
+            if (idx < 0) {
+                for (int j = 0; j < external.size(); j++) {
+                    ItemStack stack = external.get(j).getStack();
+                    if (!stack.isEmpty() && stack.getCount() - reserved[MAIN + j] > 0
+                            && usableAsIngredient(stack) && ingredient.apply(stack)) {
+                        idx = MAIN + j;
+                        break;
+                    }
+                }
+            }
+            if (idx < 0) {
+                return false;
+            }
+            reserved[idx]++;
+        }
+        return true;
+    }
+
+    /**
      * The ordered consumable pool: the 36 main slots first, then the open container's other input
      * slots (its crafting grid and any station side inventory). The grid is normally swept into the
      * inventory by {@link #clearOpenCraftingGrid} before a job starts, so it is usually empty here;
@@ -276,20 +307,24 @@ public final class CraftExecutor {
             return;
         }
         Container menu = player.openContainer;
-        int gridSlots;
-        if (menu instanceof ContainerWorkbench) {
-            gridSlots = 9;
-        } else if (menu instanceof ContainerPlayer) {
-            gridSlots = 4;
-        } else if (GridContext.isModded3x3Crafter(menu)) {
-            gridSlots = 9;
-        } else {
+        if (menu == null) {
             return;
         }
-        // Grid input cells are container slots 1..gridSlots (result is slot 0).
+        // The grid input cells are exactly the container's slots backed by an InventoryCrafting —
+        // found by type rather than by fixed index, so this works for the vanilla table, the 2x2
+        // player grid, and any modded station regardless of where in the container its grid sits.
+        List<Slot> gridSlots = new ArrayList<Slot>();
+        for (Slot slot : menu.inventorySlots) {
+            if (ExternalSlots.isMatrix(slot)) {
+                gridSlots.add(slot);
+            }
+        }
+        if (gridSlots.isEmpty()) {
+            return;
+        }
         List<ItemStack> contents = new ArrayList<ItemStack>();
-        for (int i = 1; i <= gridSlots; i++) {
-            ItemStack stack = menu.getSlot(i).getStack();
+        for (Slot slot : gridSlots) {
+            ItemStack stack = slot.getStack();
             if (!stack.isEmpty()) {
                 contents.add(stack.copy());
             }
@@ -297,8 +332,8 @@ public final class CraftExecutor {
         if (contents.isEmpty() || !fitsInMainInventory(player.inventory, contents)) {
             return;
         }
-        for (int i = 1; i <= gridSlots; i++) {
-            menu.getSlot(i).putStack(ItemStack.EMPTY);
+        for (Slot slot : gridSlots) {
+            slot.putStack(ItemStack.EMPTY);
         }
         for (ItemStack stack : contents) {
             insertIntoMainInventory(player, stack);
@@ -306,8 +341,31 @@ public final class CraftExecutor {
         menu.detectAndSendChanges();
     }
 
+    /**
+     * Logout safety net: 1.12.2 saves the player ({@code PlayerList.playerLoggedOut}) without
+     * closing their container, and {@code ContainerPlayer}'s 2x2 craft matrix is not part of the
+     * saved inventory — anything in it at disconnect is silently deleted. Normal GUI closes return
+     * it (client sends a close-window packet first), but a client crash skips that, and the
+     * final-step hand-off can legitimately leave a staged craft there. Sweeping the matrix into
+     * the inventory before the save (the logged-out event fires first) makes the loss impossible;
+     * overflow drops at the player's feet, which the world save keeps. Deliberately only the
+     * inventory container: a modded station's persistent grid belongs to its tile, and items left
+     * in an open vanilla workbench at disconnect are vanilla's own longstanding semantics.
+     */
+    public static void returnInventoryGridOnLogout(EntityPlayerMP player) {
+        for (Slot slot : player.inventoryContainer.inventorySlots) {
+            if (ExternalSlots.isMatrix(slot)) {
+                ItemStack stack = slot.getStack();
+                if (!stack.isEmpty()) {
+                    slot.putStack(ItemStack.EMPTY);
+                    insertIntoMainInventory(player, stack);
+                }
+            }
+        }
+    }
+
     /** Vanilla recipe-book parity: never consume damaged, enchanted, or renamed stacks. */
-    static boolean usableAsIngredient(ItemStack stack) {
+    public static boolean usableAsIngredient(ItemStack stack) {
         return !stack.isItemDamaged() && !stack.isItemEnchanted() && !stack.hasDisplayName();
     }
 
@@ -326,8 +384,9 @@ public final class CraftExecutor {
      * Inserts into the 36 main slots only (merge into matching stacks, then empty slots), dropping
      * any overflow at the player's feet. Deliberately not {@code addItemStackToInventory}, which can
      * stash items into the offhand slot where later steps of the job would not find them.
+     * Package-visible: {@link ServerGridPlacer} returns grid contents through the same rules.
      */
-    private static void insertIntoMainInventory(EntityPlayer player, ItemStack stack) {
+    static void insertIntoMainInventory(EntityPlayer player, ItemStack stack) {
         InventoryPlayer inventory = player.inventory;
         for (int i = 0; i < MAIN && !stack.isEmpty(); i++) {
             ItemStack existing = inventory.mainInventory.get(i);
@@ -356,7 +415,7 @@ public final class CraftExecutor {
     }
 
     /** Non-mutating check that every stack would fit into the 36 main inventory slots together. */
-    private static boolean fitsInMainInventory(InventoryPlayer inventory, List<ItemStack> stacks) {
+    static boolean fitsInMainInventory(InventoryPlayer inventory, List<ItemStack> stacks) {
         ItemStack[] snapshot = new ItemStack[MAIN];
         for (int i = 0; i < MAIN; i++) {
             snapshot[i] = inventory.mainInventory.get(i).copy();
@@ -391,7 +450,7 @@ public final class CraftExecutor {
     }
 
     /** Same item, same metadata, same NBT — count-independent (for merge/fit checks). */
-    private static boolean sameItem(ItemStack a, ItemStack b) {
+    static boolean sameItem(ItemStack a, ItemStack b) {
         return a.getItem() == b.getItem() && a.getMetadata() == b.getMetadata()
                 && ItemStack.areItemStackTagsEqual(a, b);
     }

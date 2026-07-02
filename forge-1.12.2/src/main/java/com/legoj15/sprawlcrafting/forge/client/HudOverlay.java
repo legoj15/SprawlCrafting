@@ -93,6 +93,8 @@ public final class HudOverlay {
                 return "Paused — open station";
             case FINISHED:
                 return "Done!";
+            case READY_IN_GRID:
+                return "Ready — grab it!";
             case CANCELLED:
                 return "Cancelled";
             case CRAFTING:
@@ -107,6 +109,7 @@ public final class HudOverlay {
             case PAUSED_STATION:
                 return 0xFFFFC04D; // orange
             case FINISHED:
+            case READY_IN_GRID:
                 return 0xFF5CE65C; // green
             case CANCELLED:
                 return 0xFFE65C5C; // red

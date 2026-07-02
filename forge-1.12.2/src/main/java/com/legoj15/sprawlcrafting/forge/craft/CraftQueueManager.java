@@ -10,14 +10,17 @@ import com.legoj15.sprawlcrafting.forge.network.SprawlNetwork;
 
 import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraft.item.ItemStack;
+import net.minecraft.item.crafting.CraftingManager;
+import net.minecraft.item.crafting.IRecipe;
 import net.minecraft.util.text.ITextComponent;
 import net.minecraft.util.text.TextComponentTranslation;
 import net.minecraft.util.text.TextFormatting;
 
 /**
  * Server-side registry of each player's active craft job. v1 allows a single job per player:
- * enqueueing while one is running is rejected. Java-8 port of the modern queue manager, minus the
- * final-grid hand-off (this port always auto-crafts).
+ * enqueueing while one is running is rejected. Java-8 port of the modern queue manager, including
+ * the final-grid hand-off: the last craft of a job is laid into the player's open crafting grid
+ * (via {@link ServerGridPlacer}) when one is open, auto-crafted into the inventory otherwise.
  *
  * <p>The mod entry point wires {@link #tick(EntityPlayerMP)} into the per-player server tick,
  * {@link #clear(UUID)} into logout, and {@link #clearAll()} into server stop.
@@ -38,6 +41,10 @@ public final class CraftQueueManager {
         if (ACTIVE.putIfAbsent(player.getUniqueID(), job) != null) {
             return false;
         }
+        // Every job starts from the safe "no crafting screen" default: a screen state left over
+        // from a previous job (the watcher goes silent on terminal states) must never satisfy the
+        // hand-off gate — the client re-reports from scratch once it sees this job's first sync.
+        ClientCraftingView.clearScreen(player.getUniqueID());
         sync(player, job, CraftProgressMessage.State.CRAFTING, ItemStack.EMPTY);
         return true;
     }
@@ -60,6 +67,20 @@ public final class CraftQueueManager {
         if (job.currentStep().needsFullGrid() && !hasFullGridAccess(player)) {
             job.holdForRetry();
             sync(player, job, pausedState(job), ItemStack.EMPTY);
+            return;
+        }
+        // Final-step hand-off: if the very last craft is due and the player is looking at a
+        // compatible grid, lay its ingredients there instead — a real, takeable vanilla craft —
+        // and finish the job optimistically (grabbing is its own confirmation). Any doubt falls
+        // through to the auto-craft below, which remains the only place the item is granted.
+        IRecipe handOff = handOffCandidate(player, job);
+        if (handOff != null
+                && ServerGridPlacer.placeFinalCraft(player, handOff) == ServerGridPlacer.HandOffResult.FILLED) {
+            ACTIVE.remove(player.getUniqueID());
+            job.onCraftPerformed();
+            sync(player, job, CraftProgressMessage.State.READY_IN_GRID, job.targetResult());
+            notify(player, message("sprawlcrafting.craft.ready_in_grid", TextFormatting.GREEN,
+                    job.targetResult().getDisplayName()));
             return;
         }
         CraftExecutor.CraftResult result = CraftExecutor.craftOnce(player, job.currentStep().recipeId());
@@ -95,6 +116,36 @@ public final class CraftQueueManager {
             notify(player, message("sprawlcrafting.craft.recipe_gone", TextFormatting.RED,
                     job.targetResult().getDisplayName()));
         }
+    }
+
+    /**
+     * The final step's recipe, iff its very last craft is due AND the player is looking at a grid
+     * it fits: a 3x3 crafter open right now (server-visible via the open container), or — for a
+     * recipe that fits 2x2 — the inventory screen, which only the client can see
+     * ({@link ClientCraftingView}, fed by the screen-state message). Null = no hand-off; auto-craft.
+     */
+    private static IRecipe handOffCandidate(EntityPlayerMP player, CraftJob job) {
+        if (!job.isFinalStep() || !job.isLastCraftOfStep()) {
+            return null;
+        }
+        // A pre-v2 client can't display READY_IN_GRID (its enum decoder clamps the unknown
+        // ordinal), so it keeps the pre-v2 behavior: every craft auto-crafts into the inventory.
+        if (!ClientCraftingView.capable(player.getUniqueID())) {
+            return null;
+        }
+        IRecipe recipe = CraftingManager.getRecipe(job.currentStep().recipeId());
+        if (recipe == null) {
+            return null;
+        }
+        if (GridContext.current(player) == GridContext.CRAFTING_TABLE) {
+            return recipe;
+        }
+        if (player.openContainer == player.inventoryContainer
+                && recipe.canFit(2, 2)
+                && ClientCraftingView.inventoryScreenOpen(player.getUniqueID())) {
+            return recipe;
+        }
+        return null;
     }
 
     /**

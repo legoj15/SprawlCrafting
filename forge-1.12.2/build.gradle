@@ -186,8 +186,12 @@ processResources {
     }
 }
 
-// MixinBooter discovers a mod's mixin configs from the jar manifest's `MixinConfigs` attribute
-// (space/comma-separated list of config filenames). With MixinBooter present this is the ONLY
+// MixinBooter discovers a mod's mixin configs from the jar manifest's `MixinConfigs` attribute.
+// The list is COMMA-separated — Mixin's platform agent does not split on spaces, so a
+// space-separated value parses as ONE nonexistent resource name and hard-crashes the game at
+// launch (MixinInitialisationError) on every install that has MixinBooter; without MixinBooter
+// nothing reads the attribute, which is how the malformed value stayed invisible until the first
+// real MixinBooter launch (SkyFactory 4 + MixinBooter 11.1, 2026-07-01). With MixinBooter present this is the ONLY
 // wiring needed — no coremod, FMLCorePlugin, or TweakClass. Declared now against the (empty)
 // scaffold config so adding the first mixin needs no build-script change: drop the class in
 // com.legoj15.sprawlcrafting.forge.mixin and list it in mixins.sprawlcrafting.json. RFG's reobfJar
@@ -201,7 +205,7 @@ jar {
     }
     manifest {
         attributes(
-                'MixinConfigs': 'mixins.sprawlcrafting.json mixins.sprawlcrafting.jei.json'
+                'MixinConfigs': 'mixins.sprawlcrafting.json,mixins.sprawlcrafting.jei.json'
         )
     }
 }

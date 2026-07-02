@@ -35,7 +35,8 @@ public final class ClientCraftState {
         state = message.state();
         active = true;
         boolean terminal = state == CraftProgressMessage.State.FINISHED
-                || state == CraftProgressMessage.State.CANCELLED;
+                || state == CraftProgressMessage.State.CANCELLED
+                || state == CraftProgressMessage.State.READY_IN_GRID;
         terminalSinceMs = terminal ? System.currentTimeMillis() : 0L;
     }
 

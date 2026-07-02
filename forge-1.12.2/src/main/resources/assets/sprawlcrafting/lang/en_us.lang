@@ -8,3 +8,4 @@ sprawlcrafting.craft.unsupported=That recipe cannot be sprawl-crafted (special o
 sprawlcrafting.craft.needs_table=That recipe needs a 3x3 crafting table; open one and try again.
 sprawlcrafting.craft.too_complex=That recipe tree is too complex to plan.
 sprawlcrafting.craft.unsolvable=Not enough raw materials. Still need: %s
+sprawlcrafting.craft.ready_in_grid=%s is ready — grab it from your crafting grid.

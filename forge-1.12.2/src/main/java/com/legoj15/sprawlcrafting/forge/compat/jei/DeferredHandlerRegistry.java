@@ -18,8 +18,26 @@ public final class DeferredHandlerRegistry {
 
     private static final Map<Class<?>, Object> HANDLERS = new HashMap<>();
 
+    /**
+     * A single class-less handler returned for containers that are structurally 3x3 crafters but
+     * whose class isn't explicitly registered (an unknown modded station). Set once by the JEI
+     * plugin when JEI is present; null otherwise. The {@code RecipeRegistryMixin} decides when it
+     * applies (only for the open container, verified structurally) and memoises the resolved class
+     * via {@link #register}.
+     */
+    private static Object structuralFallback;
+
     public static void register(Class<?> containerClass, Object handler) {
         HANDLERS.put(containerClass, handler);
+    }
+
+    public static void setStructuralFallback(Object handler) {
+        structuralFallback = handler;
+    }
+
+    /** The structural fallback handler, or null when JEI isn't present. */
+    public static Object structuralFallback() {
+        return structuralFallback;
     }
 
     /**

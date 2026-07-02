@@ -27,9 +27,10 @@ import net.minecraft.inventory.Slot;
  * inventory (and any future modded crafter that surfaces one) while excluding the 36 player slots
  * (already counted elsewhere), the 3x3 grid, and the output.
  *
- * <p>Harvesting of the external (chest) slots is gated to containers SprawlCrafting already
- * recognises as 3x3 modded crafters ({@link GridContext#isModded3x3Crafter}); a plain chest GUI,
- * which carries non-player slots too, is deliberately never treated as a crafting material pool.
+ * <p>Harvesting of the external (chest) slots is gated to containers SprawlCrafting recognises as
+ * 3x3 crafters ({@link GridContext#isThreeByThreeCrafter}); a plain chest GUI, which carries
+ * non-player slots too, has no crafting matrix and so is deliberately never treated as a crafting
+ * material pool.
  *
  * <p>{@link #materialSlots} additionally surfaces the open container's <em>crafting grid</em> (any
  * {@link InventoryCrafting}) — for a vanilla table, FastWorkbench, or Crafting Station alike — so
@@ -78,10 +79,18 @@ public final class ExternalSlots {
         if (container == null) {
             return Collections.emptyList();
         }
-        boolean station = GridContext.isModded3x3Crafter(container);
+        boolean station = GridContext.isThreeByThreeCrafter(container);
+        // A non-empty result slot means the grid currently holds a COMPLETE, takeable craft — a
+        // recipe the server-side placer just staged (JEI "+", READY_IN_GRID hand-off) or the
+        // player laid out by hand. That is deliberate arrangement, not loose material: excluding
+        // the matrix then keeps a running job from cannibalizing the staged recipe out from under
+        // the player (which would silently blank the result they were about to take). Loose
+        // sweep-leftovers — the case the matrix is in this pool for — never form a craft, so the
+        // result slot is empty and they stay counted.
+        boolean staged = hasCompleteCraft(container);
         List<Slot> slots = null;
         for (Slot slot : container.inventorySlots) {
-            if (isMatrix(slot) || (station && isExternal(slot))) {
+            if ((isMatrix(slot) && !staged) || (station && isExternal(slot))) {
                 if (slots == null) {
                     slots = new ArrayList<Slot>();
                 }
@@ -89,6 +98,16 @@ public final class ExternalSlots {
             }
         }
         return slots == null ? Collections.<Slot>emptyList() : slots;
+    }
+
+    /** Whether the container's craft-result slot currently shows an output (grid matches a recipe). */
+    private static boolean hasCompleteCraft(Container container) {
+        for (Slot slot : container.inventorySlots) {
+            if (slot.inventory instanceof InventoryCraftResult && slot.getHasStack()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -99,7 +118,7 @@ public final class ExternalSlots {
      */
     public static List<Slot> of(EntityPlayer player) {
         Container container = player.openContainer;
-        if (container == null || !GridContext.isModded3x3Crafter(container)) {
+        if (container == null || !GridContext.isThreeByThreeCrafter(container)) {
             return Collections.emptyList();
         }
         List<Slot> external = null;
@@ -117,7 +136,7 @@ public final class ExternalSlots {
     /** True if the player currently has a recognised station open that exposes a connected inventory. */
     public static boolean present(EntityPlayer player) {
         Container container = player.openContainer;
-        if (container == null || !GridContext.isModded3x3Crafter(container)) {
+        if (container == null || !GridContext.isThreeByThreeCrafter(container)) {
             return false;
         }
         for (Slot slot : container.inventorySlots) {

@@ -16,8 +16,10 @@ import net.minecraftforge.fml.common.Loader;
 /**
  * JEI integration entry point. Discovered by JEI's {@code @JEIPlugin} scan (client-only); never
  * loaded when JEI is absent, so JEI stays a soft, compile-only dependency. Registers the deferred
- * craft transfer handler for the 2x2 inventory grid, the 3x3 table, and any modded crafting
- * containers detected at runtime (FastWorkbench, TConstruct Crafting Station).
+ * craft transfer handler for the 2x2 inventory grid, the 3x3 table, known modded crafting
+ * containers (FastWorkbench, TConstruct Crafting Station), and — via a class-less structural
+ * fallback resolved by {@code RecipeRegistryMixin} — any other container that reads as a 3x3
+ * crafter when opened (e.g. a slab-mod Crafting Station).
  *
  * <p>JEI's registry is last-write-wins, and {@code @JEIPlugin} iteration order is an unordered
  * {@code Set} — so another mod's handler can silently overwrite ours. To guarantee priority,
@@ -51,6 +53,14 @@ public class SprawlCraftingJeiPlugin implements IModPlugin {
         registerModdedCrafter(transfer, helper, "tconstruct",
                 "slimeknights.tconstruct.tools.common.inventory.ContainerCraftingStation",
                 GridContext.CRAFTING_TABLE);
+
+        // Structural fallback: a class-less 3x3 handler the RecipeRegistryMixin hands back for any
+        // *open* container that reads as a 3x3 crafter but isn't registered above — an unknown
+        // modded station (e.g. a Slab Machines Crafting Station slab). It is never added to JEI's
+        // own class table (that would wrongly claim every container); only our mixin returns it,
+        // after verifying the open container structurally.
+        DeferredHandlerRegistry.setStructuralFallback(
+                new DeferredCraftTransferHandler<>(Container.class, helper, GridContext.CRAFTING_TABLE));
     }
 
     private static <C extends Container> void registerAndStore(IRecipeTransferRegistry transfer,

@@ -25,15 +25,17 @@ public class CraftProgressMessage implements IMessage {
     /**
      * Terminal states get an action-bar line; transient states only repaint the flyout.
      * {@code PAUSED} = waiting on a crafting table; {@code PAUSED_STATION} = waiting on the player to
-     * (re)open the Crafting Station whose grid/chest the job depends on. Appended last so the
-     * ordinals the wire format uses stay stable.
+     * (re)open the Crafting Station whose grid/chest the job depends on; {@code READY_IN_GRID} =
+     * terminal, the final craft's ingredients were laid into the player's open crafting grid for
+     * them to take. New states are appended last so the ordinals the wire format uses stay stable.
      */
     public enum State {
         CRAFTING,
         PAUSED,
         FINISHED,
         CANCELLED,
-        PAUSED_STATION
+        PAUSED_STATION,
+        READY_IN_GRID
     }
 
     private State state = State.CRAFTING;
