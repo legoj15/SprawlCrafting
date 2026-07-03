@@ -2,7 +2,6 @@ package com.legoj15.sprawlcrafting.forge.compat.jei;
 
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -312,7 +311,12 @@ public class DeferredCraftTransferHandler<C extends Container> implements IRecip
 
         Map<Integer, ? extends IGuiIngredient<ItemStack>> guiIngredients =
                 recipeLayout.getItemStacks().getGuiIngredients();
-        Map<ItemKey, List<Integer>> slotsByIngredient = new LinkedHashMap<ItemKey, List<Integer>>();
+        // Grouped by full stack identity (item + meta + NBT), not ItemKey: fluid-in-NBT buckets
+        // must neither match an empty same-(item, meta) bucket nor merge with a different fluid's
+        // bucket into one drag. Templates are copies of the matched INVENTORY stack, so the pick
+        // phase below is guaranteed to find them again.
+        List<ItemStack> dragTemplates = new ArrayList<ItemStack>();
+        List<List<Integer>> dragSlotGroups = new ArrayList<List<Integer>>();
 
         for (int jeiSlot = 1; jeiSlot <= 9; jeiSlot++) {
             IGuiIngredient<ItemStack> gui = guiIngredients.get(Integer.valueOf(jeiSlot));
@@ -331,32 +335,60 @@ public class DeferredCraftTransferHandler<C extends Container> implements IRecip
             }
             int containerSlot = gridSlotIndices.get(jeiRow * gridWidth + jeiCol).intValue();
 
-            ItemKey matchKey = null;
-            for (int inv : invSlotIndices) {
-                ItemStack inSlot = container.getSlot(inv).getStack();
-                if (inSlot.isEmpty()) {
-                    continue;
-                }
-                ItemKey invKey = ItemKey.of(inSlot);
-                for (ItemStack option : options) {
-                    if (!option.isEmpty() && invKey.equals(ItemKey.of(option))) {
-                        matchKey = invKey;
+            // Pass 1: a stack that matches an option exactly (NBT included). Pass 2: the
+            // (item, meta) match against tag-LESS options — a tagged option (filled bucket)
+            // must not be satisfied by a stack whose tag differs (the empty bucket) while a
+            // better source could exist. Pass 3, only when nothing else matched anywhere: the
+            // legacy any-option (item, meta) match — recipes lenient about NBT (vanilla
+            // Ingredient.apply ignores tags) crafted fine from such stacks before, and this
+            // client-side path has no server verify to recover a refusal, so never do worse
+            // than the pre-NBT-aware behavior.
+            ItemStack match = ItemStack.EMPTY;
+            for (int pass = 0; pass < 3 && match.isEmpty(); pass++) {
+                for (int inv : invSlotIndices) {
+                    ItemStack inSlot = container.getSlot(inv).getStack();
+                    if (inSlot.isEmpty()) {
+                        continue;
+                    }
+                    for (ItemStack option : options) {
+                        if (option.isEmpty()) {
+                            continue;
+                        }
+                        boolean hit;
+                        if (pass == 0) {
+                            hit = sameStackIdentity(inSlot, option);
+                        } else if (pass == 1) {
+                            hit = !option.hasTagCompound()
+                                    && ItemKey.of(inSlot).equals(ItemKey.of(option));
+                        } else {
+                            hit = ItemKey.of(inSlot).equals(ItemKey.of(option));
+                        }
+                        if (hit) {
+                            match = inSlot.copy();
+                            break;
+                        }
+                    }
+                    if (!match.isEmpty()) {
                         break;
                     }
                 }
-                if (matchKey != null) {
-                    break;
-                }
             }
 
-            if (matchKey == null) {
+            if (match.isEmpty()) {
                 return false;
             }
 
-            List<Integer> slots = slotsByIngredient.get(matchKey);
+            List<Integer> slots = null;
+            for (int t = 0; t < dragTemplates.size(); t++) {
+                if (sameStackIdentity(dragTemplates.get(t), match)) {
+                    slots = dragSlotGroups.get(t);
+                    break;
+                }
+            }
             if (slots == null) {
                 slots = new ArrayList<Integer>();
-                slotsByIngredient.put(matchKey, slots);
+                dragTemplates.add(match);
+                dragSlotGroups.add(slots);
             }
             slots.add(Integer.valueOf(containerSlot));
         }
@@ -365,14 +397,37 @@ public class DeferredCraftTransferHandler<C extends Container> implements IRecip
         int dragAdd   = maxTransfer ? 1 : 5;
         int dragEnd   = maxTransfer ? 2 : 6;
 
-        for (Map.Entry<ItemKey, List<Integer>> entry : slotsByIngredient.entrySet()) {
-            ItemKey ingredient = entry.getKey();
-            List<Integer> gridSlots = entry.getValue();
+        for (int t = 0; t < dragTemplates.size(); t++) {
+            ItemStack template = dragTemplates.get(t);
+            List<Integer> gridSlots = dragSlotGroups.get(t);
 
             for (int inv : invSlotIndices) {
                 ItemStack inSlot = container.getSlot(inv).getStack();
-                if (inSlot.isEmpty() || !ItemKey.of(inSlot).equals(ingredient)) {
+                if (inSlot.isEmpty() || !sameStackIdentity(inSlot, template)) {
                     continue;
+                }
+
+                // Drag targets: still-fillable cells only, consumed stack by stack until the
+                // group is complete. One source stack may not cover the group — unstackable
+                // identities (filled buckets, milk buckets) hand a 1-count cursor exactly one
+                // drag-slot admission — and a cell that can take no more must not stay a
+                // target: it would hog that single admission and starve the rest (and on a
+                // single click, deepen a filled cell past the one-per-cell layout). Single
+                // click targets EMPTY cells (each ends at exactly one item); shift-fill
+                // targets cells below the identity's real stack cap, which for stackables
+                // filling evenly from an empty grid is identical to the unfiltered behavior.
+                List<Integer> targets = new ArrayList<Integer>();
+                for (int gridSlot : gridSlots) {
+                    ItemStack inCell = container.getSlot(gridSlot).getStack();
+                    boolean fillable = maxTransfer
+                            ? inCell.isEmpty() || inCell.getCount() < template.getMaxStackSize()
+                            : inCell.isEmpty();
+                    if (fillable) {
+                        targets.add(Integer.valueOf(gridSlot));
+                    }
+                }
+                if (targets.isEmpty()) {
+                    break;
                 }
 
                 mc.playerController.windowClick(wid, inv, 0, ClickType.PICKUP, player);
@@ -381,7 +436,7 @@ public class DeferredCraftTransferHandler<C extends Container> implements IRecip
                 }
 
                 mc.playerController.windowClick(wid, -999, dragStart, ClickType.QUICK_CRAFT, player);
-                for (int gridSlot : gridSlots) {
+                for (int gridSlot : targets) {
                     mc.playerController.windowClick(wid, gridSlot, dragAdd, ClickType.QUICK_CRAFT, player);
                 }
                 mc.playerController.windowClick(wid, -999, dragEnd, ClickType.QUICK_CRAFT, player);
@@ -389,14 +444,16 @@ public class DeferredCraftTransferHandler<C extends Container> implements IRecip
                 if (!player.inventory.getItemStack().isEmpty()) {
                     mc.playerController.windowClick(wid, inv, 0, ClickType.PICKUP, player);
                 }
-
-                if (!maxTransfer) {
-                    break;
-                }
             }
         }
 
         return true;
+    }
+
+    /** Same item, same metadata, same NBT — count-independent (the drag-fill's match identity). */
+    private static boolean sameStackIdentity(ItemStack a, ItemStack b) {
+        return a.getItem() == b.getItem() && a.getMetadata() == b.getMetadata()
+                && ItemStack.areItemStackTagsEqual(a, b);
     }
 
     /** The crafting category's output is GUI ingredient slot 0; fall back to the first output slot. */

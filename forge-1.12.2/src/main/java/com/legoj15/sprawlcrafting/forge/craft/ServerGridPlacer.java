@@ -15,6 +15,7 @@ import net.minecraft.inventory.Slot;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.crafting.CraftingManager;
 import net.minecraft.item.crafting.IRecipe;
+import net.minecraft.item.crafting.Ingredient;
 import net.minecraft.network.play.server.SPacketPlaceGhostRecipe;
 import net.minecraft.util.ResourceLocation;
 import net.minecraftforge.common.crafting.IShapedRecipe;
@@ -67,6 +68,9 @@ public final class ServerGridPlacer {
      */
     public static void handlePlaceRecipe(EntityPlayerMP player, ResourceLocation recipeId,
                                          int windowId, boolean maxTransfer) {
+        // Vanilla's CPacketPlaceRecipe handler resets the AFK-kick timer before anything else;
+        // this packet replaces it for recipe-book clicks, so it must do the same.
+        player.markPlayerActive();
         if (player.isSpectator()) {
             return;
         }
@@ -112,9 +116,10 @@ public final class ServerGridPlacer {
         }
         boolean placed = place(player, grid, recipe, helper, maxTransfer);
         if (!placed) {
-            // Counting can overpromise (NBT-carrying stacks are counted but never pulled — a
-            // vanilla-inherited gap the chest pool widens). Rather than leave a dead half-fill,
-            // the failed fill was already returned; show the ghost like the not-enough case.
+            // Counting can still overpromise: it is NBT-blind, so a same-(item, meta) stack the
+            // recipe's Ingredient rejects (a wrong-fluid bucket) is counted but — since the pull
+            // is Ingredient-gated — never pulled. Rather than leave a dead half-fill, the failed
+            // fill was already returned; show the ghost like the not-enough case.
             player.connection.sendPacket(new SPacketPlaceGhostRecipe(container.windowId, recipe));
         }
         finishSync(player, container);
@@ -270,6 +275,12 @@ public final class ServerGridPlacer {
      * Vanilla {@code func_194323_a} with the transposition fixed: walk grid rows/columns top-left
      * anchored, consuming one packed ingredient per cell inside the recipe's width/height, and move
      * {@code count} items into each occupied cell one at a time from the player inventory.
+     *
+     * <p>Each cell's pull also carries the recipe's own {@link Ingredient} for that cell: the
+     * packed list from {@code RecipeItemHelper.canCraft} holds exactly one entry per
+     * {@code getIngredients()} element in order (empty ingredients pack to 0), and this walk
+     * consumes one entry per cell in that same row-major order — the alignment vanilla's own
+     * placement already relies on to land items in the right cells.
      */
     private static void distribute(EntityPlayerMP player, Grid grid, IRecipe recipe,
                                    int count, IntList packed) {
@@ -280,19 +291,23 @@ public final class ServerGridPlacer {
             recipeWidth = ((IShapedRecipe) recipe).getRecipeWidth();
             recipeHeight = ((IShapedRecipe) recipe).getRecipeHeight();
         }
+        List<Ingredient> ingredients = recipe.getIngredients();
         Iterator<Integer> iterator = packed.iterator();
+        int ingredientIndex = 0;
         for (int row = 0; row < grid.height() && row != recipeHeight; row++) {
             for (int col = 0; col < gridWidth; col++) {
                 if (col == recipeWidth || !iterator.hasNext()) {
                     break;
                 }
                 Slot cell = grid.cell(row * gridWidth + col);
-                ItemStack ingredient = RecipeItemHelper.unpack(iterator.next().intValue());
-                if (ingredient.isEmpty()) {
+                int index = ingredientIndex++;
+                ItemStack template = RecipeItemHelper.unpack(iterator.next().intValue());
+                if (template.isEmpty()) {
                     continue;
                 }
+                Ingredient ingredient = index < ingredients.size() ? ingredients.get(index) : null;
                 for (int n = 0; n < count; n++) {
-                    moveOneIntoCell(player, cell, ingredient);
+                    moveOneIntoCell(player, cell, template, ingredient);
                 }
             }
             if (!iterator.hasNext()) {
@@ -308,37 +323,136 @@ public final class ServerGridPlacer {
      * first, then from the open station's bound chest, into the grid cell. The first item goes
      * through {@link Slot#putStack} so the container's matrix-changed hook fires (and a persistent
      * station's write-through applies).
+     *
+     * <p>Extended with an NBT-recovery tier: the counting that authorized this pull is NBT-blind
+     * (packed item+meta), but {@code unpack} reconstructs a tag-LESS template, so vanilla's
+     * tag-exact predicate can never retrieve an ingredient whose identity lives in NBT — every
+     * filled Forge/More Buckets-style bucket. Source precedence:
+     * <ol>
+     *   <li>the vanilla tag-exact inventory hit, if the recipe's own {@link Ingredient#apply}
+     *       accepts it (an empty bucket must not stand in for a filled one);</li>
+     *   <li>an inventory stack of the authorized (item, meta) the Ingredient accepts — NBT
+     *       included; then ANY inventory stack the Ingredient accepts. The cross-identity phase
+     *       repairs the picker's blind assignment: {@code RecipeItemHelper} chooses a packed id
+     *       per cell with no {@code apply} awareness, so with More Buckets' FluidIngredient it
+     *       can assign the EMPTY quartz bucket's id to a lava cell while the actual lava sits in
+     *       a vanilla or obsidian bucket — verified live with SF4's Mekanism Crusher. A pull
+     *       gated on {@code apply} can only ever lay stacks the post-placement
+     *       {@code recipe.matches} verify approves, and it still physically removes exactly one
+     *       real item, so the transmutation-dupe guarantees hold;</li>
+     *   <li>the station chest, same tiers;</li>
+     *   <li>last resort, only for {@link Ingredient#isSimple simple} ingredients: the
+     *       pre-recovery behavior — the tag-exact hit (inventory, then chest) even when
+     *       {@code apply} rejected it. "Simple" shapeless recipes match by meta-collapsed packed
+     *       counts, more leniently than their declared Ingredients, and vetoing those outright
+     *       would regress placements that used to work. For NON-simple ingredients (fluid-aware,
+     *       CraftTweaker) {@code matches} uses the same {@code apply} that just rejected the
+     *       stack, so the legacy pull is guaranteed-dead — skip it and let the short cell revert
+     *       honestly instead of churning items through the grid.</li>
+     * </ol>
      */
-    private static void moveOneIntoCell(EntityPlayerMP player, Slot cell, ItemStack ingredient) {
+    private static void moveOneIntoCell(EntityPlayerMP player, Slot cell, ItemStack template,
+                                        Ingredient ingredient) {
+        ItemStack inCell = cell.getStack();
+        if (!inCell.isEmpty() && inCell.getCount() >= inCell.getMaxStackSize()) {
+            // The cell is at ITS real (NBT-sensitive) cap — the shift-fill clamp upstream only
+            // knows the tag-less template's cap, so without this exit every further iteration
+            // would pull a real item just to bounce it off the grow guard below (churning it
+            // back to the inventory; from a chest, migrating it to the player).
+            return;
+        }
         InventoryPlayer inventory = player.inventory;
-        int slot = inventory.findSlotMatchingUnusedItem(ingredient);
+        int exactSlot = inventory.findSlotMatchingUnusedItem(template);
+        int slot = exactSlot;
+        if (slot != -1 && ingredient != null && !ingredient.apply(inventory.getStackInSlot(slot))) {
+            // Tag-exact hits are all tag-less copies of the template, so if one fails the
+            // Ingredient every one would: prefer the NBT-recovery scan.
+            slot = -1;
+        }
+        if (slot == -1) {
+            slot = findSlotMatchingIngredient(inventory, template, ingredient);
+        }
         ItemStack taken;
         if (slot != -1) {
-            taken = inventory.getStackInSlot(slot).copy();
-            if (taken.isEmpty()) {
-                return;
-            }
-            if (taken.getCount() > 1) {
-                inventory.decrStackSize(slot, 1);
-            } else {
-                inventory.removeStackFromSlot(slot);
-            }
+            taken = takeOneFromInventory(inventory, slot);
         } else {
-            taken = takeOneFromStationChest(player, ingredient);
-            if (taken.isEmpty()) {
-                return;
+            taken = takeOneFromStationChest(player, template, ingredient, false);
+            boolean legacyOk = ingredient == null || ingredient.isSimple();
+            if (taken.isEmpty() && exactSlot != -1 && legacyOk) {
+                taken = takeOneFromInventory(inventory, exactSlot);
             }
+            if (taken.isEmpty() && legacyOk) {
+                taken = takeOneFromStationChest(player, template, ingredient, true);
+            }
+        }
+        if (taken.isEmpty()) {
+            return;
         }
         taken.setCount(1);
         if (cell.getStack().isEmpty()) {
             cell.putStack(taken);
-        } else if (CraftExecutor.sameItem(cell.getStack(), taken)) {
+        } else if (CraftExecutor.sameItem(cell.getStack(), taken)
+                && cell.getStack().getCount() < taken.getMaxStackSize()) {
+            // The max-stack gate uses the REAL pulled stack: the shift-fill clamp upstream sized
+            // the transfer from the tag-less template, and a stack-limit that depends on NBT
+            // (filled container reporting 1 where the empty item reports 64) would otherwise
+            // overstack the cell here.
             cell.getStack().grow(1);
         } else {
             // Defense-in-depth: a pull that doesn't match the cell must never be credited as the
             // cell's item (that IS the transmutation dupe). Give it back instead of growing.
             CraftExecutor.insertIntoMainInventory(player, taken);
         }
+    }
+
+    /** Removes and returns one item from the given main-inventory slot (EMPTY if the slot is). */
+    private static ItemStack takeOneFromInventory(InventoryPlayer inventory, int slot) {
+        ItemStack taken = inventory.getStackInSlot(slot).copy();
+        if (taken.isEmpty()) {
+            return ItemStack.EMPTY;
+        }
+        if (taken.getCount() > 1) {
+            inventory.decrStackSize(slot, 1);
+        } else {
+            inventory.removeStackFromSlot(slot);
+        }
+        return taken;
+    }
+
+    /**
+     * NBT-recovery counterpart of {@code findSlotMatchingUnusedItem}: a main-inventory slot whose
+     * stack passes the same unused-item filters the counting applied (damaged/enchanted/renamed
+     * stacks were never counted, so they must never be pulled) and satisfies the recipe's own
+     * {@link Ingredient} — the NBT-aware test the tag-stripped template cannot express. Prefers
+     * the authorized (item, meta) identity, then falls back to any Ingredient-accepted stack (the
+     * cross-identity repair for the picker's apply-blind cell assignment). Null ingredient
+     * (defensive: a recipe whose ingredient list disagrees with vanilla's packed-list contract)
+     * recovers nothing.
+     */
+    private static int findSlotMatchingIngredient(InventoryPlayer inventory, ItemStack template,
+                                                  Ingredient ingredient) {
+        if (ingredient == null) {
+            return -1;
+        }
+        for (int pass = 0; pass < 2; pass++) {
+            boolean sameIdentity = pass == 0;
+            for (int i = 0; i < inventory.mainInventory.size(); i++) {
+                ItemStack stack = inventory.mainInventory.get(i);
+                if (stack.isEmpty()
+                        || !CraftExecutor.usableAsIngredient(stack)
+                        || !ingredient.apply(stack)) {
+                    continue;
+                }
+                if (sameIdentity
+                        && (stack.getItem() != template.getItem()
+                            || (stack.getHasSubtypes()
+                                && stack.getMetadata() != template.getMetadata()))) {
+                    continue;
+                }
+                return i;
+            }
+        }
+        return -1;
     }
 
     /**
@@ -357,21 +471,56 @@ public final class ServerGridPlacer {
     /**
      * Chest counterpart of {@code findSlotMatchingUnusedItem}, using vanilla's ACTUAL predicate
      * ({@code stackEqualExact}): item, metadata for subtyped items, and NBT-tag equality against
-     * the unpacked ingredient, plus the unused-item filters. Meta-exactness is load-bearing, not
+     * the unpacked template, plus the unused-item filters. Meta-exactness is load-bearing, not
      * pedantry — the counting that authorized this pull ({@code RecipeItemHelper}) is meta-aware,
      * so an item-only scan could consume a same-item-different-meta stack (ink sac for lapis; the
      * review demonstrated a repeatable transmutation dupe through the grow path below). Consumes
      * through {@link Slot#decrStackSize} so a station's item-handler write-through applies;
      * deposits still only ever go to the player.
+     *
+     * <p>Carries the same NBT-recovery tiers as the inventory pull. With {@code legacyFallback}
+     * false: pass one is the tag-exact vanilla predicate, Ingredient-gated so an empty bucket
+     * never stands in for a filled one; pass two accepts any authorized (item, meta) stack the
+     * recipe's {@link Ingredient} itself accepts (what lets a fluid-in-NBT bucket be pulled at
+     * all); pass three accepts ANY Ingredient-accepted stack (the cross-identity repair for the
+     * picker's apply-blind cell assignment). With {@code legacyFallback} true (the caller's last
+     * resort, simple ingredients only): the pre-recovery tag-exact predicate with no Ingredient
+     * gate, for recipes that match more leniently than their declared Ingredients.
      */
-    private static ItemStack takeOneFromStationChest(EntityPlayerMP player, ItemStack ingredient) {
-        for (Slot slot : ExternalSlots.of(player)) {
-            ItemStack inSlot = slot.getStack();
-            if (!inSlot.isEmpty()
-                    && inSlot.getItem() == ingredient.getItem()
-                    && (!inSlot.getHasSubtypes() || inSlot.getMetadata() == ingredient.getMetadata())
-                    && ItemStack.areItemStackTagsEqual(inSlot, ingredient)
-                    && CraftExecutor.usableAsIngredient(inSlot)) {
+    private static ItemStack takeOneFromStationChest(EntityPlayerMP player, ItemStack template,
+                                                     Ingredient ingredient, boolean legacyFallback) {
+        if (legacyFallback && ingredient == null) {
+            // Without an Ingredient there was no gate to relax: the non-legacy exact pass
+            // already covered this predicate.
+            return ItemStack.EMPTY;
+        }
+        for (int pass = 0; pass < (legacyFallback ? 1 : 3); pass++) {
+            boolean exact = pass == 0;
+            boolean sameIdentity = pass <= 1;
+            if (!exact && ingredient == null) {
+                break;
+            }
+            for (Slot slot : ExternalSlots.of(player)) {
+                ItemStack inSlot = slot.getStack();
+                if (inSlot.isEmpty() || !CraftExecutor.usableAsIngredient(inSlot)) {
+                    continue;
+                }
+                if (sameIdentity
+                        && (inSlot.getItem() != template.getItem()
+                            || (inSlot.getHasSubtypes()
+                                && inSlot.getMetadata() != template.getMetadata()))) {
+                    continue;
+                }
+                if (exact) {
+                    if (!ItemStack.areItemStackTagsEqual(inSlot, template)) {
+                        continue;
+                    }
+                    if (!legacyFallback && ingredient != null && !ingredient.apply(inSlot)) {
+                        continue;
+                    }
+                } else if (!ingredient.apply(inSlot)) {
+                    continue;
+                }
                 ItemStack taken = inSlot.copy();
                 slot.decrStackSize(1);
                 return taken;

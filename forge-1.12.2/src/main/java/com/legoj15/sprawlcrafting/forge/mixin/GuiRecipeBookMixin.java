@@ -8,6 +8,7 @@ import com.legoj15.sprawlcrafting.forge.SprawlConfig;
 import com.legoj15.sprawlcrafting.forge.client.ClientPlanCache;
 import com.legoj15.sprawlcrafting.forge.client.DeferredClickState;
 import com.legoj15.sprawlcrafting.forge.client.GuiMissingResources;
+import com.legoj15.sprawlcrafting.forge.client.ServerPresence;
 import com.legoj15.sprawlcrafting.forge.craft.CraftExecutor;
 import com.legoj15.sprawlcrafting.forge.craft.CraftJob;
 import com.legoj15.sprawlcrafting.forge.craft.CraftPlanner;
@@ -30,7 +31,9 @@ import net.minecraft.util.ResourceLocation;
  *   <li><b>Deferred</b> (yellow): two-click — the first click arms the recipe and shows a plan
  *       preview ({@link DeferredClickState}); the second click confirms and starts it.</li>
  *   <li><b>Unsolvable</b> (red): opens the {@link GuiMissingResources} gather screen for it.</li>
- *   <li><b>Direct</b> (white): falls through to vanilla (lay the recipe into the grid).</li>
+ *   <li><b>Direct</b> (white): laid into the grid by the mod's server-side placer when the
+ *       server runs the mod (NBT- and station-chest-capable); vanilla placement on modless
+ *       servers.</li>
  * </ul>
  * Both injectors are guarded so they can never throw from the click/render path, and carry
  * {@code require = 0} so a mapping mismatch degrades to vanilla rather than crashing.
@@ -79,11 +82,19 @@ public class GuiRecipeBookMixin {
                     mc.displayGuiScreen(new GuiMissingResources(shortfall, mc.currentScreen));
                     return;
                 }
-                // DIRECT (white): normally falls through to vanilla placement. But if it is direct
-                // only thanks to an open station's connected chest (not satisfiable from the player's
-                // own 36 slots), route it through the engine — vanilla placement fills from the
-                // player inventory alone and would not pull the chest items. Plain player-direct
-                // recipes still fall through, so non-station behaviour is unchanged.
+                // DIRECT (white): when the server runs the mod, place through the server-side
+                // placer — identical vanilla recipe-book semantics, but it can also pull
+                // NBT-carrying ingredients (filled buckets, which vanilla's tag-stripped unpack
+                // can never retrieve) and the open station's bound chest. Same path the JEI "+"
+                // uses, so the two entry points cannot disagree.
+                if (ServerPresence.active()) {
+                    DeferredClickState.disarm();
+                    SprawlNetwork.placeRecipe(id, windowId, shift);
+                    return;
+                }
+                // Modless server: vanilla placement fills from the player inventory alone, so a
+                // recipe that is direct only thanks to an open station's connected chest is routed
+                // through the engine instead. Plain player-direct recipes fall through to vanilla.
                 if (ExternalSlots.present(player)
                         && !CraftExecutor.canCraftFromPlayerInventory(player, recipe)) {
                     DeferredClickState.disarm();

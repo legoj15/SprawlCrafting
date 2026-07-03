@@ -28,7 +28,9 @@ import java.util.function.UnaryOperator;
  *   <li>Stock first: items already (virtually) in the inventory satisfy a slot before any
  *       sub-craft is planned.</li>
  *   <li>Each ingredient slot lists its acceptable alternatives in preference order; the
- *       first alternative in stock wins, then the first alternative that can be crafted.</li>
+ *       first alternative in stock wins, then the first alternative that can be crafted. An
+ *       alternative satisfiable only by a specific NBT (a lava-filled bucket) is matchable from
+ *       stock but not craftable — see {@link RecipeInfo#craftableIngredientSlots()}.</li>
  *   <li>Candidate recipes for a missing item are tried in the order supplied by
  *       {@code producers}; the first whose own tree resolves wins (deterministic).</li>
  *   <li>Cycles (iron ingot ⇄ iron block) are broken by refusing to sub-craft an item that
@@ -57,6 +59,23 @@ public final class RecipeGraphSolver<R, K> {
          * Vanilla crafting consumes exactly one item per slot.
          */
         List<List<K>> ingredientSlots();
+
+        /**
+         * Per slot (aligned 1:1 with {@link #ingredientSlots()}), the subset of alternatives that
+         * can be obtained by CRAFTING one — i.e. a freshly crafted, identity-bare item would
+         * actually satisfy the slot. Defaults to the full alternative set, correct whenever item
+         * identity fully determines acceptance.
+         *
+         * <p>An adapter overrides this only when identity is coarser than acceptance. On 1.12.2 a
+         * fluid-in-NBT bucket ingredient (Forge/More Buckets, whose lava lives in stack NBT) lists
+         * every bucket item as an alternative so a filled one in the inventory matches — but a
+         * crafted bucket comes out empty and the ingredient rejects it, so those alternatives are
+         * excluded here: usable-if-held, never manufactured. Inventory matching still uses the full
+         * {@link #ingredientSlots()}; only the sub-craft decision consults this subset.
+         */
+        default List<List<K>> craftableIngredientSlots() {
+            return ingredientSlots();
+        }
 
         K result();
 
@@ -225,11 +244,16 @@ public final class RecipeGraphSolver<R, K> {
                 return false;
             }
             List<K> pendingRemainders = new ArrayList<>();
-            for (List<K> slot : recipe.ingredientSlots()) {
+            List<List<K>> slots = recipe.ingredientSlots();
+            List<List<K>> craftableSlots = recipe.craftableIngredientSlots();
+            for (int s = 0; s < slots.size(); s++) {
+                List<K> slot = slots.get(s);
                 if (slot.isEmpty()) {
                     continue;
                 }
-                if (!satisfySlot(slot, inv, steps, crafting, depth, pendingRemainders)) {
+                // Aligned 1:1 by contract; fall back to the full slot if an adapter under-supplies.
+                List<K> craftable = s < craftableSlots.size() ? craftableSlots.get(s) : slot;
+                if (!satisfySlot(slot, craftable, inv, steps, crafting, depth, pendingRemainders)) {
                     missing.add(slot.get(0));
                     return false;
                 }
@@ -244,6 +268,7 @@ public final class RecipeGraphSolver<R, K> {
         }
 
         private boolean satisfySlot(List<K> alternatives,
+                                    List<K> craftableAlternatives,
                                     Map<K, Integer> inv,
                                     List<PlannedStep<R>> steps,
                                     Set<K> crafting,
@@ -255,7 +280,10 @@ public final class RecipeGraphSolver<R, K> {
                     return true;
                 }
             }
-            for (K item : alternatives) {
+            // Only craft an alternative whose crafted (bare) form would actually satisfy the slot:
+            // a filled-bucket alternative is matchable from stock above but never manufactured here
+            // (crafting the bucket yields it empty, which the ingredient rejects).
+            for (K item : craftableAlternatives) {
                 if (crafting.contains(item) || attemptsLeft <= 0) {
                     continue;
                 }

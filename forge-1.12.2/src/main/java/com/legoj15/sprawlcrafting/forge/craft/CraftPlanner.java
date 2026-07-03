@@ -402,16 +402,19 @@ public final class CraftPlanner {
     static final class McRecipe implements RecipeGraphSolver.RecipeInfo<ResourceLocation, ItemKey> {
         final ResourceLocation id;
         final List<List<ItemKey>> ingredientSlots;
+        final List<List<ItemKey>> craftableIngredientSlots;
         final ItemKey result;
         final int resultCount;
         final ItemStack resultStack;
         final boolean fits2x2;
         final boolean fits3x3;
 
-        private McRecipe(ResourceLocation id, List<List<ItemKey>> ingredientSlots, ItemKey result,
+        private McRecipe(ResourceLocation id, List<List<ItemKey>> ingredientSlots,
+                         List<List<ItemKey>> craftableIngredientSlots, ItemKey result,
                          int resultCount, ItemStack resultStack, boolean fits2x2, boolean fits3x3) {
             this.id = id;
             this.ingredientSlots = ingredientSlots;
+            this.craftableIngredientSlots = craftableIngredientSlots;
             this.result = result;
             this.resultCount = resultCount;
             this.resultStack = resultStack;
@@ -431,6 +434,11 @@ public final class CraftPlanner {
         @Override
         public List<List<ItemKey>> ingredientSlots() {
             return ingredientSlots;
+        }
+
+        @Override
+        public List<List<ItemKey>> craftableIngredientSlots() {
+            return craftableIngredientSlots;
         }
 
         @Override
@@ -460,12 +468,14 @@ public final class CraftPlanner {
                 return null;
             }
             List<List<ItemKey>> slots = new ArrayList<List<ItemKey>>();
+            List<List<ItemKey>> craftableSlots = new ArrayList<List<ItemKey>>();
             for (Ingredient ingredient : ingredients) {
                 if (ingredient == Ingredient.EMPTY) {
                     continue; // blank cell in a shaped recipe's grid
                 }
                 ItemStack[] matching = ingredient.getMatchingStacks();
                 List<ItemKey> alternatives = new ArrayList<ItemKey>();
+                List<ItemKey> craftable = new ArrayList<ItemKey>();
                 for (ItemStack option : matching) {
                     if (option.isEmpty()) {
                         continue;
@@ -473,18 +483,38 @@ public final class CraftPlanner {
                     ItemKey key = ItemKey.of(option);
                     if (!alternatives.contains(key)) {
                         alternatives.add(key);
+                        // Craft-eligible only if a bare crafted item of this (Item, meta) identity
+                        // would itself satisfy the ingredient. For a fluid-in-NBT bucket (More
+                        // Buckets / Forge universal bucket) the bare form is an empty bucket the
+                        // ingredient rejects, so it stays inventory-only: usable if the player holds
+                        // a filled one, never manufactured. NBT-blind ingredients accept the bare
+                        // form, so normal alternatives remain fully craftable.
+                        //
+                        // Deliberate tradeoff: this also excludes the (rare) case of an NBT-aware
+                        // ingredient whose required item is CRAFTED already carrying that NBT — the
+                        // solver would refuse to sub-craft it. That case can't regress a working
+                        // recipe here: the solver is NBT-blind, so it could only ever have planned
+                        // such a chain when the producer happened to yield the accepted NBT, and the
+                        // executor re-checks Ingredient#apply on the real crafted stack anyway. No
+                        // crafting-table recipe adds fluid to a bucket, so buckets are never a false
+                        // exclusion. Revisit only if a pack needs the solver to craft an NBT-gated
+                        // intermediate (would want per-producer output validation, not this filter).
+                        if (ingredient.apply(key.toStack())) {
+                            craftable.add(key);
+                        }
                     }
                 }
                 if (alternatives.isEmpty()) {
                     return null; // a real ingredient that resolves to nothing (e.g. empty oredict)
                 }
                 slots.add(alternatives);
+                craftableSlots.add(craftable);
             }
             if (slots.isEmpty()) {
                 return null;
             }
-            return new McRecipe(id, slots, ItemKey.of(output), output.getCount(), output.copy(),
-                    recipe.canFit(2, 2), recipe.canFit(3, 3));
+            return new McRecipe(id, slots, craftableSlots, ItemKey.of(output), output.getCount(),
+                    output.copy(), recipe.canFit(2, 2), recipe.canFit(3, 3));
         }
     }
 }

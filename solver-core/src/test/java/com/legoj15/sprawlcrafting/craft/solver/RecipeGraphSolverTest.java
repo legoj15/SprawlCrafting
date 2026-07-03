@@ -24,12 +24,15 @@ class RecipeGraphSolverTest {
     private static final class TestRecipe implements RecipeInfo<String, String> {
         private final String id;
         private final List<List<String>> ingredientSlots;
+        private final List<List<String>> craftableIngredientSlots;
         private final String result;
         private final int resultCount;
 
-        TestRecipe(String id, List<List<String>> ingredientSlots, String result, int resultCount) {
+        TestRecipe(String id, List<List<String>> ingredientSlots,
+                   List<List<String>> craftableIngredientSlots, String result, int resultCount) {
             this.id = id;
             this.ingredientSlots = ingredientSlots;
+            this.craftableIngredientSlots = craftableIngredientSlots;
             this.result = result;
             this.resultCount = resultCount;
         }
@@ -45,6 +48,11 @@ class RecipeGraphSolverTest {
         }
 
         @Override
+        public List<List<String>> craftableIngredientSlots() {
+            return craftableIngredientSlots;
+        }
+
+        @Override
         public String result() {
             return result;
         }
@@ -55,11 +63,34 @@ class RecipeGraphSolverTest {
         }
 
         static TestRecipe of(String id, String result, int resultCount, String... slots) {
+            List<List<String>> parsed = parse(slots);
+            return new TestRecipe(id, parsed, parsed, result, resultCount);
+        }
+
+        /**
+         * Like {@link #of} but marks the given item identities as INVENTORY-ONLY: matchable from
+         * stock but never craftable (a filled bucket, whose crafted form would come out empty). The
+         * craftable subset excludes them, mirroring the 1.12.2 adapter's {@code ingredient.apply}
+         * filter, while the full alternative set (used for inventory matching) still includes them.
+         */
+        static TestRecipe ofInventoryOnly(String id, String result, int resultCount,
+                                          List<String> inventoryOnly, String... slots) {
+            List<List<String>> parsed = parse(slots);
+            List<List<String>> craftable = new ArrayList<>();
+            for (List<String> slot : parsed) {
+                List<String> filtered = new ArrayList<>(slot);
+                filtered.removeAll(inventoryOnly);
+                craftable.add(filtered);
+            }
+            return new TestRecipe(id, parsed, craftable, result, resultCount);
+        }
+
+        private static List<List<String>> parse(String... slots) {
             List<List<String>> parsed = new ArrayList<>();
             for (String slot : slots) {
                 parsed.add(Arrays.asList(slot.split("\\|")));
             }
-            return new TestRecipe(id, parsed, result, resultCount);
+            return parsed;
         }
     }
 
@@ -159,6 +190,58 @@ class RecipeGraphSolverTest {
         // No ore: the first producer fails, the second resolves.
         assertEquals(Arrays.asList(new PlannedStep<>("gem_from_dust", 1), new PlannedStep<>("ring", 1)),
                 solveOk(ring, inv("dust", 2)));
+    }
+
+    // --- craftable-subset: an inventory-only alternative must never be manufactured -------------
+    // (1.12.2 More Buckets: a fluid-in-NBT bucket slot lists every bucket for inventory matching,
+    //  but crafting a bucket yields it empty, which the ingredient rejects — so the solver must not
+    //  plan an empty-bucket sub-craft to fill a filled-bucket slot.)
+
+    @Test
+    void inventoryOnlyAlternativeIsNotSubCraftedEvenWhenItHasAProducer() {
+        // A recipe that "produces" lava_bucket exists (an empty bucket keyed the same, craftable
+        // from iron), and iron is in stock. Pre-fix the solver would craft the empty bucket to fill
+        // the crusher's lava slot; the fix forbids it because lava_bucket is inventory-only there.
+        recipes.add(TestRecipe.of("make_bucket", "lava_bucket", 1, "iron"));
+        TestRecipe crusher = TestRecipe.ofInventoryOnly("crusher", "crusher", 1,
+                Collections.singletonList("lava_bucket"), "lava_bucket");
+        assertInstanceOf(Result.Failure.class, solver().solve(crusher, inv("iron", 1)),
+                "a filled-bucket slot must not be satisfied by crafting an empty bucket");
+    }
+
+    @Test
+    void inventoryOnlyAlternativeIsStillUsedFromStock() {
+        // The other half: if the player actually holds the filled bucket, the plan uses it directly
+        // (a single step). Inventory matching must keep the full alternative set.
+        recipes.add(TestRecipe.of("make_bucket", "lava_bucket", 1, "iron"));
+        TestRecipe crusher = TestRecipe.ofInventoryOnly("crusher", "crusher", 1,
+                Collections.singletonList("lava_bucket"), "lava_bucket");
+        assertEquals(Arrays.asList(new PlannedStep<>("crusher", 1)),
+                solveOk(crusher, inv("lava_bucket", 1)));
+    }
+
+    @Test
+    void craftableAlternativeAlongsideAnInventoryOnlyOneIsStillCrafted() {
+        // A slot accepting a filled bucket OR a genuinely craftable item: with neither in stock, the
+        // craftable one is still made (the inventory-only exclusion is per-alternative, not per-slot).
+        recipes.add(TestRecipe.of("make_bucket", "lava_bucket", 1, "iron"));
+        recipes.add(TestRecipe.of("planks", "planks", 4, "log"));
+        TestRecipe thing = TestRecipe.ofInventoryOnly("thing", "thing", 1,
+                Collections.singletonList("lava_bucket"), "lava_bucket|planks");
+        assertEquals(Arrays.asList(new PlannedStep<>("planks", 1), new PlannedStep<>("thing", 1)),
+                solveOk(thing, inv("log", 1)));
+    }
+
+    @Test
+    void heldInventoryOnlyAlternativeIsUsedBeforeCraftingASibling() {
+        // Same mixed slot, but the held item IS the inventory-only alternative: it must be consumed
+        // from stock (single step), never bypassed to craft the sibling — inventory matching runs
+        // over the FULL alternative set before any sub-craft is considered.
+        recipes.add(TestRecipe.of("planks", "planks", 4, "log"));
+        TestRecipe thing = TestRecipe.ofInventoryOnly("thing", "thing", 1,
+                Collections.singletonList("lava_bucket"), "lava_bucket|planks");
+        assertEquals(Arrays.asList(new PlannedStep<>("thing", 1)),
+                solveOk(thing, inv("lava_bucket", 1, "log", 1)));
     }
 
     @Test

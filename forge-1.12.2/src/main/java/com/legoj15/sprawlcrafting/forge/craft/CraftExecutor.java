@@ -7,6 +7,8 @@ import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraft.entity.player.InventoryPlayer;
 import net.minecraft.inventory.Container;
+import net.minecraft.inventory.IInventory;
+import net.minecraft.inventory.InventoryCrafting;
 import net.minecraft.inventory.Slot;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
@@ -14,6 +16,7 @@ import net.minecraft.item.crafting.CraftingManager;
 import net.minecraft.item.crafting.IRecipe;
 import net.minecraft.item.crafting.Ingredient;
 import net.minecraft.util.ResourceLocation;
+import net.minecraftforge.common.crafting.IShapedRecipe;
 
 /**
  * Performs a single craft of a recipe directly against a player's live inventory: consumes one
@@ -86,10 +89,6 @@ public final class CraftExecutor {
         if (recipe == null) {
             return new CraftResult.RecipeGone();
         }
-        ItemStack result = recipe.getRecipeOutput();
-        if (result.isEmpty()) {
-            return new CraftResult.RecipeGone();
-        }
 
         // The pool this craft may draw from: the 36 main slots, then any connected station
         // inventory exposed by the open container. Rebuilt each craft so it tracks the live chest
@@ -98,11 +97,16 @@ public final class CraftExecutor {
         List<Source> sources = buildSources(player, inventory);
 
         // Phase 1: match every ingredient slot to a source without mutating, so a shortfall
-        // discovered at slot N leaves earlier matches — and the chest — untouched.
-        List<Integer> chosen = new ArrayList<Integer>();
+        // discovered at slot N leaves earlier matches — and the chest — untouched. chosen keeps
+        // one entry per ingredient slot (-1 for a gap in the shape) so the simulation below can
+        // reconstruct the grid positions.
+        List<Ingredient> ingredients = recipe.getIngredients();
+        int[] chosen = new int[ingredients.size()];
         int[] reserved = new int[sources.size()];
-        for (Ingredient ingredient : recipe.getIngredients()) {
+        for (int i = 0; i < ingredients.size(); i++) {
+            Ingredient ingredient = ingredients.get(i);
             if (ingredient == Ingredient.EMPTY) {
+                chosen[i] = -1;
                 continue;
             }
             int idx = findMatchingSource(sources, ingredient, reserved);
@@ -110,13 +114,25 @@ public final class CraftExecutor {
                 return new CraftResult.MissingIngredient(describe(ingredient));
             }
             reserved[idx]++;
-            chosen.add(idx);
+            chosen[i] = idx;
+        }
+
+        // What this craft actually produces, asked of the recipe with the exact stacks about to
+        // be consumed: getRecipeOutput() alone is NBT-less for input-dependent outputs and, per
+        // its contract, empty for dynamic recipes — which the old early-exit misreported as
+        // RecipeGone before the ingredients were even checked.
+        ItemStack result = computeResult(recipe, sources, chosen);
+        if (result.isEmpty()) {
+            return new CraftResult.RecipeGone();
         }
 
         // Phase 2: apply — consume, collect remainders, insert the result into the player only.
         List<ItemStack> remainders = new ArrayList<ItemStack>();
         boolean touchedExternal = false;
         for (int idx : chosen) {
+            if (idx < 0) {
+                continue;
+            }
             Source source = sources.get(idx);
             ItemStack stack = source.peek();
             Item item = stack.getItem();
@@ -133,7 +149,7 @@ public final class CraftExecutor {
             insertIntoMainInventory(player, remainder);
         }
         ItemStack crafted = result.copy();
-        insertIntoMainInventory(player, result.copy());
+        insertIntoMainInventory(player, result);
         inventory.markDirty();
         if (touchedExternal) {
             // Push the depleted chest back to any open station GUI viewing it (the same sync
@@ -142,6 +158,74 @@ public final class CraftExecutor {
         }
         return new CraftResult.Success(crafted);
     }
+
+    /**
+     * The stack this craft produces, always a private copy safe to mutate. Asks
+     * {@link IRecipe#getCraftingResult} against a simulated grid holding the exact stacks phase 1
+     * matched, so outputs derived from the inputs (NBT-copying recipes, recipes returning filled
+     * containers) come out right; {@link IRecipe#getRecipeOutput} is only the fallback, for
+     * recipes whose declared shape doesn't fit a simulated grid.
+     */
+    private static ItemStack computeResult(IRecipe recipe, List<Source> sources, int[] chosen) {
+        ItemStack simulated = resultFromSimulatedGrid(recipe, sources, chosen);
+        return simulated.isEmpty() ? recipe.getRecipeOutput().copy() : simulated;
+    }
+
+    /**
+     * Builds the crafting grid this consumption is equivalent to — one copy of each matched stack,
+     * a shaped recipe's ingredients anchored top-left exactly as {@code ShapedRecipes.checkMatch}
+     * reads them, shapeless laid out row-major — and asks the recipe for its result. The grid is
+     * never smaller than 3x3 so recipe classes written against a real crafting table see the
+     * geometry they expect. Empty on any failure: the caller falls back to the declared output,
+     * which is exactly the pre-simulation behavior.
+     */
+    private static ItemStack resultFromSimulatedGrid(IRecipe recipe, List<Source> sources, int[] chosen) {
+        int recipeWidth;
+        if (recipe instanceof IShapedRecipe) {
+            recipeWidth = ((IShapedRecipe) recipe).getRecipeWidth();
+            int recipeHeight = ((IShapedRecipe) recipe).getRecipeHeight();
+            if (recipeWidth <= 0 || recipeHeight <= 0 || recipeWidth * recipeHeight < chosen.length) {
+                return ItemStack.EMPTY;
+            }
+        } else {
+            recipeWidth = 3;
+        }
+        int width = Math.max(3, recipeWidth);
+        int height = Math.max(3, (chosen.length + recipeWidth - 1) / recipeWidth);
+        InventoryCrafting grid = new InventoryCrafting(SIMULATION_CONTAINER, width, height);
+        for (int i = 0; i < chosen.length; i++) {
+            if (chosen[i] < 0) {
+                continue;
+            }
+            ItemStack one = sources.get(chosen[i]).peek().copy();
+            one.setCount(1);
+            grid.setInventorySlotContents((i / recipeWidth) * width + (i % recipeWidth), one);
+        }
+        try {
+            ItemStack result = recipe.getCraftingResult(grid);
+            return result.isEmpty() ? ItemStack.EMPTY : result.copy();
+        } catch (RuntimeException e) {
+            // A modded recipe choked on a grid it never expected to see outside its own
+            // container; a wrong-but-present output beats crashing the craft tick.
+            return ItemStack.EMPTY;
+        }
+    }
+
+    /**
+     * {@link InventoryCrafting} notifies its owning container on every slot write; the simulated
+     * grid has no real container, so the notification is swallowed (the base implementation would
+     * attempt a client sync of a container nobody is viewing).
+     */
+    private static final Container SIMULATION_CONTAINER = new Container() {
+        @Override
+        public boolean canInteractWith(EntityPlayer player) {
+            return false;
+        }
+
+        @Override
+        public void onCraftMatrixChanged(IInventory inventory) {
+        }
+    };
 
     /**
      * Non-mutating: whether {@code recipe} can be crafted once from the player's 36 main slots
