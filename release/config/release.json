@@ -38,6 +38,6 @@
     "cfLoaderName": "Forge",
     "java": "8",
     "buildTask": "reobfJar",
-    "javaHome": ""
+    "javaHome": "C:\\Program Files\\Java\\jdk-25.0.2+10"
   }
 }
