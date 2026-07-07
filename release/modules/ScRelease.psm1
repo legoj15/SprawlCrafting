@@ -586,7 +586,7 @@ function Invoke-ScCurseForgeUpload {
         [Parameter(Mandatory)][string]$McVersion, [Parameter(Mandatory)][string]$LoaderName,
         [Parameter(Mandatory)][string]$Jar,
         [string[]]$ExtraGameVersions = @(), [string[]]$Environments = @(), [string]$JavaVersion,
-        [switch]$IncludeJei, [switch]$Execute
+        [switch]$IncludeJei, [switch]$IncludeMixinBooter, [switch]$Execute
     )
     $metaObj = [ordered]@{
         changelog     = $Changelog
@@ -594,9 +594,17 @@ function Invoke-ScCurseForgeUpload {
         displayName   = $Title
         releaseType   = $ReleaseType
     }
+    # Relations: JEI is an OPTIONAL integration dep; MixinBooter is a REQUIRED dep for the 1.12.2 Forge jar
+    # (the client hard-stops without it — see forge-1.12.2 ClientProxy.requireMixinBooter). Only the legacy
+    # node passes -IncludeMixinBooter, so modern jars never advertise it.
+    $relations = @()
     if ($IncludeJei -and (Get-ScProp $Config.curseforge 'jeiSlug')) {
-        $metaObj.relations = @{ projects = @(@{ slug = $Config.curseforge.jeiSlug; type = 'optionalDependency' }) }
+        $relations += @{ slug = $Config.curseforge.jeiSlug; type = 'optionalDependency' }
     }
+    if ($IncludeMixinBooter -and (Get-ScProp $Config.curseforge 'mixinBooterSlug')) {
+        $relations += @{ slug = $Config.curseforge.mixinBooterSlug; type = 'requiredDependency' }
+    }
+    if ($relations.Count) { $metaObj.relations = @{ projects = @($relations) } }
     # The Java toolchain version (e.g. "25") becomes CF's tier NAME "Java 25" — capital J, one space, bare major.
     $javaName = if ($JavaVersion) { "Java $JavaVersion" } else { $null }
 
@@ -641,12 +649,17 @@ function Invoke-ScModrinthUpload {
         [Parameter(Mandatory)][string]$VersionNumber, [Parameter(Mandatory)][string]$Changelog,
         [Parameter(Mandatory)][string]$VersionType, [Parameter(Mandatory)][string[]]$GameVersions,
         [Parameter(Mandatory)][string]$Loader, [Parameter(Mandatory)][string]$Jar,
-        [switch]$IncludeJei, [switch]$Featured,
+        [switch]$IncludeJei, [switch]$IncludeMixinBooter, [switch]$Featured,
         [string]$ApiBase = 'https://api.modrinth.com', [switch]$Execute
     )
+    # JEI = optional integration dep; MixinBooter = required dep for the 1.12.2 Forge jar only (client
+    # hard-stops without it). Only the legacy node passes -IncludeMixinBooter.
     $deps = @()
     if ($IncludeJei -and (Get-ScProp $Config.modrinth 'jeiProjectId')) {
         $deps += @{ project_id = $Config.modrinth.jeiProjectId; version_id = $null; file_name = $null; dependency_type = 'optional' }
+    }
+    if ($IncludeMixinBooter -and (Get-ScProp $Config.modrinth 'mixinBooterProjectId')) {
+        $deps += @{ project_id = $Config.modrinth.mixinBooterProjectId; version_id = $null; file_name = $null; dependency_type = 'required' }
     }
     $dataObj = [ordered]@{
         name           = $Title

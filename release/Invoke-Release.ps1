@@ -194,7 +194,7 @@ if (Want 'Modrinth') {
             $gvs = Get-ScProp $cfg.storeGameVersionsByMc $n.McVersion @($n.McVersion)
             Invoke-ScModrinthUpload -Config $cfg -Title (Get-ScStoreTitle $split $n.McVersion $n.LoaderDisplay) `
                 -VersionNumber "$ver+mc$($n.McVersion)-$($n.MrLoader)" -Changelog $cl -VersionType $chan.Modrinth `
-                -GameVersions @($gvs) -Loader $n.MrLoader -Jar $jarMap[$n.Node] -IncludeJei -Featured:$n.IsFeatured `
+                -GameVersions @($gvs) -Loader $n.MrLoader -Jar $jarMap[$n.Node] -IncludeJei -IncludeMixinBooter:$n.IsLegacy -Featured:$n.IsFeatured `
                 -ApiBase $apiBase -Execute:($Execute -and $mrEnabled)
         }
     }
@@ -218,7 +218,7 @@ if (Want 'CurseForge') {
             Invoke-ScCurseForgeUpload -Config $cfg -Title (Get-ScStoreTitle $split $n.McVersion $n.LoaderDisplay) `
                 -Changelog $cl -ReleaseType $chan.CurseForge -McVersion $n.McVersion -LoaderName $n.CfLoaderName `
                 -Jar $jarMap[$n.Node] -ExtraGameVersions $extra -Environments $cfEnvs -JavaVersion $javaArg `
-                -IncludeJei -Execute:($Execute -and $cfEnabled)
+                -IncludeJei -IncludeMixinBooter:$n.IsLegacy -Execute:($Execute -and $cfEnabled)
         }
     }
 }

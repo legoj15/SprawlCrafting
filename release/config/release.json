@@ -7,6 +7,7 @@
     "projectId": "ILhtnhcE",
     "projectSlug": "sprawlcrafting",
     "jeiProjectId": "u6dRKJwZ",
+    "mixinBooterProjectId": "G1ckZuWK",
     "userAgent": "legoj15/SprawlCrafting-release/1.0 (legoj15@yahoo.com)",
     "tokenEnvVar": "MODRINTH_TOKEN"
   },
@@ -15,6 +16,7 @@
     "projectId": "1575622",
     "projectSlug": "sprawlcrafting",
     "jeiSlug": "jei",
+    "mixinBooterSlug": "mixinbooter",
     "environments": ["Client", "Server"],
     "tagJavaVersion": true,
     "tokenEnvVar": "CURSEFORGE_TOKEN"
