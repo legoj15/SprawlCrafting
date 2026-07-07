@@ -5,6 +5,8 @@
 .DESCRIPTION
     Derives every title / tag / channel / changelog variant from gradle.properties + the per-node
     Stonecutter configs, then:
+      0. runs the full pre-release test suite (both JDK trees' unit tests + the boot/connect matrix) —
+         any failure aborts BEFORE a single publish action (skippable with -SkipTests),
       1. rewrites + validates + commits update.json (the in-game update manifest),
       2. creates ONE GitHub release (tag = version) with ALL node jars attached,
       3. uploads one Modrinth version per node (loader + MC version),
@@ -30,7 +32,10 @@
     (labelled), but -Execute skips it. GitHub works today via your existing `gh auth`.
 
 .PARAMETER Execute      Actually perform writes / commits / uploads. Omit for a dry run.
-.PARAMETER Only         Restrict to a subset of stages: Manifest, GitHub, Modrinth, CurseForge, PostFlight. Default: all.
+.PARAMETER Only         Restrict to a subset of stages: Test, Manifest, GitHub, Modrinth, CurseForge, PostFlight. Default: all.
+                        Resuming a partly-published release with -Only <remaining stages> skips Test automatically.
+.PARAMETER SkipTests    Bypass the pre-release test suite (stage 0). Publishes UNVERIFIED jars — warns loudly. To run
+                        ONLY the suite (verify without publishing anything), use -Only Test instead.
 .PARAMETER NextVersion  Override the post-flight version bump (required when releasing a final, suffix-less version).
 .PARAMETER Build        Build first: `./gradlew buildAndCollect` (six modern jars -> testing/dist/) plus the 1.12.2 Forge build (forge-1.12.2/build/libs/, host JDK 25 via legacyForge.javaHome).
 .PARAMETER ModrinthStaging  Target staging-api.modrinth.com for the Modrinth leg (see release/README.md caveat).
@@ -44,10 +49,11 @@
 [CmdletBinding()]
 param(
     [switch]$Execute,
-    [ValidateSet('Manifest','GitHub','Modrinth','CurseForge','PostFlight')]
+    [ValidateSet('Test','Manifest','GitHub','Modrinth','CurseForge','PostFlight')]
     [string[]]$Only,
     [string]$NextVersion,
     [switch]$Build,
+    [switch]$SkipTests,
     [switch]$ModrinthStaging
 )
 
@@ -82,6 +88,72 @@ Write-ScInfo "MC versions  : $($mcSet -join ', ')"
 Write-ScInfo "Stores       : Modrinth=$(if(Get-StoreEnabled $cfg.modrinth){'enabled'}else{'DISABLED'})  CurseForge=$(if(Get-StoreEnabled $cfg.curseforge){'enabled'}else{'DISABLED'})"
 Write-ScInfo "Mode         : $(if($Execute){'EXECUTE (live)'}else{'DRY RUN (no writes/uploads)'})"
 if (-not $Execute) { Write-ScWarn 'Dry run — pass -Execute to publish for real.' }
+
+# ── Changelog + tag validation (fast, fail-fast BEFORE the slow test suite) ──
+# Compute the release-notes body and validate {mc}-tags up front, so a changelog typo aborts in
+# seconds rather than after the ~30-min test suite. A tag must name a real MC version (a manifest
+# block or a shipping node); an unknown tag would silently drop the line everywhere but the verbatim
+# GitHub body.
+$body = Get-ScChangelogBody -RepoRoot $root
+if ([string]::IsNullOrWhiteSpace($body)) { Write-ScWarn 'changelog.md body is empty — release notes will be blank.' }
+$clSplit = Split-ScChangelogByVersion -Body $body
+$manifestPath = Join-Path $root 'update.json'
+$manifestBlocks = @()
+if (Test-Path $manifestPath) {
+    $manifestBlocks = @((Get-Content -Raw $manifestPath | ConvertFrom-Json).PSObject.Properties.Name |
+                        Where-Object { $_ -notin @('homepage','promos') })
+}
+Test-ScChangelogTags -ChangelogSplit $clSplit -KnownVersions (@($mcSet) + $manifestBlocks | Select-Object -Unique)
+
+# ── 0. Pre-release verification (gates the whole release) ─────────────────────
+# The full suite must pass before ANY publish. Two trees on two JDKs (modern needs 21; the legacy
+# 1.12.2 Forge build needs 25 — they can't share one Gradle host), so this stage orchestrates both:
+#   1. legacy Forge tree (JDK 25 via legacyForge.javaHome): unit tests + reobf jar — built FIRST so the
+#      boot matrix's 1.12.2-forge leg finds the jar it stages;
+#   2. modern tree (ambient JAVA_HOME = JDK 21): ./gradlew fullTestSuite = every node's unit tests (via
+#      buildAndCollect) + the production boot/connect matrix (auto-skips if the testing/ harness absent).
+# A non-zero exit anywhere aborts before the manifest is even rewritten. -SkipTests bypasses (ships
+# UNVERIFIED jars). Resuming with -Only <publish stages> omits Test, so a half-published release is not
+# re-gated on the slow suite.
+if ((Want 'Test') -and -not $SkipTests) {
+    Write-ScStep 'Pre-release verification (full test suite)'
+    if (-not $Execute) {
+        Write-ScDry 'would verify the legacy Forge tree (JDK 25): forge-1.12.2/gradlew.bat test reobfJar'
+        Write-ScDry 'would run the modern tree: ./gradlew fullTestSuite (unit tests via buildAndCollect + boot/connect matrix; matrix auto-skips if testing/ absent)'
+        Write-ScDry 'a non-zero exit from either would ABORT the release before any publish.'
+    } else {
+        # 1. Legacy Forge tree FIRST — its reobf jar feeds the matrix's 1.12.2-forge leg.
+        foreach ($ln in @($nodes | Where-Object { $_.IsLegacy })) {
+            $lnDir = Join-Path $root $ln.BuildDir
+            Write-ScStep "Verify legacy $($ln.McVersion) ($($ln.BuildDir)/gradlew test $($ln.BuildTask), JDK 25)"
+            if (-not $ln.JavaHome) {
+                Write-ScWarn "legacyForge.javaHome not set — using the current JAVA_HOME. RFG needs a JDK 25 host; set legacyForge.javaHome in release.json if this fails."
+            }
+            $savedJavaHome = $env:JAVA_HOME
+            Push-Location $lnDir
+            try {
+                if ($ln.JavaHome) { $env:JAVA_HOME = $ln.JavaHome }
+                & (Join-Path $lnDir 'gradlew.bat') 'test' $ln.BuildTask '--console=plain'
+                if ($LASTEXITCODE -ne 0) { throw "legacy $($ln.McVersion) verification FAILED (exit $LASTEXITCODE) — release aborted before any publish. Fix the tests, or pass -SkipTests to bypass (ships unverified jars)." }
+            } finally {
+                Pop-Location
+                $env:JAVA_HOME = $savedJavaHome
+            }
+            Write-ScOk "Legacy $($ln.McVersion) verified (unit tests + reobf jar)."
+        }
+        # 2. Modern tree: per-node unit tests (via buildAndCollect) + the boot/connect matrix.
+        Write-ScStep 'Verify modern tree (./gradlew fullTestSuite)'
+        Write-ScInfo 'unit tests (via buildAndCollect) + boot/connect matrix. The matrix opens real MC windows (Prism must be CLOSED, Server1 reachable) and is slow (~30 min).'
+        Push-Location $root
+        try {
+            & (Join-Path $root 'gradlew.bat') fullTestSuite '--console=plain'
+            if ($LASTEXITCODE -ne 0) { throw "fullTestSuite FAILED (exit $LASTEXITCODE) — release aborted before any publish. Fix the tests, or pass -SkipTests to bypass (ships unverified jars)." }
+        } finally { Pop-Location }
+        Write-ScOk 'Full test suite passed — RELEASE GATE: PASS.'
+    }
+} elseif ($SkipTests) {
+    Write-ScWarn 'Pre-release verification SKIPPED (-SkipTests) — shipping jars are UNVERIFIED by this run.'
+}
 
 # ── Optional build ───────────────────────────────────────────────────────────
 if ($Build) {
@@ -135,20 +207,6 @@ if ($jarInfo.Missing.Count) {
     Write-ScWarn "Missing $($jarInfo.Missing.Count) jar(s) (dry run continues; -Execute would fail):"
     foreach ($m in $jarInfo.Missing) { Write-ScWarn "  $m" }
 }
-
-$body = Get-ScChangelogBody -RepoRoot $root
-if ([string]::IsNullOrWhiteSpace($body)) { Write-ScWarn 'changelog.md body is empty — release notes will be blank.' }
-$clSplit = Split-ScChangelogByVersion -Body $body
-
-$manifestPath = Join-Path $root 'update.json'
-# {mc}-tags must name a real MC version (a manifest block or a shipping node) — a typo would silently
-# drop the line everywhere but GitHub. Validated up front so even a dry run catches it.
-$manifestBlocks = @()
-if (Test-Path $manifestPath) {
-    $manifestBlocks = @((Get-Content -Raw $manifestPath | ConvertFrom-Json).PSObject.Properties.Name |
-                        Where-Object { $_ -notin @('homepage','promos') })
-}
-Test-ScChangelogTags -ChangelogSplit $clSplit -KnownVersions (@($mcSet) + $manifestBlocks | Select-Object -Unique)
 
 # ── 1. Manifest (update.json) ────────────────────────────────────────────────
 if (Want 'Manifest') {

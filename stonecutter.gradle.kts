@@ -75,3 +75,43 @@ tasks.register<Copy>("buildAndCollect") {
         println("Mirrored at build/libs/$modVersion -> testing/dist")
     }
 }
+
+// ─── Production boot+connect matrix (PowerShell) ─────────────────────────────
+// Registered on the ROOT so it runs the cross-version matrix exactly ONCE. The harness under testing/
+// is machine-specific and gitignored, so this stage SELF-SKIPS when the script is absent (e.g. a
+// third-party clone) instead of failing.
+val releaseMatrixScript = rootProject.file("testing/Invoke-ReleaseTests.ps1")
+tasks.register<Exec>("runReleaseMatrix") {
+    group = "verification"
+    description = "Production boot+connect matrix (testing/Invoke-ReleaseTests.ps1, PowerShell 7). Skipped if the harness isn't checked out."
+    workingDir = rootProject.projectDir
+    // -SkipBuild: fullTestSuite already ran buildAndCollect (fresh +mc jars), so the harness must NOT
+    // start a nested `gradlew buildAndCollect` inside this running build — it would deadlock on the
+    // project lock. The matrix still wipes each server's mods/ and copies the fresh jar every run.
+    // NOTE: the matrix's 1.12.2-forge leg stages the reobf Forge jar, which is built by the SEPARATE
+    // forge-1.12.2 build (host JDK 25) that Gradle here can't reach — the release script's Test stage
+    // builds it first. Run standalone: build it yourself (forge-1.12.2> gradlew reobfJar) beforehand.
+    commandLine("pwsh", "-NoProfile", "-File", releaseMatrixScript.absolutePath, "-SkipBuild")
+    // Build fresh jars before the matrix stages them (only orders when both are in the graph).
+    mustRunAfter("buildAndCollect")
+    onlyIf {
+        val present = releaseMatrixScript.exists()
+        if (!present) logger.lifecycle("runReleaseMatrix: testing/Invoke-ReleaseTests.ps1 not present — skipping the production boot+connect stage.")
+        present
+    }
+}
+
+// ─── Full pre-release verification (modern tree) ─────────────────────────────
+// One command for the modern tree: every node's unit tests (run by buildAndCollect's per-node build)
+// + the production boot+connect matrix. buildAndCollect is listed here (not left to the script) so the
+// OUTER Gradle builds the fresh jars — the matrix then runs with -SkipBuild and never starts a nested
+// buildAndCollect that would deadlock on this build's project lock.
+// NOTE: the legacy 1.12.2 Forge jar + its solver tests live in the SEPARATE forge-1.12.2 build (host
+// JDK 25); Gradle can't span both JDKs in one invocation, so the release script's Test stage builds +
+// tests that tree FIRST, then runs this. Standalone, build the Forge jar yourself first if you want
+// the 1.12.2-forge matrix leg to find it.
+tasks.register("fullTestSuite") {
+    group = "verification"
+    description = "Modern-tree unit tests (via buildAndCollect) + production boot/connect matrix (auto-skips if the testing/ harness is absent)."
+    dependsOn("buildAndCollect", "runReleaseMatrix")
+}
