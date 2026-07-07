@@ -2,21 +2,29 @@
   "homepage": "https://github.com/legoj15/SprawlCrafting/releases",
   "1.21.1": {
     "1.0.0": "Initial release.",
-    "1.0.1": "- 26.2 Support\n- Performance improvements"
+    "1.0.1": "- 26.2 Support\n- Performance improvements",
+    "1.0.2": "- Added 1.12.2 support\n- The 1.12.2 build is now an optional mod \u2014 servers running it no longer kick players who don't have it installed, and you can run it client-side to join servers that don't (the Fabric/NeoForge builds already behaved this way)\n- Removed the /sprawlcrafting command because it shouldn't have made it into the release anyways lol"
   },
   "26.1.2": {
     "1.0.0": "Initial release.",
-    "1.0.1": "- 26.2 Support\n- Performance improvements"
+    "1.0.1": "- 26.2 Support\n- Performance improvements",
+    "1.0.2": "- Added 1.12.2 support\n- The 1.12.2 build is now an optional mod \u2014 servers running it no longer kick players who don't have it installed, and you can run it client-side to join servers that don't (the Fabric/NeoForge builds already behaved this way)\n- Removed the /sprawlcrafting command because it shouldn't have made it into the release anyways lol"
   },
   "26.2": {
-    "1.0.1": "- 26.2 Support\n- Performance improvements"
+    "1.0.1": "- 26.2 Support\n- Performance improvements",
+    "1.0.2": "- Added 1.12.2 support\n- The 1.12.2 build is now an optional mod \u2014 servers running it no longer kick players who don't have it installed, and you can run it client-side to join servers that don't (the Fabric/NeoForge builds already behaved this way)\n- Removed the /sprawlcrafting command because it shouldn't have made it into the release anyways lol"
+  },
+  "1.12.2": {
+    "1.0.2": "- Added 1.12.2 support\n- The 1.12.2 build is now an optional mod \u2014 servers running it no longer kick players who don't have it installed, and you can run it client-side to join servers that don't (the Fabric/NeoForge builds already behaved this way)\n- Removed the /sprawlcrafting command because it shouldn't have made it into the release anyways lol"
   },
   "promos": {
-    "1.21.1-latest": "1.0.1",
-    "1.21.1-recommended": "1.0.1",
-    "26.1.2-latest": "1.0.1",
-    "26.1.2-recommended": "1.0.1",
-    "26.2-recommended": "1.0.1",
-    "26.2-latest": "1.0.1"
+    "1.21.1-latest": "1.0.2",
+    "1.21.1-recommended": "1.0.2",
+    "26.1.2-latest": "1.0.2",
+    "26.1.2-recommended": "1.0.2",
+    "26.2-recommended": "1.0.2",
+    "26.2-latest": "1.0.2",
+    "1.12.2-recommended": "1.0.2",
+    "1.12.2-latest": "1.0.2"
   }
 }
