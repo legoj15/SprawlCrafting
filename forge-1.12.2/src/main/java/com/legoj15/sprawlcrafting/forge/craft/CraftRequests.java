@@ -100,7 +100,7 @@ public final class CraftRequests {
                     recipeId.toString()), TextFormatting.RED));
             return;
         }
-        report(player, tryStart(player, recipe));
+        report(player, tryStart(player, recipe), recipe.getRecipeOutput().getDisplayName());
     }
 
     /** Packet-path handler (result item): the JEI hook. */
@@ -108,10 +108,10 @@ public final class CraftRequests {
         if (player.isSpectator() || result.isEmpty()) {
             return;
         }
-        report(player, tryStartByResult(player, result));
+        report(player, tryStartByResult(player, result), result.getDisplayName());
     }
 
-    private static void report(EntityPlayerMP player, StartOutcome outcome) {
+    private static void report(EntityPlayerMP player, StartOutcome outcome, String targetName) {
         ITextComponent feedback;
         if (outcome instanceof StartOutcome.Started) {
             CraftJob job = ((StartOutcome.Started) outcome).job();
@@ -120,22 +120,23 @@ public final class CraftRequests {
         } else if (outcome instanceof StartOutcome.Busy) {
             feedback = coloured(new TextComponentTranslation("sprawlcrafting.craft.busy"), TextFormatting.RED);
         } else {
-            feedback = describeRejection(((StartOutcome.Rejected) outcome).outcome());
+            feedback = describeRejection(((StartOutcome.Rejected) outcome).outcome(), targetName);
         }
         notify(player, feedback);
     }
 
-    public static ITextComponent describeRejection(PlanOutcome outcome) {
+    /** Builds the red rejection feedback. {@code targetName} names the item that couldn't be planned. */
+    public static ITextComponent describeRejection(PlanOutcome outcome, String targetName) {
         ITextComponent body;
         if (outcome instanceof PlanOutcome.Unsupported) {
-            body = new TextComponentTranslation("sprawlcrafting.craft.unsupported");
+            body = new TextComponentTranslation("sprawlcrafting.craft.unsupported", targetName);
         } else if (outcome instanceof PlanOutcome.NeedsBiggerGrid) {
-            body = new TextComponentTranslation("sprawlcrafting.craft.needs_table");
+            body = new TextComponentTranslation("sprawlcrafting.craft.needs_table", targetName);
         } else if (outcome instanceof PlanOutcome.TooComplex) {
-            body = new TextComponentTranslation("sprawlcrafting.craft.too_complex");
+            body = new TextComponentTranslation("sprawlcrafting.craft.too_complex", targetName);
         } else if (outcome instanceof PlanOutcome.Unsolvable) {
             List<ItemKey> missing = ((PlanOutcome.Unsolvable) outcome).missing();
-            body = new TextComponentTranslation("sprawlcrafting.craft.unsolvable", missingNames(missing));
+            body = new TextComponentTranslation("sprawlcrafting.craft.unsolvable", targetName, missingNames(missing));
         } else {
             body = new TextComponentString("?");
         }

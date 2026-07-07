@@ -1,37 +1,64 @@
-sprawlcrafting.craft.started=Sprawl-crafting %s (%s steps queued).
-sprawlcrafting.craft.busy=A sprawl-craft is already running. Let it finish first.
-sprawlcrafting.craft.finished=Finished sprawl-crafting %s.
-sprawlcrafting.craft.missing=Sprawl-craft of %s stopped: ran out of %s.
-sprawlcrafting.craft.recipe_gone=Sprawl-craft of %s stopped: a recipe is no longer available.
-sprawlcrafting.craft.unknown_recipe=No such crafting recipe: %s
-sprawlcrafting.craft.unsupported=That recipe cannot be sprawl-crafted (special or dynamic recipe).
-sprawlcrafting.craft.needs_table=That recipe needs a 3x3 crafting table; open one and try again.
-sprawlcrafting.craft.too_complex=That recipe tree is too complex to plan.
-sprawlcrafting.craft.unsolvable=Not enough raw materials. Still need: %s
-sprawlcrafting.craft.ready_in_grid=%s is ready — grab it from your crafting grid.
-sprawlcrafting.toast.crafting=Sprawl-crafting...
-sprawlcrafting.toast.step=%s / %s
-sprawlcrafting.toast.paused=Paused - need table
-sprawlcrafting.toast.paused_station=Paused - open station
-sprawlcrafting.toast.finished=Done!
-sprawlcrafting.toast.ready_in_grid=Ready - grab it!
-sprawlcrafting.toast.cancelled=Cancelled
-sprawlcrafting.preview.header=Sprawl-craft: %s
+# SprawlCrafting (1.12.2) - English (US).
+# Wording is kept in PARITY with the modern nodes' en_us.json. Where a line carries FEWER %s than
+# its modern twin, that is because the 1.12.2 call site passes fewer format args - do NOT add a %s
+# to "match" modern: client strings go through I18n.format -> String.format, which CRASHES
+# (MissingFormatArgumentException) when a value has more %s than the call supplies. Keys with no
+# modern twin are 1.12.2-ONLY (marked) and back real 1.12.2 UI the modern nodes render differently.
+
+# --- Craft feedback: action bar, server-side TextComponentTranslation ---
+sprawlcrafting.craft.started=Crafting %s - %s component steps
+sprawlcrafting.craft.finished=Crafted %s
+sprawlcrafting.craft.ready_in_grid=%s done in the crafting grid
+sprawlcrafting.craft.missing=Crafting %s cancelled, %s went missing
+sprawlcrafting.craft.recipe_gone=Crafting %s cancelled, recipe no longer exists
+sprawlcrafting.craft.busy=Already crafting. Finish or disrupt the current job first
+sprawlcrafting.craft.unknown_recipe=Unknown recipe %s??
+sprawlcrafting.craft.unsupported=%s is not a plannable crafting recipe
+sprawlcrafting.craft.unsolvable=Not enough raw resources for %s (missing: %s)
+sprawlcrafting.craft.too_complex=The recipe tree for %s is too complex to plan
+sprawlcrafting.craft.needs_table=%s needs a crafting table.
+
+# --- Toasts: client I18n.format. The 1.12.2 toast has no item slot, so these take 0 args (the
+# modern twins pass the item name). Keep them arg-free. ---
+sprawlcrafting.toast.crafting=Crafting...
+sprawlcrafting.toast.step=%s/%s
+sprawlcrafting.toast.paused=Need a crafting table!
+sprawlcrafting.toast.paused_station=Open a crafting station!
+sprawlcrafting.toast.finished=Crafted!
+sprawlcrafting.toast.ready_in_grid=Ready in grid!
+sprawlcrafting.toast.cancelled=Crafting cancelled
+
+# --- Recipe book / deferred-craft preview ---
+sprawlcrafting.recipe.deferred=Craftable from raw resources!
+sprawlcrafting.preview.header=Craft %s from raw resources:
+# preview.steps is 1.12.2-only (the modern preview has no per-count header line).
 sprawlcrafting.preview.steps=%s component craft(s):
-sprawlcrafting.preview.step= - %sx %s
-sprawlcrafting.preview.confirm=Click again to confirm.
-sprawlcrafting.recipe.deferred=Craftable from raw materials!
-sprawlcrafting.gather.click=Click to see what you need
+sprawlcrafting.preview.step=%s× %s
+sprawlcrafting.preview.confirm=Click again to start
+
+# --- Gather list: JEI tooltip (MissingResourcesError) + missing-resources screen ---
+sprawlcrafting.gather.click=Click to see the full gather list
 sprawlcrafting.gather.title=Materials needed
-sprawlcrafting.gather.approximate=(estimate - may undercount)
-sprawlcrafting.gather.alt= (or %s alt.)
-sprawlcrafting.gather.have_raws=You already have the raw materials - try a crafting table.
-sprawlcrafting.gather.cant=Can't sprawl-craft this yet.
-sprawlcrafting.gather.none=Needs a crafting table, or a recipe I can't plan.
+# gather.header is a LIST header here (not the modern screen title "Missing materials"); the
+# JEI tooltip prints it above the item lines, so its 1.12.2 wording differs by design.
 sprawlcrafting.gather.header=Raw materials still needed:
-sprawlcrafting.gather.line=  %sx %s
-sprawlcrafting.gather.more= +%s more...
-sprawlcrafting.server_missing=This server is not running SprawlCrafting - deferred crafting is unavailable here.
+sprawlcrafting.gather.line=  %s× %s
+sprawlcrafting.gather.more=…and %s more
+sprawlcrafting.gather.approximate=List may be incomplete, recipe tree too complex
+# gather.alt is appended INLINE after an item name - the leading space is load-bearing (1.12.2-only).
+sprawlcrafting.gather.alt= (or %s alt.)
+# 1.12.2-only screen states (modern uses gather.empty / gather.loading instead).
+sprawlcrafting.gather.have_raws=You already have the materials — try a crafting table.
+sprawlcrafting.gather.cant=Can't craft this yet.
+sprawlcrafting.gather.none=Needs a crafting table, or a recipe I can't plan.
+
+# --- Modless-server notice (1.12.2-only; the modern nodes never surface a message here) ---
+sprawlcrafting.server_missing=This server is not running SprawlCrafting — deferred crafting is unavailable here.
+
+# --- Config: Forge @Config screen. The label is @Config.LangKey; "<langkey>.tooltip" overrides the
+# @Config.Comment as the hover text. These tooltips mirror modern's config *.desc strings. ---
 sprawlcrafting.config.sound=Sound effects
+sprawlcrafting.config.sound.tooltip=The sound that plays on each crafting step
 sprawlcrafting.config.jei=JEI integration
 sprawlcrafting.config.needs="Needs" helper
+sprawlcrafting.config.needs.tooltip=Whether or not you can see what you're missing

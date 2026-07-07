@@ -1,6 +1,5 @@
 {
   "sprawlcrafting.craft.started": "Crafting %s - %s component steps",
-  "sprawlcrafting.craft.progress": "Crafting %s: %s (%s/%s)",
   "sprawlcrafting.craft.finished": "Crafted %s",
   "sprawlcrafting.craft.ready_in_grid": "%s done in the crafting grid",
   "sprawlcrafting.craft.missing": "Crafting %s cancelled, %s went missing",

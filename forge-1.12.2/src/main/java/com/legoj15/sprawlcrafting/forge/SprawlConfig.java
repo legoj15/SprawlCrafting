@@ -21,7 +21,7 @@ public class SprawlConfig {
 
     @Config.Name("Sound effects")
     @Config.LangKey("sprawlcrafting.config.sound")
-    @Config.Comment("Play a sound for each completed step of a sprawl-craft.")
+    @Config.Comment("Play a sound for each completed crafting step.")
     public static boolean soundEffects = true;
 
     @Config.Name("JEI integration")
