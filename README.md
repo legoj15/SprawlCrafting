@@ -6,7 +6,7 @@ Factorio-style crafting for the vanilla inventory and crafting table. Request a 
 
 Works with the vanilla recipe book and with JEI/REI.
 
-**Minecraft 1.21.1, 26.1.2, and 26.2 · Fabric and NeoForge.**
+**Minecraft 1.12.2 (Forge), 1.21.1, 26.1.2, and 26.2 · Fabric and NeoForge.**
 
 ## How it works
 
@@ -35,8 +35,8 @@ Right-click a **red** recipe (or left-click the **orange** gather button in JEI/
 
 ## Compatibility
 
-- **Minecraft:** 1.21.1, 26.1.2, or 26.2
-- **Loaders:** Fabric or NeoForge
+- **Minecraft:** 1.12.2, 1.21.1, 26.1.2, or 26.2
+- **Loaders:** Forge (1.12.2 only), Fabric or NeoForge
 - **Fabric** also requires **Fabric API** (like most mods)
 - **Optional integrations:**
   - **JEI** - adds the deferred-craft and gather buttons (all Minecraft versions)
