@@ -11,6 +11,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 import com.legoj15.sprawlcrafting.client.GatherCandidate;
 import com.legoj15.sprawlcrafting.config.SprawlConfig;
+import com.mojang.blaze3d.platform.InputConstants;
 
 import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.screens.recipebook.OverlayRecipeComponent;
@@ -43,7 +44,7 @@ public abstract class OverlayRecipeComponentMixin {
             cancellable = true, at = @At("HEAD"))
     private void sprawlcrafting$gatherOnRightClick(MouseButtonEvent event, boolean doubleClick,
                                                    CallbackInfoReturnable<Boolean> cir) {
-        if (event.button() != 1 || !isVisible()) {
+        if (event.button() != InputConstants.MOUSE_BUTTON_RIGHT || !isVisible()) {
             return;
         }
         if (!SprawlConfig.get().needsSystem()) {
@@ -61,7 +62,7 @@ public abstract class OverlayRecipeComponentMixin {
     @Inject(method = "mouseClicked(DDI)Z", cancellable = true, at = @At("HEAD"))
     private void sprawlcrafting$gatherOnRightClick(double mouseX, double mouseY, int button,
                                                    CallbackInfoReturnable<Boolean> cir) {
-        if (button != 1 || !isVisible()) {
+        if (button != InputConstants.MOUSE_BUTTON_RIGHT || !isVisible()) {
             return;
         }
         if (!SprawlConfig.get().needsSystem()) {

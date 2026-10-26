@@ -4,6 +4,7 @@ import java.util.List;
 import java.util.function.BooleanSupplier;
 
 import com.legoj15.sprawlcrafting.config.SprawlConfig;
+import com.mojang.blaze3d.platform.InputConstants;
 
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
@@ -132,7 +133,7 @@ public class SprawlConfigScreen extends Screen {
 
     @Override
     public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
-        if (event.button() == 0) {
+        if (event.button() == InputConstants.MOUSE_BUTTON_LEFT) {
             int row = rowAt(event.x(), event.y());
             if (row >= 0) {
                 toggle(row);
@@ -161,7 +162,7 @@ public class SprawlConfigScreen extends Screen {
 
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
-        if (button == 0) {
+        if (button == InputConstants.MOUSE_BUTTON_LEFT) {
             int row = rowAt(mouseX, mouseY);
             if (row >= 0) {
                 toggle(row);

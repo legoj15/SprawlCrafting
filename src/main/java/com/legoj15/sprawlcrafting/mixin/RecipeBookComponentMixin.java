@@ -13,6 +13,7 @@ import com.legoj15.sprawlcrafting.client.DeferredCraftableCache;
 import com.legoj15.sprawlcrafting.client.GatherCandidate;
 import com.legoj15.sprawlcrafting.client.RecipeBookGhost;
 import com.legoj15.sprawlcrafting.config.SprawlConfig;
+import com.mojang.blaze3d.platform.InputConstants;
 
 import net.minecraft.client.gui.screens.recipebook.RecipeBookComponent;
 import net.minecraft.client.gui.screens.recipebook.RecipeBookPage;
@@ -120,7 +121,7 @@ public abstract class RecipeBookComponentMixin {
             cancellable = true, at = @At("HEAD"))
     private void sprawlcrafting$interceptGatherClick(MouseButtonEvent event, boolean doubleClick,
                                                      CallbackInfoReturnable<Boolean> cir) {
-        if (event.button() != 1 || !((RecipeBookComponent) (Object) this).isVisible()) {
+        if (event.button() != InputConstants.MOUSE_BUTTON_RIGHT || !((RecipeBookComponent) (Object) this).isVisible()) {
             return;
         }
         if (!SprawlConfig.get().needsSystem()) {
@@ -192,7 +193,7 @@ public abstract class RecipeBookComponentMixin {
     @Inject(method = "mouseClicked(DDI)Z", cancellable = true, at = @At("HEAD"))
     private void sprawlcrafting$interceptGatherClick(double mouseX, double mouseY, int button,
                                                      CallbackInfoReturnable<Boolean> cir) {
-        if (button != 1 || !((RecipeBookComponent) (Object) this).isVisible()) {
+        if (button != InputConstants.MOUSE_BUTTON_RIGHT || !((RecipeBookComponent) (Object) this).isVisible()) {
             return;
         }
         if (!SprawlConfig.get().needsSystem()) {
