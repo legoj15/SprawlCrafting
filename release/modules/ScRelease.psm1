@@ -8,7 +8,7 @@
 #   * SprawlCrafting ships TWO loaders per MC version (fabric + neoforge), so every store upload is
 #     PER-NODE and tags its own loader — BuildCraft was NeoForge-only with one universal jar per MC.
 #   * Every node gets the SAME full changelog (general lines + its own {mc}-tagged lines). There is no
-#     "primary vs backport" framing: every release node is an equal (the modern six share one Stonecutter
+#     "primary vs backport" framing: every release node is an equal (the modern eight share one Stonecutter
 #     source; the legacy 1.12.2 Forge node is a separate build sharing the solver-core, injected via config).
 #   * The in-game update manifest is the STANDARD Forge/NeoForge update.json (homepage + per-MC
 #     {version:changelog} + promos), rendered as PLAIN text — not BuildCraft's in-game §-formatted file.

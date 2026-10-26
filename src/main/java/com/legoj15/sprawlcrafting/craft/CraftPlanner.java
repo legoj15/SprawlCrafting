@@ -10,8 +10,8 @@ import java.util.Map;
 import com.legoj15.sprawlcrafting.craft.solver.RecipeGraphSolver;
 import com.legoj15.sprawlcrafting.craft.solver.RecipeGraphSolver.Result;
 
-import net.minecraft.core.HolderLookup;
 import net.minecraft.core.NonNullList;
+import net.minecraft.core.RegistryAccess;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerPlayer;
@@ -103,7 +103,7 @@ public final class CraftPlanner {
      * <p>The expensive per-grid producer index (which only changes on datapack reload) is
      * cached per {@link RecipeManager}; only the cheap inventory snapshot is per call.
      */
-    public static Session session(RecipeManager recipes, HolderLookup.Provider registries,
+    public static Session session(RecipeManager recipes, RegistryAccess registries,
                                   Inventory inventory, GridContext grid) {
         return new Session(recipes, registries, grid,
                 ProducerIndex.forGrid(recipes, registries, grid), snapshotInventory(inventory));
@@ -133,7 +133,7 @@ public final class CraftPlanner {
                 java.util.Collections.synchronizedMap(new java.util.WeakHashMap<>());
 
         static Map<Item, List<McRecipe>> forGrid(RecipeManager recipes,
-                                                 HolderLookup.Provider registries,
+                                                 RegistryAccess registries,
                                                  GridContext grid) {
             Map<GridContext, Map<Item, List<McRecipe>>> byGrid =
                     CACHE.computeIfAbsent(recipes, r -> java.util.Collections.synchronizedMap(
@@ -144,13 +144,13 @@ public final class CraftPlanner {
 
     public static final class Session {
         private final RecipeManager recipes;
-        private final HolderLookup.Provider registries;
+        private final RegistryAccess registries;
         private final GridContext grid;
         private final Map<Item, List<McRecipe>> producers;
         private final Map<Item, Integer> inventory;
         private final RecipeGraphSolver<ResourceLocation, Item> solver;
 
-        private Session(RecipeManager recipes, HolderLookup.Provider registries, GridContext grid,
+        private Session(RecipeManager recipes, RegistryAccess registries, GridContext grid,
                         Map<Item, List<McRecipe>> producers, Map<Item, Integer> inventory) {
             this.recipes = recipes;
             this.registries = registries;
@@ -275,7 +275,7 @@ public final class CraftPlanner {
      * simply does not exist as a producer for a request made from the 2×2 inventory grid.
      */
     private static Map<Item, List<McRecipe>> indexCraftingRecipes(RecipeManager recipes,
-                                                                  HolderLookup.Provider registries,
+                                                                  RegistryAccess registries,
                                                                   GridContext grid) {
         Map<Item, List<McRecipe>> byResult = new HashMap<>();
         for (RecipeHolder<CraftingRecipe> holder : RecipeIds.craftingRecipes(recipes)) {
@@ -324,7 +324,7 @@ public final class CraftPlanner {
             return grid == GridContext.INVENTORY ? fits2x2 : fits3x3;
         }
 
-        static McRecipe of(RecipeHolder<?> holder, HolderLookup.Provider registries) {
+        static McRecipe of(RecipeHolder<?> holder, RegistryAccess registries) {
             if (!(holder.value() instanceof CraftingRecipe recipe) || recipe.isSpecial()) {
                 return null;
             }

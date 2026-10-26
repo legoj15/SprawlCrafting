@@ -11,7 +11,9 @@ plugins {
     // Modern CalVer lines (26.x) use PLAIN Loom (unobfuscated MC, no source remapping); same 1.17.x
     // toolchain family as the remap variant above. The 26.1.2-fabric node applies it version-less.
     id("net.fabricmc.fabric-loom") version "1.17.11" apply false
-    id("net.neoforged.moddev") version "2.0.141" apply false
+    // 2.0.148 (from 2.0.141): the older NeoFormRuntime failed to recompile MC 26.3 ("contents() ...
+    // weaker access" in HolderSet). Applies to every NeoForge node; all four rebuilt + gametests green.
+    id("net.neoforged.moddev") version "2.0.148" apply false
 }
 
 // The active node — what the IDE/runClient sees and what `compileJava` builds.
@@ -35,7 +37,7 @@ stonecutter parameters {
 // Named `buildAndCollect` for uniformity with BuildCraft's task of the same purpose (theirs is
 // per-node and collects into build/libs/<version>/; this one is a single root task with an explicit
 // node list, collecting into testing/dist/ where the release matrix stages from).
-val releaseNodes = listOf("1.21.1-fabric", "1.21.1-neoforge", "26.1.2-neoforge", "26.1.2-fabric", "26.2-neoforge", "26.2-fabric")
+val releaseNodes = listOf("1.21.1-fabric", "1.21.1-neoforge", "26.1.2-neoforge", "26.1.2-fabric", "26.2-neoforge", "26.2-fabric", "26.3-neoforge", "26.3-fabric")
 // Project-scope reads: inside a task block `property()` resolves against the TASK, not the project.
 val modVersion = property("version") as String
 val distDir = layout.projectDirectory.dir("testing/dist").asFile.toPath()

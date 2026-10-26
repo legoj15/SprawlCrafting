@@ -18,10 +18,11 @@ separate 1.12.2 Forge port.
 | 1.21.1 | Fabric, NeoForge | Stonecutter node | 21 |
 | 26.1.2 | Fabric, NeoForge | Stonecutter node | 25 |
 | 26.2 | Fabric, NeoForge | Stonecutter node | 25 |
+| 26.3 | Fabric, NeoForge | Stonecutter node | 25 |
 | 1.12.2 | Forge | separate RFG build | 25 host / Java 8 output |
 
 The modern loaders (1.21.1 / 26.x) share one source set via **Stonecutter**: `src/` is
-preprocessed per node into `versions/<node>/`, six nodes total. Cross-version API
+preprocessed per node into `versions/<node>/`, eight nodes total. Cross-version API
 differences are handled inline with Stonecutter comment directives (e.g.
 `//? if >=1.21.11 { … }`). The **1.12.2 Forge** target is a separate, self-contained Gradle
 build (RetroFuturaGradle) because the legacy and modern toolchains can't coexist; see

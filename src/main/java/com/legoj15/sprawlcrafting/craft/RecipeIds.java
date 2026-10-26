@@ -2,7 +2,7 @@ package com.legoj15.sprawlcrafting.craft;
 
 import java.util.Optional;
 
-import net.minecraft.core.HolderLookup;
+import net.minecraft.core.RegistryAccess;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.crafting.CraftingRecipe;
@@ -67,16 +67,26 @@ public final class RecipeIds {
      * (e.g. {@code ImbueRecipe}, which fires the moment a player is in-world); the display result
      * never executes the recipe, so it is safe for every crafting recipe.
      */
-    public static ItemStack resultOf(Recipe<?> recipe, HolderLookup.Provider registries) {
+    public static ItemStack resultOf(Recipe<?> recipe, RegistryAccess registries) {
         //? if >=1.21.11 {
         /*java.util.List<net.minecraft.world.item.crafting.display.RecipeDisplay> displays = recipe.display();
         if (displays.isEmpty()) {
             return ItemStack.EMPTY;
         }
-        net.minecraft.util.context.ContextMap ctx = new net.minecraft.util.context.ContextMap.Builder()
+        *///?}
+        // 26.3 made ContextMap.Builder's constructor private (ContextMap.builder()) and renamed
+        // withParameter/create -> set/buildAndValidate; REGISTRIES is now keyed on RegistryAccess.
+        //? if >=26.3 {
+        /*net.minecraft.util.context.ContextMap ctx = net.minecraft.util.context.ContextMap.builder()
+                .set(net.minecraft.world.item.crafting.display.SlotDisplayContext.REGISTRIES, registries)
+                .buildAndValidate(net.minecraft.world.item.crafting.display.SlotDisplayContext.CONTEXT);
+        *///?} else if >=1.21.11 {
+        /*net.minecraft.util.context.ContextMap ctx = new net.minecraft.util.context.ContextMap.Builder()
                 .withParameter(net.minecraft.world.item.crafting.display.SlotDisplayContext.REGISTRIES, registries)
                 .create(net.minecraft.world.item.crafting.display.SlotDisplayContext.CONTEXT);
-        return displays.get(0).result().resolveForFirstStack(ctx);*/
+        *///?}
+        //? if >=1.21.11 {
+        /*return displays.get(0).result().resolveForFirstStack(ctx);*/
         //?} else {
         return recipe.getResultItem(registries);
         //?}

@@ -7,7 +7,7 @@ import java.util.List;
 import java.util.Map;
 
 import net.minecraft.ChatFormatting;
-import net.minecraft.core.HolderLookup;
+import net.minecraft.core.RegistryAccess;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
@@ -24,7 +24,7 @@ public final class CraftPreview {
     private CraftPreview() {
     }
 
-    public static List<Component> lines(CraftJob job, RecipeManager recipes, HolderLookup.Provider registries) {
+    public static List<Component> lines(CraftJob job, RecipeManager recipes, RegistryAccess registries) {
         List<Component> out = new ArrayList<>();
         out.add(Component.translatable("sprawlcrafting.preview.header",
                 job.targetResult().getHoverName()).withStyle(ChatFormatting.YELLOW));

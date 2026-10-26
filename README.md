@@ -6,7 +6,7 @@ Factorio-style crafting for the vanilla inventory and crafting table. Request a 
 
 Works with the vanilla recipe book and with JEI/REI.
 
-**Minecraft 1.12.2 (Forge), 1.21.1, 26.1.2, and 26.2 · Fabric and NeoForge.**
+**Minecraft 1.12.2 (Forge), 1.21.1, 26.1.2, 26.2, and 26.3 · Fabric and NeoForge.**
 
 ## How it works
 
@@ -35,7 +35,7 @@ Right-click a **red** recipe (or left-click the **orange** gather button in JEI/
 
 ## Compatibility
 
-- **Minecraft:** 1.12.2, 1.21.1, 26.1.2, or 26.2
+- **Minecraft:** 1.12.2, 1.21.1, 26.1.2, 26.2, or 26.3
 - **Loaders:** Forge (1.12.2 only), Fabric or NeoForge
 - **Fabric** also requires **Fabric API** (like most mods)
 - **1.12.2** also requires **MixinBooter** on the client - it loads SprawlCrafting's recipe-book and JEI mixins, and without it the game stops at an error screen telling you to install it. (A dedicated server doesn't need it.)
@@ -50,7 +50,7 @@ Multiplayer is supported; install the mod on both the client and the server. A v
 
 Every setting defaults to **on** and can be changed in-game or by editing the config file; edits apply immediately.
 
-- **Fabric / NeoForge** (1.21.1, 26.1.2, 26.2): the file is `config/sprawlcrafting.json`; edit it in-game via Mod Menu (Fabric) or the mod-config screen (NeoForge).
+- **Fabric / NeoForge** (1.21.1, 26.1.2, 26.2, 26.3): the file is `config/sprawlcrafting.json`; edit it in-game via Mod Menu (Fabric) or the mod-config screen (NeoForge).
 - **1.12.2 (Forge):** the file is `config/sprawlcrafting.cfg`; edit it in-game via the **Config** button on SprawlCrafting's entry in the Mods list. This build has three settings, not four - there's no REI toggle (REI is Fabric-only) - and they appear under their display names (*Sound effects*, *JEI integration*, *Needs helper*).
 
 | Setting | What it does |
@@ -64,14 +64,14 @@ Every setting defaults to **on** and can be changed in-game or by editing the co
 
 There are two independent builds: the modern Fabric/NeoForge tree (Stonecutter) and the legacy 1.12.2 Forge module. They share the same planning core (`solver-core/`) but can't share a toolchain.
 
-### Modern loaders (1.21.1, 26.1.2, 26.2)
+### Modern loaders (1.21.1, 26.1.2, 26.2, 26.3)
 
-SprawlCrafting uses Stonecutter: one shared source set in `src/`, preprocessed per version into `versions/<node>/`. The six nodes are `1.21.1-fabric`, `1.21.1-neoforge`, `26.1.2-fabric`, `26.1.2-neoforge`, `26.2-fabric`, and `26.2-neoforge`.
+SprawlCrafting uses Stonecutter: one shared source set in `src/`, preprocessed per version into `versions/<node>/`. The eight nodes are `1.21.1-fabric`, `1.21.1-neoforge`, `26.1.2-fabric`, `26.1.2-neoforge`, `26.2-fabric`, `26.2-neoforge`, `26.3-fabric`, and `26.3-neoforge`.
 
 **The required JDK depends on the Minecraft version:**
 
 - **1.21.1** nodes need **JDK 21**
-- **26.1.2** and **26.2** nodes need **JDK 25** (Minecraft 26.1+ requires the Java 25 toolchain)
+- **26.1.2**, **26.2**, and **26.3** nodes need **JDK 25** (Minecraft 26.1+ requires the Java 25 toolchain)
 
 Build or run a single node with its node-prefixed task:
 
@@ -83,7 +83,7 @@ Build or run a single node with its node-prefixed task:
 ./gradlew :26.1.2-neoforge:runClient  # dev client, NeoForge 26.1.2
 ```
 
-Swap the prefix for any of the six nodes.
+Swap the prefix for any of the eight nodes.
 
 ### 1.12.2 (Forge)
 

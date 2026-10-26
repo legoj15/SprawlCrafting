@@ -13,7 +13,7 @@
       4. uploads one CurseForge file per node (loader + MC version),
       5. resets changelog.md and (for a prerelease) bumps `version` to the next prerelease.
 
-    SprawlCrafting ships SEVEN jars: fabric + neoforge x 1.21.1 / 26.1.2 / 26.2 (the modern Stonecutter
+    SprawlCrafting ships NINE jars: fabric + neoforge x 1.21.1 / 26.1.2 / 26.2 / 26.3 (the modern Stonecutter
     tree), plus a single Forge jar for the legacy 1.12.2 line (its own self-contained build under
     forge-1.12.2/, injected as a synthetic release node via release.json's `legacyForge` block). Each
     store upload is per-node and tags its own loader. The update manifest is keyed by MC version
@@ -37,7 +37,7 @@
 .PARAMETER SkipTests    Bypass the pre-release test suite (stage 0). Publishes UNVERIFIED jars — warns loudly. To run
                         ONLY the suite (verify without publishing anything), use -Only Test instead.
 .PARAMETER NextVersion  Override the post-flight version bump (required when releasing a final, suffix-less version).
-.PARAMETER Build        Build first: `./gradlew buildAndCollect` (six modern jars -> testing/dist/) plus the 1.12.2 Forge build (forge-1.12.2/build/libs/, host JDK 25 via legacyForge.javaHome).
+.PARAMETER Build        Build first: `./gradlew buildAndCollect` (eight modern jars -> testing/dist/) plus the 1.12.2 Forge build (forge-1.12.2/build/libs/, host JDK 25 via legacyForge.javaHome).
 .PARAMETER ModrinthStaging  Target staging-api.modrinth.com for the Modrinth leg (see release/README.md caveat).
 
 .EXAMPLE  ./release/Invoke-Release.ps1                 # full dry run of the current version

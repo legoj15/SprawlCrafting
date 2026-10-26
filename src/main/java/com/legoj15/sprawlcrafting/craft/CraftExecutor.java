@@ -324,7 +324,13 @@ public final class CraftExecutor {
         }
         inventory.setChanged();
         if (!stack.isEmpty()) {
+            // 26.3 replaced the (throwRandomly, retainOwnership) booleans with (retainOwnership,
+            // Prediction); SERVER_ONLY matches vanilla's own server-side clearContainer drop.
+            //? if >=26.3 {
+            /*player.drop(stack, false, net.minecraft.util.Prediction.SERVER_ONLY);
+            *///?} else {
             player.drop(stack, false);
+            //?}
         }
     }
 
