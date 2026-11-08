@@ -377,14 +377,17 @@ class RecipeGraphSolverTest {
     void nonAdjacentIdenticalRecipesAreNotMerged() {
         // mergeAdjacent only collapses CONSECUTIVE duplicates. CraftPreview's per-recipe totals
         // depend on the solver NOT globally deduping, so a plan of X, Y, X must stay three steps.
-        // X has resultCount 1 (no surplus to reuse), and Y sits between the two X crafts.
+        // X has resultCount 1 (no surplus to reuse), and Y sits between the two X crafts. The second
+        // X is demanded by a different recipe (Z), since identical slots of ONE recipe are batched.
         recipes.add(TestRecipe.of("x", "x", 1, "rawx"));
         recipes.add(TestRecipe.of("y", "y", 1, "rawy"));
-        TestRecipe target = TestRecipe.of("t", "t", 1, "x", "y", "x");
+        recipes.add(TestRecipe.of("z", "z", 1, "y", "x"));
+        TestRecipe target = TestRecipe.of("t", "t", 1, "x", "z");
         assertEquals(Arrays.asList(
                         new PlannedStep<>("x", 1),
                         new PlannedStep<>("y", 1),
                         new PlannedStep<>("x", 1),
+                        new PlannedStep<>("z", 1),
                         new PlannedStep<>("t", 1)),
                 solveOk(target, inv("rawx", 2, "rawy", 1)));
     }
@@ -441,6 +444,106 @@ class RecipeGraphSolverTest {
         Result.Failure<String, String> failure =
                 assertInstanceOf(Result.Failure.class, solver(2, 100_000).solve(target, inv("item3", 1)));
         assertEquals(false, failure.budgetExceeded(), "depth-limit failure must not look like a budget failure");
+    }
+
+    // --- batched quantities: deep compression trees (e.g. 9x "compressed" block mods) -----------
+
+    /** raw -> t1 (9 raw) -> ... -> tN (9 t(N-1)); returns a target needing one tN. */
+    private TestRecipe compressionChain(int levels) {
+        String previous = "raw";
+        for (int level = 1; level <= levels; level++) {
+            String[] nine = new String[9];
+            Arrays.fill(nine, previous);
+            recipes.add(TestRecipe.of("t" + level, "t" + level, 1, nine));
+            previous = "t" + level;
+        }
+        return TestRecipe.of("target", "target", 1, previous);
+    }
+
+    @Test
+    void deepCompressionChainPlansWithAmpleStock() {
+        // 9^5 raw covers one t5 exactly. Thousands of base crafts must not count against the
+        // attempt budget one unit at a time: the plan is one batched step per level.
+        TestRecipe target = compressionChain(5);
+        assertEquals(Arrays.asList(
+                        new PlannedStep<>("t1", 6561),
+                        new PlannedStep<>("t2", 729),
+                        new PlannedStep<>("t3", 81),
+                        new PlannedStep<>("t4", 9),
+                        new PlannedStep<>("t5", 1),
+                        new PlannedStep<>("target", 1)),
+                solveOk(target, inv("raw", 59049)));
+    }
+
+    @Test
+    void deepChainShortfallReportsExactRawCount() {
+        // 9^12 raw exceeds int: the long view is exact, contains only the raw leaf, and the legacy
+        // int view clamps instead of wrapping.
+        TestRecipe target = compressionChain(12);
+        RecipeGraphSolver.ShortfallResult<String> r = solver().shortfall(target, inv());
+        Map<String, Long> expected = new HashMap<>();
+        expected.put("raw", 282_429_536_481L);
+        assertEquals(expected, r.demandsLong());
+        assertFalse(r.approximate(), "a 12-level chain is well within depth and budget");
+        assertFalse(r.saturated());
+        assertEquals(inv("raw", Integer.MAX_VALUE), r.demands());
+    }
+
+    @Test
+    void shortfallBeyondLongRangeSaturates() {
+        // 9^21 > Long.MAX_VALUE: the count pins at the ceiling and says so, never wraps negative.
+        TestRecipe target = compressionChain(21);
+        RecipeGraphSolver.ShortfallResult<String> r = solver().shortfall(target, inv());
+        Map<String, Long> expected = new HashMap<>();
+        expected.put("raw", Long.MAX_VALUE);
+        assertEquals(expected, r.demandsLong());
+        assertTrue(r.saturated(), "a count at Long.MAX_VALUE must set saturated");
+    }
+
+    @Test
+    void batchedSlotMixesSourcesAcrossAlternatives() {
+        // 8 planks of either kind, one oak log and one birch log: neither log alone covers the batch,
+        // so the planner must split it (4 oak + 4 birch) instead of failing the whole batch on oak.
+        recipes.add(TestRecipe.of("oak_planks", "oak_planks", 4, "oak_log"));
+        recipes.add(TestRecipe.of("birch_planks", "birch_planks", 4, "birch_log"));
+        String[] eight = new String[8];
+        Arrays.fill(eight, "oak_planks|birch_planks");
+        TestRecipe chest = TestRecipe.of("chest", "chest", 1, eight);
+        assertEquals(Arrays.asList(
+                        new PlannedStep<>("oak_planks", 1),
+                        new PlannedStep<>("birch_planks", 1),
+                        new PlannedStep<>("chest", 1)),
+                solveOk(chest, inv("oak_log", 1, "birch_log", 1)));
+        // The gather list agrees: everything needed is already held.
+        assertEquals(Collections.emptyMap(),
+                solver().shortfall(chest, inv("oak_log", 1, "birch_log", 1)).demands());
+    }
+
+    @Test
+    void nonAdjacentSlotsKeepTheirOwnOrderOverSharedStock() {
+        // Slots 1 and 3 accept either plank, slot 2 only oak. Taken in slot order (oak, oak, birch)
+        // two of each suffice; batching slots 1 and 3 together first would drain the oak slot 2 needs.
+        TestRecipe sandwich = TestRecipe.of("sandwich", "sandwich", 1,
+                "oak_planks|birch_planks", "oak_planks", "oak_planks|birch_planks");
+        Map<String, Integer> held = inv("oak_planks", 2, "birch_planks", 2);
+        assertEquals(Arrays.asList(new PlannedStep<>("sandwich", 1)), solveOk(sandwich, held));
+        assertEquals(Collections.emptyMap(), solver().shortfall(sandwich, held).demands());
+    }
+
+    @Test
+    void gatheringTheShortfallMakesTheRecipeSolvable() {
+        // i1's first recipe wants r1-or-r0 plus r3s; its second only r3 (held). Crediting the r3-only
+        // route is wrong once r0 is gathered: the solver then takes the FIRST recipe, which eats the
+        // r0 the target's own slot needed. The list must be enough for the planner, not just the walk.
+        recipes.add(TestRecipe.of("i1_0", "i1", 2, "r1|r0", "r3", "r3|r1"));
+        recipes.add(TestRecipe.of("i1_1", "i1", 3, "r3", "r3"));
+        TestRecipe target = TestRecipe.of("t", "t", 2, "i1", "i1", "r0|r1");
+        Map<String, Integer> held = inv("r3", 4);
+        Map<String, Integer> demands = solver().shortfall(target, held).demands();
+        Map<String, Integer> gathered = new HashMap<>(held);
+        demands.forEach((item, count) -> gathered.merge(item, count, Integer::sum));
+        assertInstanceOf(Result.Success.class, solver().solve(target, gathered),
+                "gathering " + demands + " must make the recipe craftable");
     }
 
     // --- shortfall: net raw-gatherable demand for a red/unmakeable recipe ---------------------
@@ -554,9 +657,12 @@ class RecipeGraphSolverTest {
 
     @Test
     void shortfallStopsAtBudgetAndReturnsPartial() {
-        recipes.add(TestRecipe.of("plank", "plank", 1, "log"));
+        // Six DIFFERENT planks: identical slots are batched into one node, distinct ones are not.
+        for (int i = 0; i < 6; i++) {
+            recipes.add(TestRecipe.of("plank" + i, "plank" + i, 1, "log" + i));
+        }
         TestRecipe wall = TestRecipe.of("wall", "wall", 1,
-                "plank", "plank", "plank", "plank", "plank", "plank");
+                "plank0", "plank1", "plank2", "plank3", "plank4", "plank5");
         // Tiny budget can't walk all six plank crafts: returns a partial map, flagged approximate.
         RecipeGraphSolver.ShortfallResult<String> r = solver(32, 3).shortfall(wall, inv());
         assertTrue(r.approximate(), "exhausting the budget must flag the result approximate");
