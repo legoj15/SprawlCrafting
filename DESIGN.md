@@ -16,9 +16,9 @@ separate 1.12.2 Forge port.
 | Minecraft | Loaders | Build | JDK |
 |---|---|---|---|
 | 1.21.1 | Fabric, NeoForge, Forge | Stonecutter node | 21 |
-| 26.1.2 | Fabric, NeoForge | Stonecutter node | 25 |
-| 26.2 | Fabric, NeoForge | Stonecutter node | 25 |
-| 26.3 | Fabric, NeoForge | Stonecutter node | 25 |
+| 26.1.2 | Fabric, NeoForge, Forge | Stonecutter node | 25 |
+| 26.2 | Fabric, NeoForge, Forge | Stonecutter node | 25 |
+| 26.3 | Fabric, NeoForge, Forge | Stonecutter node | 25 |
 | 1.12.2 | Forge | separate RFG build | 25 host / Java 8 output |
 | 1.16.5 | Forge, Fabric | separate FG7 + Loom build (`legacy-1.16.5/`) | 21 host / Java 8 output |
 
@@ -32,8 +32,8 @@ Minecraft-free planner (below).
 
 ## The Forge 1.21.1 node (`1.21.1-forge`)
 
-MinecraftForge (not NeoForge) on 1.21.1, at feature parity with `1.21.1-neoforge`. Facts a future
-Forge node (26.x) needs:
+MinecraftForge (not NeoForge) on 1.21.1, at feature parity with `1.21.1-neoforge`. The 26.x Forge
+nodes (next section) reuse everything here except where noted:
 
 - **Build:** `build.forge.gradle.kts` on ForgeGradle 7 (`net.minecraftforge.gradle`, plus
   `net.minecraftforge.jarjar`; both declared `apply false` in the controller and share the root
@@ -59,6 +59,41 @@ Forge node (26.x) needs:
   `canReceive`/`canSendToServer` read the remote's registered channel list from `NetworkContext`.
 - **Not on this node:** REI (no Forge 1.21.1 build) and Mod Menu (Fabric-only); excluded by leaving
   `rei_version` / `modmenu_version` unset. JEI works unchanged (`@JeiPlugin` is annotation-scanned).
+
+## The Forge 26.x nodes (`26.1.2-forge`, `26.2-forge`, `26.3-forge`)
+
+MinecraftForge on the 26.x lines, at feature parity with the matching NeoForge nodes (server-driven
+craftability sync, recipe-book mixins, config screen, toasts, gather screen) **minus JEI**: no Forge
+build of JEI exists for 26.x. Same `build.forge.gradle.kts` and platform layer as 1.21.1; what differs
+is decided by the node's `gradle.properties` plus `//? if >=1.21.11` branches in `platform/forge`:
+
+- **Build:** ForgeGradle 7.0.40, Java 25 toolchain, Forge 64.1.6 / 65.1.6 / 66.1.5 (build pins; the
+  shipped range starts at each line's X.1.0 "recommended" series). 26.x is unobfuscated, so
+  the node runs plain Mojmap (`mappings("official", mc)`) and Parchment is not applied (no
+  `parchment_*` props). The
+  first Gradle configure of ANY invocation mavenizes (decompiles) every Forge MC version once, several
+  minutes per new Minecraft version; afterwards "Minecraft Maven is up-to-date".
+- **No JEI:** the node omits `jei_version`, which excludes `compat/jei` from compilation, adds no JEI to
+  the dev runtime, and drops the optional `jei` dependency from `mods.toml` (`has_jei`).
+- **No jar-in-jar:** Forge 26.x ships `mixinextras-forge` itself (it is a dependency of the Forge
+  artifact), so these nodes omit `mixinextras_version`: no `jarJar` task, no `-slim` jar, the plain
+  `jar` is the shipped jar.
+- **Events (EventBus 7):** there is no `MinecraftForge.EVENT_BUS`; every event class carries its own
+  static `BUS` (`TickEvent.ServerTickEvent.Post.BUS.addListener(...)`), and events are records
+  (`event.server()`, not `getServer()`). `ModList` is a static facade (`ModList.isLoaded`).
+- **Networking:** the `ChannelBuilder.named(..).payloadChannel()` flow builder is unchanged from 1.21.1
+  (still `optional()`, accept-all version test, `canReceive`/`canSendToServer` via
+  `NetworkContext.getRemoteChannels()`); `ForgeNetwork` additionally registers the seven 26.x
+  server-driven recipe-book payloads behind a `//? if >=1.21.11` directive, mirroring
+  `NeoForgeMod.onRegisterPayloads`.
+- **Metadata:** `loaderVersion` is the Forge major (`[64,)` / `[65,)` / `[66,)`; the javafml provider
+  ships with the Forge version). `displayTest = "IGNORE_ALL_VERSION"` is still honoured.
+- **Mixin:** Forge bundles Mixin 0.8.7, whose newest compatibility level is `JAVA_21`, so loading our
+  Java-25-compiled mixin classes logs "Class version 69 required is higher than ... JAVA_21 supports
+  class version 65" per mixin class. It is only a warning; the mixins apply.
+- **Dev-run caveat:** a Forge dev client connecting to a non-Forge server crashes in `Level.guardEntityTick`
+  ("Cannot get config value before config is loaded", a dev-only strictness in `ForgeConfigSpec`, no mod
+  frames). Quick-play a singleplayer world (`-Psc.world=<save>`) or connect to a Forge dev server.
 
 ## Core model
 

@@ -5,6 +5,8 @@ loaderVersion = "${forge_loader_version_range}" #mandatory
 license = "${license}" # Review your options at https://choosealicense.com/.
 issueTrackerURL = "https://github.com/legoj15/SprawlCrafting/issues" #optional
 logoFile = "assets/sprawlcrafting/icon.png" #optional — shared with Fabric; resolved from JAR root
+# The optional JEI entry below is emitted only on nodes that pin a jei_version (build.forge.gradle.kts:
+# has_jei); Forge has no JEI build on 26.x.
 # Forge has no [[mixins]] block: the Mixin config is named by the jar manifest's MixinConfigs attribute
 # (build.forge.gradle.kts), which Forge's bundled Mixin reads.
 [[mods]] #mandatory
@@ -32,9 +34,9 @@ description = '''${description}''' #mandatory (Supports multiline text)
     versionRange = "${minecraft_version_range}"
     ordering = "NONE"
     side = "BOTH"
-[[dependencies.${mod_id}]]
+<% if (has_jei) { %>[[dependencies.${mod_id}]]
     modId = "jei"
     mandatory = false
     versionRange = "[19,)"
     ordering = "AFTER"
-    side = "CLIENT"
+    side = "CLIENT"<% } %>

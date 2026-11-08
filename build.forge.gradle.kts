@@ -2,20 +2,26 @@
 // MinecraftForge, NOT NeoForge (build.neoforge.gradle.kts): different plugin, different loader API,
 // different mods.toml. The plugin's version is declared `apply false` in stonecutter.gradle.kts.
 //
-// Forge for 1.21.1 runs Mojang's official names at runtime (no reobf since 1.20.6), so the shared
-// Mojmap source compiles against Forge directly, exactly like the NeoForge node.
+// Forge for 1.21.1 and 26.x runs Mojang's official names at runtime (no reobf since 1.20.6; 26.x is
+// unobfuscated), so the shared Mojmap source compiles against Forge directly, exactly like the NeoForge
+// nodes. Nodes: 1.21.1 (Java 21, Parchment, JEI, jar-in-jarred MixinExtras) and 26.1.2 / 26.2 / 26.3
+// (Java 25, pure Mojmap, no JEI because no Forge JEI exists for 26.x, MixinExtras bundled by Forge itself).
+// Which of those extras a node gets is decided purely by which props its gradle.properties sets.
 plugins {
     id("java")
     id("net.minecraftforge.gradle")
-    // Jar-in-jar for MixinExtras (the one thing Forge 1.21.1 does not bundle that our mixins need).
+    // Jar-in-jar for MixinExtras (the one thing Forge 1.21.1 does not bundle that our mixins need). Applied
+    // on every node, but only registered (jarJar.register below) when the node pins mixinextras_version.
     id("net.minecraftforge.jarjar")
 }
 
 // Per-node values, resolved from versions/<node>/gradle.properties (inheriting root gradle.properties).
 val minecraftVersion = property("minecraft_version") as String
 val forgeVersion = property("forge_version") as String
-val jeiVersion = property("jei_version") as String
-val mixinExtrasVersion = property("mixinextras_version") as String
+// JEI has a Forge build on the 1.21.1 line only (no Forge JEI exists for 26.x); null on nodes that omit the prop.
+val jeiVersion = project.findProperty("jei_version") as String?
+// MixinExtras is jar-in-jarred only where the Forge line does not bundle it (1.21.1); null elsewhere.
+val mixinExtrasVersion = project.findProperty("mixinextras_version") as String?
 val javaVersion = (property("java_version") as String).toInt()
 // Parchment is 1.x-only (no post-cutoff 26.x release); null on nodes that omit the props.
 val parchmentMc = project.findProperty("parchment_minecraft") as String?
@@ -32,9 +38,12 @@ val modCredits = property("credits") as String
 val forgeLoaderRange = property("forge_loader_version_range") as String
 val forgeVersionRange = property("forge_version_range") as String
 val mcVersionRange = property("minecraft_version_range") as String
-// REI has no Forge 1.21.1 build; this stays false unless a future Forge node pins rei_version.
+// REI has no Forge build on any line; this stays false unless a future Forge node pins rei_version.
 val hasRei = project.findProperty("rei_version") != null
-// Jar naming (sprawlcrafting-<ver>+mc<mc>-forge.jar), shared by the slim `jar` and the shipped `jarJar`.
+// JEI's compat layer (compat/jei, @JeiPlugin) exists only on nodes that pin a jei_version.
+val hasJei = jeiVersion != null
+// Jar naming (sprawlcrafting-<ver>+mc<mc>-forge.jar), shared by the slim `jar` and the shipped `jarJar`
+// (or by the plain `jar` alone on nodes without jar-in-jar).
 val jarBaseName = "sprawlcrafting"
 val jarVersion = "$modVersion+mc$minecraftVersion-forge"
 
@@ -42,7 +51,7 @@ val jarVersion = "$modVersion+mc$minecraftVersion-forge"
 // SHARED: the regex rename tiers (ResourceLocation -> Identifier, Minecraft.screen -> gui.screen(),
 // RenderPipeline -> renderpearl, ...) live ONCE in the controller (stonecutter.gradle.kts, inside
 // `stonecutter parameters { replacements { ... } }`) and apply to every node, so this script needs no
-// copy. On this 1.21.1 node every tier's direction is false, i.e. they are no-ops.
+// copy. On the 1.21.1 node every tier's direction is false, i.e. they are no-ops; the 26.x nodes run them.
 
 java {
     toolchain { languageVersion = JavaLanguageVersion.of(javaVersion) }
@@ -105,10 +114,12 @@ minecraft {
 // Registers the `jarJar` configuration + task (must precede the dependency declarations below). The
 // shipped artifact is the jar-in-jar ("all") jar with no classifier; the plain classes-only `jar`
 // becomes the "-slim" intermediate (the root buildAndCollect skips it).
-jarJar.register {
-    archiveClassifier = null
-    archiveBaseName = jarBaseName
-    archiveVersion = jarVersion
+if (mixinExtrasVersion != null) {
+    jarJar.register {
+        archiveClassifier = null
+        archiveBaseName = jarBaseName
+        archiveVersion = jarVersion
+    }
 }
 
 dependencies {
@@ -119,18 +130,23 @@ dependencies {
     implementation(minecraft.dependency("net.minecraftforge:forge:$minecraftVersion-$forgeVersion"))
 
     // JEI: API for compile, full mod on the dev runtime so runClient exercises the integration.
-    compileOnly("mezz.jei:jei-$minecraftVersion-common-api:$jeiVersion")
-    compileOnly("mezz.jei:jei-$minecraftVersion-forge-api:$jeiVersion")
-    if (viewer == "jei" || viewer == "both") {
-        runtimeOnly("mezz.jei:jei-$minecraftVersion-forge:$jeiVersion")
+    // Only on nodes that pin a jei_version (Forge 1.21.1); nothing is resolved or fetched otherwise.
+    if (jeiVersion != null) {
+        compileOnly("mezz.jei:jei-$minecraftVersion-common-api:$jeiVersion")
+        compileOnly("mezz.jei:jei-$minecraftVersion-forge-api:$jeiVersion")
+        if (viewer == "jei" || viewer == "both") {
+            runtimeOnly("mezz.jei:jei-$minecraftVersion-forge:$jeiVersion")
+        }
     }
 
     // MixinExtras: compile against the common API, load the Forge loader jar on the dev runtime, and
     // jar-in-jar it into the shipped mod (the JarJar plugin constrains the bundled copy to
     // [version,), so another mod's newer MixinExtras wins).
-    compileOnly("io.github.llamalad7:mixinextras-common:$mixinExtrasVersion")
-    runtimeOnly("io.github.llamalad7:mixinextras-forge:$mixinExtrasVersion")
-    "jarJar"("io.github.llamalad7:mixinextras-forge:$mixinExtrasVersion")
+    if (mixinExtrasVersion != null) {
+        compileOnly("io.github.llamalad7:mixinextras-common:$mixinExtrasVersion")
+        runtimeOnly("io.github.llamalad7:mixinextras-forge:$mixinExtrasVersion")
+        "jarJar"("io.github.llamalad7:mixinextras-forge:$mixinExtrasVersion")
+    }
 
     testImplementation(platform("org.junit:junit-bom:5.10.3"))
     testImplementation("org.junit.jupiter:junit-jupiter")
@@ -144,6 +160,9 @@ tasks.withType<JavaCompile>().configureEach {
     exclude("**/platform/neoforge/**")
     exclude("**/gametest/neoforge/**") // NeoForge-specific game-test registration (src/test)
     exclude("**/*ModMenu*")            // Mod Menu is Fabric-only
+    if (!hasJei) {
+        exclude("**/compat/jei/**")    // no Forge JEI build on this line (26.x)
+    }
     if (!hasRei) {
         exclude("**/compat/rei/**")
         exclude("**/*ReiPlugin*")
@@ -167,7 +186,8 @@ tasks.processResources {
         "credits" to modCredits,
         "forge_version_range" to forgeVersionRange,
         "forge_loader_version_range" to forgeLoaderRange,
-        "minecraft_version_range" to mcVersionRange
+        "minecraft_version_range" to mcVersionRange,
+        "has_jei" to hasJei
     )
     inputs.properties(replaceProperties)
     filesMatching("META-INF/mods.toml") { expand(replaceProperties) }
@@ -183,7 +203,8 @@ tasks.named("compileJava") {
 }
 
 tasks.jar {
-    archiveClassifier = "slim"
+    // With jar-in-jar the plain classes-only jar is the "-slim" intermediate; without it, this IS the shipped jar.
+    archiveClassifier = if (mixinExtrasVersion != null) "slim" else null
     archiveBaseName = jarBaseName
     archiveVersion = jarVersion
     // Forge's Mixin reads this manifest attribute to find the shared config (the dev runs above pass

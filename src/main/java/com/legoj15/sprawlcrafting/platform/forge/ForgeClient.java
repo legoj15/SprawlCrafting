@@ -10,7 +10,9 @@ import com.legoj15.sprawlcrafting.config.SprawlConfig;
 
 import net.minecraftforge.client.ConfigScreenHandler;
 import net.minecraftforge.client.event.ClientPlayerNetworkEvent;
+//? if <1.21.11 {
 import net.minecraftforge.common.MinecraftForge;
+//?}
 import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext;
 
@@ -30,8 +32,14 @@ final class ForgeClient {
         // The mod-list "Config" button: the factory hands back our screen with the list as its parent.
         context.registerExtensionPoint(ConfigScreenHandler.ConfigScreenFactory.class,
                 () -> new ConfigScreenHandler.ConfigScreenFactory((mc, modListScreen) -> new SprawlConfigScreen(modListScreen)));
+        // Forge 26.x (EventBus 7) has no MinecraftForge.EVENT_BUS: every event class carries its own static BUS.
+        //? if >=1.21.11 {
+        /*ClientPlayerNetworkEvent.LoggingOut.BUS.addListener(ForgeClient::onLoggingOut);
+        TickEvent.ClientTickEvent.Post.BUS.addListener(ForgeClient::onClientTick);*/
+        //?} else {
         MinecraftForge.EVENT_BUS.addListener(ForgeClient::onLoggingOut);
         MinecraftForge.EVENT_BUS.addListener(ForgeClient::onClientTick);
+        //?}
     }
 
     private static void onLoggingOut(ClientPlayerNetworkEvent.LoggingOut event) {

@@ -15,9 +15,9 @@ plugins {
     // 2.0.148 (from 2.0.141): the older NeoFormRuntime failed to recompile MC 26.3 ("contents() ...
     // weaker access" in HolderSet). Applies to every NeoForge node; all four rebuilt + gametests green.
     id("net.neoforged.moddev") version "2.0.148" apply false
-    // MinecraftForge (NOT NeoForge) for the 1.21.1-forge node. ForgeGradle 7 needs Gradle >= 9.3.
+    // MinecraftForge (NOT NeoForge) for the <mc>-forge nodes (1.21.1 and 26.x). ForgeGradle 7 needs Gradle >= 9.3.
     id("net.minecraftforge.gradle") version "7.0.40" apply false
-    // Jar-in-jar for the Forge node (bundles MixinExtras, which Forge 1.21.1 does not ship).
+    // Jar-in-jar for the 1.21.1 Forge node (bundles MixinExtras, which Forge 1.21.1 does not ship; Forge 26.x does).
     id("net.minecraftforge.jarjar") version "0.2.3" apply false
 }
 
@@ -160,7 +160,7 @@ stonecutter parameters {
 // Named `buildAndCollect` for uniformity with BuildCraft's task of the same purpose (theirs is
 // per-node and collects into build/libs/<version>/; this one is a single root task with an explicit
 // node list, collecting into testing/dist/ where the release matrix stages from).
-val releaseNodes = listOf("1.20.1-fabric", "1.21.1-fabric", "1.21.1-neoforge", "1.21.1-forge", "26.1.2-neoforge", "26.1.2-fabric", "26.2-neoforge", "26.2-fabric", "26.3-neoforge", "26.3-fabric")
+val releaseNodes = listOf("1.20.1-fabric", "1.21.1-fabric", "1.21.1-neoforge", "1.21.1-forge", "26.1.2-neoforge", "26.1.2-fabric", "26.1.2-forge", "26.2-neoforge", "26.2-fabric", "26.2-forge", "26.3-neoforge", "26.3-fabric", "26.3-forge")
 // Project-scope reads: inside a task block `property()` resolves against the TASK, not the project.
 val modVersion = property("version") as String
 val distDir = layout.projectDirectory.dir("testing/dist").asFile.toPath()

@@ -6,7 +6,7 @@ Factorio-style crafting for the vanilla inventory and crafting table. Request a 
 
 Works with the vanilla recipe book and with JEI/REI.
 
-**Minecraft 1.12.2 (Forge), 1.21.1, 26.1.2, 26.2, and 26.3 · Fabric and NeoForge, plus Forge on 1.21.1.**
+**Minecraft 1.12.2 (Forge), 1.21.1, 26.1.2, 26.2, and 26.3 · Fabric and NeoForge, plus Forge on 1.21.1, 26.1.2, 26.2, and 26.3.**
 
 ## How it works
 
@@ -36,11 +36,11 @@ Right-click a **red** recipe (or left-click the **orange** gather button in JEI/
 ## Compatibility
 
 - **Minecraft:** 1.12.2, 1.21.1, 26.1.2, 26.2, or 26.3
-- **Loaders:** Forge (1.12.2 and 1.21.1), Fabric or NeoForge
+- **Loaders:** Forge (1.12.2, 1.21.1, 26.1.2, 26.2, 26.3), Fabric or NeoForge
 - **Fabric** also requires **Fabric API** (like most mods)
 - **1.12.2** also requires **MixinBooter** on the client - it loads SprawlCrafting's recipe-book and JEI mixins, and without it the game stops at an error screen telling you to install it. (A dedicated server doesn't need it.)
 - **Optional integrations:**
-  - **JEI** - adds the deferred-craft and gather buttons (all Minecraft versions)
+  - **JEI** - adds the deferred-craft and gather buttons (all Minecraft versions, except Forge 26.x: no JEI exists for it)
   - **REI** - same buttons (1.21.1 on Fabric or NeoForge)
   - **Mod Menu** - in-game config button (all Fabric versions)
 
@@ -50,7 +50,7 @@ Multiplayer is supported; install the mod on both the client and the server. A v
 
 Every setting defaults to **on** and can be changed in-game or by editing the config file; edits apply immediately.
 
-- **Fabric / NeoForge** (1.21.1, 26.1.2, 26.2, 26.3) and **Forge 1.21.1**: the file is `config/sprawlcrafting.json`; edit it in-game via Mod Menu (Fabric) or the mod-config screen (NeoForge, Forge).
+- **Fabric / NeoForge** (1.21.1, 26.1.2, 26.2, 26.3) and **Forge** (1.21.1, 26.1.2, 26.2, 26.3): the file is `config/sprawlcrafting.json`; edit it in-game via Mod Menu (Fabric) or the mod-config screen (NeoForge, Forge).
 - **1.12.2 (Forge):** the file is `config/sprawlcrafting.cfg`; edit it in-game via the **Config** button on SprawlCrafting's entry in the Mods list. This build has three settings, not four - there's no REI toggle (REI is Fabric-only) - and they appear under their display names (*Sound effects*, *JEI integration*, *Needs helper*).
 
 | Setting | What it does |
