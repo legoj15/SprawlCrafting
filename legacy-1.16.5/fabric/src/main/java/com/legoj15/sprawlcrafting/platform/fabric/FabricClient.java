@@ -1,0 +1,33 @@
+package com.legoj15.sprawlcrafting.platform.fabric;
+
+import com.legoj15.sprawlcrafting.client.ClientJobTracker;
+import com.legoj15.sprawlcrafting.client.CraftingScreenWatcher;
+import com.legoj15.sprawlcrafting.client.MixinSelfCheck;
+import com.legoj15.sprawlcrafting.config.SprawlConfig;
+import com.legoj15.sprawlcrafting.network.CraftProgressPacket;
+
+import net.fabricmc.api.ClientModInitializer;
+import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
+import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
+import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
+
+public class FabricClient implements ClientModInitializer {
+
+    @Override
+    public void onInitializeClient() {
+        SprawlConfig.get(); // load (and create on first run) the config at client start
+        // Decoded on the netty thread, applied on the render thread.
+        ClientPlayNetworking.registerGlobalReceiver(CraftProgressPacket.ID,
+                (client, handler, buf, sender) -> {
+                    final CraftProgressPacket packet = CraftProgressPacket.read(buf);
+                    client.execute(() -> ClientJobTracker.accept(packet));
+                });
+        // Tell the server which crafting grid is on screen (only while a job is active), so a
+        // deferred craft's final step can be handed off to it for the player to grab.
+        ClientTickEvents.END_CLIENT_TICK.register(client -> CraftingScreenWatcher.clientTick());
+        // Drop all per-session client state on disconnect so nothing leaks into the next world.
+        ClientPlayConnectionEvents.DISCONNECT.register((handler, client) ->
+                client.execute(CraftingScreenWatcher::resetAllClientState));
+        MixinSelfCheck.runIfRequested(); // dev-only, SC_MIXIN_SELFTEST=1
+    }
+}

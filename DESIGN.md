@@ -20,6 +20,7 @@ separate 1.12.2 Forge port.
 | 26.2 | Fabric, NeoForge | Stonecutter node | 25 |
 | 26.3 | Fabric, NeoForge | Stonecutter node | 25 |
 | 1.12.2 | Forge | separate RFG build | 25 host / Java 8 output |
+| 1.16.5 | Forge, Fabric | separate FG7 + Loom build (`legacy-1.16.5/`) | 21 host / Java 8 output |
 
 The modern loaders (1.21.1 / 26.x) share one source set via **Stonecutter**: `src/` is
 preprocessed per node into `versions/<node>/`, eight nodes total. Cross-version API
@@ -172,6 +173,8 @@ never receives an unsolicited packet.
   (`stonecutter.gradle.kts`, `build.<loader>.gradle.kts`).
 - `solver-core/` — the Minecraft-free planner + its JUnit suite; compiled into every build.
 - `forge-1.12.2/` — the separate legacy Forge build (RFG); also compiles in `solver-core`.
+- `legacy-1.16.5/` — the separate 1.16.5 Forge + Fabric build (shared `common/` source, Java 8);
+  also compiles in `solver-core`. Agent notes: [`docs/legacy-1.16.5.md`](docs/legacy-1.16.5.md).
 - `release/` — the publish pipeline (GitHub / Modrinth / CurseForge / `update.json`).
 - `testing/` — the boot-and-connect verification matrix per node.
 - `branding/` — mod logo and icon art.

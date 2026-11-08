@@ -1,0 +1,13 @@
+pluginManagement {
+    repositories {
+        maven { url = 'https://maven.fabricmc.net/'; name = 'Fabric' }
+        gradlePluginPortal()
+        mavenCentral()
+    }
+}
+plugins {
+    id 'org.gradle.toolchains.foojay-resolver-convention' version '1.0.0'
+}
+rootProject.name = 'sprawlcrafting-legacy-1.16.5'
+include 'forge'
+include 'fabric'

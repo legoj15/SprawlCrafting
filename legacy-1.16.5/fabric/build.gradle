@@ -1,0 +1,142 @@
+// =====================================================================================
+// SprawlCrafting :: Minecraft 1.16.5 Fabric (Loom remap variant, Java 8 bytecode)
+//
+// NAMING TRAP (see docs/legacy-1.16.5.md): Forge 1.16.5's "official" mappings keep the MCP/SRG
+// CLASS names (net.minecraft.item.crafting.IRecipe, ...) and only take Mojang's MEMBER names.
+// Plain Loom Mojmap would name classes the Mojang way (net.minecraft.world.item.crafting.Recipe),
+// so the shared common/ source could not compile on both loaders. We therefore layer a class-only
+// mapping (obf -> MCP class name, generated below from MCPConfig's joined.tsrg) over
+// officialMojangMappings(), which makes Fabric's dev names IDENTICAL to Forge's. Production is
+// unaffected: Loom still remaps the jar + refmap to intermediary.
+// =====================================================================================
+plugins {
+    id 'java'
+    id 'net.fabricmc.fabric-loom-remap'
+}
+
+def rootVersion = rootProject.ext.modVersion
+version = rootVersion
+group = 'com.legoj15.sprawlcrafting'
+
+java.toolchain.languageVersion = JavaLanguageVersion.of(8)
+
+repositories {
+    maven { url = 'https://maven.fabricmc.net/' }
+    maven { url = 'https://maven.terraformersmc.com/releases'; content { includeGroup 'com.terraformersmc' } }
+    mavenCentral()
+}
+
+// ---- Forge-compatible class names (obf -> MCP) as a Loom file mapping layer ----------------------
+// Fetched with a plain HTTP download, not a Gradle configuration: resolving a configuration here (at
+// configuration time, before Loom adds its repositories) makes Loom fail with "Cannot mutate content
+// repository descriptor ... after repository has been used".
+def mcpConfigVersion = project.mcp_config_version
+def mcpConfigUrl = "https://maven.minecraftforge.net/de/oceanlabs/mcp/mcp_config/${mcpConfigVersion}/mcp_config-${mcpConfigVersion}.zip"
+def forgeNamesFile = layout.buildDirectory.file("forge-class-names/${mcpConfigVersion}.tiny").get().asFile
+if (!forgeNamesFile.exists()) {
+    def zip = layout.buildDirectory.file("forge-class-names/mcp_config-${mcpConfigVersion}.zip").get().asFile
+    if (!zip.exists()) {
+        zip.parentFile.mkdirs()
+        new URL(mcpConfigUrl).withInputStream { input -> zip.withOutputStream { out -> out << input } }
+    }
+    def lines = new StringBuilder("tiny\t2\t0\tofficial\tnamed\n")
+    def zf = new java.util.zip.ZipFile(zip)
+    try {
+        def entry = zf.getEntry('config/joined.tsrg')
+        zf.getInputStream(entry).withReader('UTF-8') { reader ->
+            reader.eachLine { line ->
+                // tsrg v1: class lines have no leading tab ("obf srgName"); members are tab-indented.
+                if (line && !line.startsWith('\t')) {
+                    def parts = line.trim().split(' ')
+                    if (parts.length == 2 && !parts[0].endsWith('/')) { // skip package lines
+                        lines.append('c\t').append(parts[0]).append('\t').append(parts[1]).append('\n')
+                    }
+                }
+            }
+        }
+    } finally {
+        zf.close()
+    }
+    forgeNamesFile.parentFile.mkdirs()
+    forgeNamesFile.text = lines.toString()
+}
+
+sourceSets {
+    main {
+        java {
+            srcDir '../common/src/main/java'
+            srcDir '../../solver-core/src/main/java'
+        }
+        resources {
+            srcDir '../common/src/main/resources'
+        }
+    }
+    test {
+        java { srcDir '../../solver-core/src/test/java' }
+    }
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:$minecraft_version"
+    mappings loom.layered {
+        officialMojangMappings()
+        mappings(forgeNamesFile) { mergeNamespace('official') }
+    }
+    modImplementation "net.fabricmc:fabric-loader:$fabric_loader_version"
+    modImplementation "net.fabricmc.fabric-api:fabric-api:$fabric_api_version"
+
+    // Mod Menu: optional in-game config button. Compile-only + Loom-remapped; the player supplies it.
+    modCompileOnly("com.terraformersmc:modmenu:$modmenu_version") { transitive = false }
+
+    testImplementation platform('org.junit:junit-bom:5.10.3')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+loom {
+    mixin {
+        // Loom 1.17 defaults to remapping mixins without a refmap; the legacy AP emits the
+        // intermediary refmap that Fabric Loader 0.16 on 1.16.5 reads (and that the brief checks).
+        useLegacyMixinAp = true
+        defaultRefmapName = 'sprawlcrafting.refmap.json'
+    }
+    runs {
+        named('client') {
+            client()
+            runDir 'run'
+        }
+        named('server') {
+            server()
+            runDir 'run-server'
+        }
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+}
+
+processResources {
+    def props = [
+            version              : rootVersion,
+            minecraft_version    : project.minecraft_version,
+            fabric_loader_version: project.fabric_loader_version
+    ]
+    inputs.properties(props)
+    filesMatching('fabric.mod.json') { expand(props) }
+}
+
+tasks.named('remapJar') {
+    archiveBaseName.set('sprawlcrafting')
+    archiveVersion.set("${rootVersion}+mc${project.minecraft_version}-fabric")
+    archiveClassifier.set('')
+}
+tasks.named('jar') {
+    archiveBaseName.set('sprawlcrafting')
+    archiveVersion.set("${rootVersion}+mc${project.minecraft_version}-fabric")
+    archiveClassifier.set('dev')
+}
