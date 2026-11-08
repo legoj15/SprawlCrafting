@@ -1,7 +1,8 @@
 // ─── Stonecutter controller (root project build script) ─────────────────────
 // This is the Tree controller, NOT the per-node build. The actual mod builds live in the
 // per-node scripts assigned in settings.gradle.kts: build.fabric-o.gradle.kts (Loom-remap)
-// and build.neoforge.gradle.kts (ModDevGradle). Each runs once per version node.
+// and build.neoforge.gradle.kts (ModDevGradle), plus build.forge.gradle.kts (ForgeGradle 7) for the
+// MinecraftForge node. Each runs once per version node.
 //
 // The loader plugins are declared here with `apply false` so their versions are known to
 // every node subproject; each node applies its own (version-less) in its build script.
@@ -14,6 +15,10 @@ plugins {
     // 2.0.148 (from 2.0.141): the older NeoFormRuntime failed to recompile MC 26.3 ("contents() ...
     // weaker access" in HolderSet). Applies to every NeoForge node; all four rebuilt + gametests green.
     id("net.neoforged.moddev") version "2.0.148" apply false
+    // MinecraftForge (NOT NeoForge) for the 1.21.1-forge node. ForgeGradle 7 needs Gradle >= 9.3.
+    id("net.minecraftforge.gradle") version "7.0.40" apply false
+    // Jar-in-jar for the Forge node (bundles MixinExtras, which Forge 1.21.1 does not ship).
+    id("net.minecraftforge.jarjar") version "0.2.3" apply false
 }
 
 // The active node — what the IDE/runClient sees and what `compileJava` builds.
@@ -22,22 +27,94 @@ stonecutter active "1.21.1-fabric" /* [SC] DO NOT EDIT */
 
 stonecutter parameters {
     // Per-node boolean constants for //? directives. The node project is named "<mc>-<loader>",
-    // so the trailing segment is the loader: defines fabric/neoforge true for the matching node.
-    constants.match(current.project.substringAfterLast('-'), "fabric", "neoforge")
+    // so the trailing segment is the loader: defines fabric/neoforge/forge true for the matching node.
+    constants.match(current.project.substringAfterLast('-'), "fabric", "neoforge", "forge")
     // REI ships compatible builds on the 1.21.1 line only (no 26.1.2 release), so its compat
     // layer is gated on the MC version rather than the loader.
     constants["rei"] = current.version == "1.21.1"
+
+    // ─── Source replacements (forward-port the 1.21.1-canonical source to 26.x) ──────────────────
+    // ONE copy for every node and loader (it used to be duplicated in each per-node script). The shared
+    // source is authored in the 1.21.1 form. `direction` is true only on the node versions named below, so
+    // the forward rename runs there; on older nodes the reverse pair runs but matches nothing in the
+    // canonical source (no-op), keeping the green 1.21.1 nodes untouched. Word boundaries (\b) avoid
+    // clobbering substrings (e.g. ResourceLocationArgument, IdentifierException).
+    val is1_21_11Plus = eval(current.version, ">=1.21.11")
+    // 26.2 is the first MC line that diverges from the 26.1.x API (not just from 1.21.1), so it needs its
+    // own forward-port tier layered on top of the >=1.21.11 one.
+    val is26_2Plus = eval(current.version, ">=26.2")
+    // 26.3 moved the render-pipeline API out of blaze3d into the new renderpearl package.
+    val is26_3Plus = eval(current.version, ">=26.3")
+    replacements {
+        // MC 1.21.11 renamed net.minecraft.resources.ResourceLocation -> Identifier (same package).
+        regex {
+            direction.set(is1_21_11Plus)
+            replace("\\bResourceLocation\\b", "Identifier", "\\bIdentifier\\b", "ResourceLocation")
+        }
+        regex {
+            direction.set(is1_21_11Plus)
+            replace("\\bResourceLocationArgument\\b", "IdentifierArgument", "\\bIdentifierArgument\\b", "ResourceLocationArgument")
+        }
+        // net.minecraft.Util moved to net.minecraft.util.Util.
+        regex {
+            direction.set(is1_21_11Plus)
+            replace("\\bnet\\.minecraft\\.Util\\b", "net.minecraft.util.Util", "\\bnet\\.minecraft\\.util\\.Util\\b", "net.minecraft.Util")
+        }
+        // GameRules moved into the net.minecraft.world.level.gamerules subpackage.
+        regex {
+            direction.set(is1_21_11Plus)
+            replace("net\\.minecraft\\.world\\.level\\.GameRules\\b", "net.minecraft.world.level.gamerules.GameRules", "net\\.minecraft\\.world\\.level\\.gamerules\\.GameRules\\b", "net.minecraft.world.level.GameRules")
+        }
+        // MC 26.2 moved screen/overlay/toast management off Minecraft and onto the Minecraft.gui (Gui)
+        // instance: minecraft.screen -> minecraft.gui.screen(); setScreen(..) -> gui.setScreen(..);
+        // getToastManager() -> gui.toastManager(). These run only on >=26.2 nodes (26.1.x keeps the
+        // Minecraft-level members), layering on top of the >=1.21.11 forward-port above.
+        regex {
+            direction.set(is26_2Plus)
+            replace("\\.getToastManager\\(\\)", ".gui.toastManager()", "\\.gui\\.toastManager\\(\\)", ".getToastManager()")
+        }
+        regex {
+            direction.set(is26_2Plus)
+            replace("\\.setScreen\\(", ".gui.setScreen(", "\\.gui\\.setScreen\\(", ".setScreen(")
+        }
+        regex {
+            direction.set(is26_2Plus)
+            replace("\\bMinecraft\\.getInstance\\(\\)\\.screen\\b", "Minecraft.getInstance().gui.screen()", "\\bMinecraft\\.getInstance\\(\\)\\.gui\\.screen\\(\\)", "Minecraft.getInstance().screen")
+        }
+        regex {
+            direction.set(is26_2Plus)
+            replace("\\bminecraft\\.screen\\b", "minecraft.gui.screen()", "\\bminecraft\\.gui\\.screen\\(\\)", "minecraft.screen")
+        }
+        regex {
+            direction.set(is26_2Plus)
+            replace("\\bmc\\.screen\\b", "mc.gui.screen()", "\\bmc\\.gui\\.screen\\(\\)", "mc.screen")
+        }
+        // MC 26.3 moved RenderPipeline from com.mojang.blaze3d.pipeline to com.mojang.renderpearl.api.pipeline.
+        // Both spellings are rewritten: the Java import AND the JVM descriptor in the RecipeButtonMixin @At
+        // target string, which a type-only rename would leave pointing at a class that no longer exists
+        // (the injection would then fail at runtime, not at compile time).
+        regex {
+            direction.set(is26_3Plus)
+            replace("\\bcom\\.mojang\\.blaze3d\\.pipeline\\.RenderPipeline\\b", "com.mojang.renderpearl.api.pipeline.RenderPipeline", "\\bcom\\.mojang\\.renderpearl\\.api\\.pipeline\\.RenderPipeline\\b", "com.mojang.blaze3d.pipeline.RenderPipeline")
+        }
+        regex {
+            direction.set(is26_3Plus)
+            // No leading \b: in a descriptor the class name follows the `L` type tag, a word character.
+            replace("Lcom/mojang/blaze3d/pipeline/RenderPipeline;", "Lcom/mojang/renderpearl/api/pipeline/RenderPipeline;", "Lcom/mojang/renderpearl/api/pipeline/RenderPipeline;", "Lcom/mojang/blaze3d/pipeline/RenderPipeline;")
+        }
+    }
 }
 
 // ─── Production-test jar collection ──────────────────────────────────────────────────────────
 // Build every node's PRODUCTION jar (Loom's remapped/intermediary jar for fabric; the MDG jar for
-// neoforge — modern NeoForge runs Mojmaps so dev == prod) and gather them into testing/dist/ for the
+// neoforge and forge — modern NeoForge and Forge 1.21.1 run Mojmaps so dev == prod) and gather them into testing/dist/ for the
 // release matrix (testing/Invoke-ReleaseTests.ps1) to stage onto real servers + Prism clients.
-// Excludes -sources and Loom's named-mapping -dev jar (which won't run in a production runtime).
+// Excludes -sources, Loom's named-mapping -dev jar (which won't run in a production runtime) and
+// Forge's -slim jar (the classes-only intermediate; the shipped jar is the jar-in-jar one).
 // Named `buildAndCollect` for uniformity with BuildCraft's task of the same purpose (theirs is
 // per-node and collects into build/libs/<version>/; this one is a single root task with an explicit
 // node list, collecting into testing/dist/ where the release matrix stages from).
-val releaseNodes = listOf("1.21.1-fabric", "1.21.1-neoforge", "26.1.2-neoforge", "26.1.2-fabric", "26.2-neoforge", "26.2-fabric", "26.3-neoforge", "26.3-fabric")
+val releaseNodes = listOf("1.21.1-fabric", "1.21.1-neoforge", "1.21.1-forge", "26.1.2-neoforge", "26.1.2-fabric", "26.2-neoforge", "26.2-fabric", "26.3-neoforge", "26.3-fabric")
 // Project-scope reads: inside a task block `property()` resolves against the TASK, not the project.
 val modVersion = property("version") as String
 val distDir = layout.projectDirectory.dir("testing/dist").asFile.toPath()
@@ -49,7 +126,7 @@ tasks.register<Copy>("buildAndCollect") {
     releaseNodes.forEach { node ->
         from("versions/$node/build/libs") {
             include("sprawlcrafting-*.jar")
-            exclude("*-sources.jar", "*-dev.jar")
+            exclude("*-sources.jar", "*-dev.jar", "*-slim.jar") // -slim: Forge's classes-only jar, pre jar-in-jar
         }
     }
     into(layout.projectDirectory.dir("testing/dist"))

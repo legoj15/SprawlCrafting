@@ -3,6 +3,7 @@ pluginManagement {
         mavenLocal()
         maven("https://maven.fabricmc.net/") { name = "Fabric" }
         maven("https://maven.neoforged.net/releases") { name = "NeoForged" }
+        maven("https://maven.minecraftforge.net/") { name = "MinecraftForge" } // ForgeGradle 7 (1.21.1-forge node)
         maven("https://maven.kikugie.dev/releases") { name = "KikuGie Releases" }
         maven("https://maven.kikugie.dev/snapshots") { name = "KikuGie Snapshots" }
         maven("https://maven.parchmentmc.org") { name = "ParchmentMC" }
@@ -23,7 +24,7 @@ stonecutter {
         fun match(version: String, vararg loaders: String) =
             loaders.forEach { version("$version-$it", version).buildscript = getBuildscript(it, version) }
 
-        match("1.21.1", "fabric", "neoforge")
+        match("1.21.1", "fabric", "neoforge", "forge")
         // Phase 2b complete: NeoForge-26 surfaced the API cliffs; the code port now compiles, so the
         // 26.1.2-fabric node (modern plain Loom, build.fabric-m.gradle.kts) brings Fabric to parity.
         match("26.1.2", "neoforge", "fabric")
@@ -39,7 +40,8 @@ stonecutter {
 }
 
 // Old MC lines (1.x) use Loom's remapping variant against the shared Mojmap source; modern
-// CalVer lines (26.x) use plain Loom. NeoForge uses ModDevGradle on every line.
+// CalVer lines (26.x) use plain Loom. NeoForge uses ModDevGradle on every line; MinecraftForge
+// (only the 1.21.1 line so far) uses ForgeGradle 7 (build.forge.gradle.kts).
 fun getBuildscript(loader: String, version: String): String {
     if (loader == "fabric") {
         return if (version.startsWith("1.")) "build.fabric-o.gradle.kts" else "build.fabric-m.gradle.kts"

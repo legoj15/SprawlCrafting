@@ -24,6 +24,14 @@ public interface IPlatformHelper {
     void sendToServer(CustomPacketPayload payload);
 
     /**
+     * Sends a custom payload from the server to {@code player}. Callers guard this with
+     * {@link #canReceive} so a vanilla/modless client is skipped. Fabric and NeoForge wrap the payload
+     * in the plain vanilla packet (their registries hook the vanilla codec); Forge cannot, because its
+     * vanilla-packet codec only encodes its own wrapper type, so it routes through its channel.
+     */
+    void sendToPlayer(ServerPlayer player, CustomPacketPayload payload);
+
+    /**
      * Gets the name of the current platform
      *
      * @return The name of the current platform.
