@@ -4,12 +4,29 @@
 //
 // Forge for 1.21.1 runs Mojang's official names at runtime (no reobf since 1.20.6), so the shared
 // Mojmap source compiles against Forge directly, exactly like the NeoForge node.
+//
+// Forge BELOW 1.20.6 (the 1.20.1 node, Forge 47) still runs SRG names (m_/f_) at runtime. The source is
+// the same Mojmap source (dev runs are Mojmap), but the shipped jar must be reobfuscated: on those nodes
+// (`srgRuntime` below) this script also applies the Renamer plugin, runs the Mixin + MixinExtras
+// annotation processors to write an SRG refmap, renames SRG-published dependencies (JEI) to dev names,
+// and renames the final jar to SRG. Everything SRG-only is behind `if (srgRuntime)`, so the 1.21.1 node's
+// build is unchanged. One script rather than a sibling: the two lines share every other line of it.
 plugins {
     id("java")
     id("net.minecraftforge.gradle")
     // Jar-in-jar for MixinExtras (the one thing Forge 1.21.1 does not bundle that our mixins need).
     id("net.minecraftforge.jarjar")
 }
+
+// SRG-at-runtime Forge lines (see the header). Forge dropped reobf in 1.20.6.
+val srgRuntime = stonecutter.eval(stonecutter.current.version, "<1.20.6")
+// Imperative (not in plugins {}) so the 1.21.1 node never applies it; the version comes from the
+// controller's `apply false` declaration, which also puts its classes on this script's classpath.
+// Resolved here at project scope (inside dependencies {} `the<>()` would hit the DependencyHandler).
+val renamer: net.minecraftforge.renamer.gradle.RenamerExtension? = if (srgRuntime) {
+    apply(plugin = "net.minecraftforge.renamer")
+    the<net.minecraftforge.renamer.gradle.RenamerExtension>()
+} else null
 
 // Per-node values, resolved from versions/<node>/gradle.properties (inheriting root gradle.properties).
 val minecraftVersion = property("minecraft_version") as String
@@ -32,6 +49,7 @@ val modCredits = property("credits") as String
 val forgeLoaderRange = property("forge_loader_version_range") as String
 val forgeVersionRange = property("forge_version_range") as String
 val mcVersionRange = property("minecraft_version_range") as String
+val jeiVersionRange = property("jei_version_range") as String
 // REI has no Forge 1.21.1 build; this stays false unless a future Forge node pins rei_version.
 val hasRei = project.findProperty("rei_version") != null
 // Jar naming (sprawlcrafting-<ver>+mc<mc>-forge.jar), shared by the slim `jar` and the shipped `jarJar`.
@@ -47,6 +65,10 @@ val jarVersion = "$modVersion+mc$minecraftVersion-forge"
 java {
     toolchain { languageVersion = JavaLanguageVersion.of(javaVersion) }
 }
+
+// Old-line adjustments shared with build.fabric-o.gradle.kts (mixin compatibilityLevel below Java 21,
+// PayloadCodecTest exclusion below 1.20.5). No-ops on the 1.21.1 node.
+apply(from = rootProject.file("gradle/legacy-node.gradle.kts"))
 
 // ─── Shared solver-core module ───────────────────────────────────────────────────────────────
 // The loader/version-agnostic craft solver (RecipeGraphSolver + PlannedStep + its test suite) lives
@@ -86,8 +108,11 @@ minecraft {
         configureEach {
             workingDir.convention(layout.projectDirectory.dir("run"))
             // Mixin has no manifest to read on the dev classpath (the built jar carries MixinConfigs),
-            // so name the shared config on the command line for every dev run.
-            args("--mixin.config=$modId.mixins.json")
+            // so name the shared config on the command line for every dev run. On SRG nodes Renamer's
+            // enableMixinRefmaps (below) already adds `--mixin.config <config>` to every run.
+            if (!srgRuntime) {
+                args("--mixin.config=$modId.mixins.json")
+            }
         }
         register("client") {
             // Test harness hook: -Psc.connect=host:port auto-connects the dev client (quick-play).
@@ -119,10 +144,29 @@ dependencies {
     implementation(minecraft.dependency("net.minecraftforge:forge:$minecraftVersion-$forgeVersion"))
 
     // JEI: API for compile, full mod on the dev runtime so runClient exercises the integration.
+    // common-api is published in Mojmap on every line.
     compileOnly("mezz.jei:jei-$minecraftVersion-common-api:$jeiVersion")
-    compileOnly("mezz.jei:jei-$minecraftVersion-forge-api:$jeiVersion")
-    if (viewer == "jei" || viewer == "both") {
-        runtimeOnly("mezz.jei:jei-$minecraftVersion-forge:$jeiVersion")
+    if (srgRuntime) {
+        // On SRG lines JEI's Forge jars are published reobfuscated (SRG): rename them to dev names.
+        // The runtime jar carries an SRG access transformer, renamed too so it applies in dev.
+        val rn = renamer!!
+        compileOnly(rn.dependency("mezz.jei:jei-$minecraftVersion-forge-api:$jeiVersion"))
+        if (viewer == "jei" || viewer == "both") {
+            runtimeOnly(rn.dependency("mezz.jei:jei-$minecraftVersion-forge:$jeiVersion") {
+                accessTransformers.set(true)
+            })
+            // JEI 15.74 hard-depends on mezz_config, which it ships jar-in-jar. Renamer does not touch
+            // nested jars, so in dev that copy keeps its SRG references (NoSuchMethodError on boot).
+            // A renamed copy of the same version on the dev classpath is what loads instead.
+            (project.findProperty("mezz_config_version") as String?)?.let {
+                runtimeOnly(rn.dependency("net.mezzdev.config:mezz_config-$minecraftVersion-forge:$it"))
+            }
+        }
+    } else {
+        compileOnly("mezz.jei:jei-$minecraftVersion-forge-api:$jeiVersion")
+        if (viewer == "jei" || viewer == "both") {
+            runtimeOnly("mezz.jei:jei-$minecraftVersion-forge:$jeiVersion")
+        }
     }
 
     // MixinExtras: compile against the common API, load the Forge loader jar on the dev runtime, and
@@ -131,6 +175,14 @@ dependencies {
     compileOnly("io.github.llamalad7:mixinextras-common:$mixinExtrasVersion")
     runtimeOnly("io.github.llamalad7:mixinextras-forge:$mixinExtrasVersion")
     "jarJar"("io.github.llamalad7:mixinextras-forge:$mixinExtrasVersion")
+
+    if (srgRuntime) {
+        // Annotation processors that write the refmap (Mojmap -> SRG) Renamer ships in the jar: Mixin's
+        // own (the same 0.8.5 Forge 47 bundles) for @Inject/@Shadow/@Accessor, and MixinExtras' for
+        // @WrapOperation, which Mixin's processor does not know.
+        annotationProcessor("org.spongepowered:mixin:0.8.5:processor")
+        annotationProcessor("io.github.llamalad7:mixinextras-common:$mixinExtrasVersion")
+    }
 
     testImplementation(platform("org.junit:junit-bom:5.10.3"))
     testImplementation("org.junit.jupiter:junit-jupiter")
@@ -167,7 +219,8 @@ tasks.processResources {
         "credits" to modCredits,
         "forge_version_range" to forgeVersionRange,
         "forge_loader_version_range" to forgeLoaderRange,
-        "minecraft_version_range" to mcVersionRange
+        "minecraft_version_range" to mcVersionRange,
+        "jei_version_range" to jeiVersionRange
     )
     inputs.properties(replaceProperties)
     filesMatching("META-INF/mods.toml") { expand(replaceProperties) }
@@ -191,4 +244,31 @@ tasks.jar {
     manifest {
         attributes["MixinConfigs"] = "$modId.mixins.json"
     }
+}
+
+// ─── SRG reobfuscation (Forge < 1.20.6 only) ─────────────────────────────────────────────────
+// Chain on these nodes: jar (Mojmap classes + the AP's SRG refmap, "-slim") -> jarJar (+ nested
+// MixinExtras, "-dev"; still Mojmap, not for players) -> renameJarJar (Mojmap -> SRG classes, no classifier:
+// the shipped sprawlcrafting-<ver>+mc<mc>-forge.jar). The root buildAndCollect skips -slim and -dev.
+if (srgRuntime) {
+    val rn = renamer!!
+    // Default mapping for every Renamer task here (the JEI dependency renames above included): the
+    // Mavenizer's named -> SRG map for this node's Minecraft dependency.
+    rn.mappings(minecraft.dependency.toSrg)
+    // Mixin AP config: writes the refmap in SRG plus the extra mappings (mixin-class shadows/accessors)
+    // renameJarJar needs to rename those members too.
+    rn.enableMixinRefmaps {
+        config("$modId.mixins.json")
+        refMap.set("$modId.refmap.json")
+    }
+    tasks.named<Jar>("jarJar") {
+        archiveClassifier = "dev"
+    }
+    val renameJar = rn.classes(tasks.named<Jar>("jarJar")) {
+        // RenameJar is not an archive task (no archiveVersion): name the output file directly.
+        archiveClassifier.set("")
+        output.set(layout.buildDirectory.file("libs/$jarBaseName-$jarVersion.jar"))
+        mappings(rn.mixin.generatedMappings)
+    }
+    tasks.named("assemble") { dependsOn(renameJar) }
 }

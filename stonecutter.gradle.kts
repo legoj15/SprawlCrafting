@@ -19,6 +19,9 @@ plugins {
     id("net.minecraftforge.gradle") version "7.0.40" apply false
     // Jar-in-jar for the Forge node (bundles MixinExtras, which Forge 1.21.1 does not ship).
     id("net.minecraftforge.jarjar") version "0.2.3" apply false
+    // SRG reobf for Forge nodes whose runtime still uses SRG names (1.20.1-forge): renames the jar
+    // named -> SRG and rewrites the Mixin refmap. Same version the legacy-1.16.5 Forge build uses.
+    id("net.minecraftforge.renamer") version "1.1.8" apply false
 }
 
 // The active node — what the IDE/runClient sees and what `compileJava` builds.
@@ -46,8 +49,8 @@ stonecutter parameters {
     // 26.3 moved the render-pipeline API out of blaze3d into the new renderpearl package.
     val is26_3Plus = eval(current.version, ">=26.3")
     // ─── Back-port replacements (1.21.1-canonical source down to 1.20.x) ─────────────────────
-    // Declared here, not in a loader script, so every loader on these lines (1.20.1-fabric now, a
-    // 1.20.1-forge node later) gets the identical source rewrite. Each pair runs forward only on the
+    // Declared here, not in a loader script, so every loader on these lines (1.20.1-fabric and
+    // 1.20.1-forge) gets the identical source rewrite. Each pair runs forward only on the
     // older nodes; on 1.21.1+ the reverse pattern never matches canonical source, so it is a no-op.
     // The canonical (1.21.1) source must therefore never contain the reverse-side spellings:
     // `new ResourceLocation(`, `RecipeBookMenu<?>`, `isSameItemSameTags`,
@@ -156,11 +159,12 @@ stonecutter parameters {
 // neoforge and forge — modern NeoForge and Forge 1.21.1 run Mojmaps so dev == prod) and gather them into testing/dist/ for the
 // release matrix (testing/Invoke-ReleaseTests.ps1) to stage onto real servers + Prism clients.
 // Excludes -sources, Loom's named-mapping -dev jar (which won't run in a production runtime) and
-// Forge's -slim jar (the classes-only intermediate; the shipped jar is the jar-in-jar one).
+// Forge's -slim jar (the classes-only intermediate; the shipped jar is the jar-in-jar one). On
+// 1.20.1-forge (SRG runtime) the shipped jar is Renamer's SRG output; its Mojmap jar-in-jar is the -dev jar.
 // Named `buildAndCollect` for uniformity with BuildCraft's task of the same purpose (theirs is
 // per-node and collects into build/libs/<version>/; this one is a single root task with an explicit
 // node list, collecting into testing/dist/ where the release matrix stages from).
-val releaseNodes = listOf("1.20.1-fabric", "1.21.1-fabric", "1.21.1-neoforge", "1.21.1-forge", "26.1.2-neoforge", "26.1.2-fabric", "26.2-neoforge", "26.2-fabric", "26.3-neoforge", "26.3-fabric")
+val releaseNodes = listOf("1.20.1-fabric", "1.20.1-forge", "1.21.1-fabric", "1.21.1-neoforge", "1.21.1-forge", "26.1.2-neoforge", "26.1.2-fabric", "26.2-neoforge", "26.2-fabric", "26.3-neoforge", "26.3-fabric")
 // Project-scope reads: inside a task block `property()` resolves against the TASK, not the project.
 val modVersion = property("version") as String
 val distDir = layout.projectDirectory.dir("testing/dist").asFile.toPath()

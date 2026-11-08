@@ -7,6 +7,10 @@ plugins {
 // Per-node values, resolved from versions/<node>/gradle.properties (inheriting root gradle.properties).
 val minecraftVersion = property("minecraft_version") as String
 val fabricLoaderVersion = property("fabric_loader_version") as String
+// The fabricloader floor written into fabric.mod.json. Defaults to the dev-runtime pin; a node sets
+// fabric_loader_min when its dev runtime needs a newer loader than players do (1.20.1: JEI 15.74 forces
+// 0.19.4 in dev, while fabric-api 0.92.12 itself only needs 0.16.10).
+val fabricLoaderMin = (project.findProperty("fabric_loader_min") as String?) ?: fabricLoaderVersion
 val fabricApiVersion = property("fabric_version") as String
 val jeiVersion = property("jei_version") as String
 val javaVersion = (property("java_version") as String).toInt()
@@ -24,17 +28,13 @@ val hasRei = project.findProperty("rei_version") != null
 // Mod Menu provides the in-game config-screen button on Fabric; present only on nodes that pin a
 // modmenu_version (1.21.1). Where absent, the integration class is excluded (same gating as REI).
 val hasModMenu = project.findProperty("modmenu_version") != null
-// Pre-1.20.5 lines have no StreamCodec/CustomPacketPayload.Type: payloads serialize through
-// write/read(FriendlyByteBuf) instead, so the StreamCodec wire test can't compile there
-// (LegacyPayloadBufTest covers the legacy format on those nodes).
-val legacyNetworking = stonecutter.eval(stonecutter.current.version, "<1.20.5")
-
-// Mixin compatibilityLevel for this node's Java (the source mixins.json says JAVA_21).
-val mixinJava = if (javaVersion < 21) "JAVA_$javaVersion" else "JAVA_21"
-
 java {
     toolchain { languageVersion = JavaLanguageVersion.of(javaVersion) }
 }
+
+// Old-line adjustments shared with build.forge.gradle.kts (mixin compatibilityLevel below Java 21,
+// PayloadCodecTest exclusion below 1.20.5). No-ops on the 1.21.1 node.
+apply(from = rootProject.file("gradle/legacy-node.gradle.kts"))
 
 // ─── Shared solver-core module ───────────────────────────────────────────────────────────────
 // The loader/version-agnostic craft solver (RecipeGraphSolver + PlannedStep + its test suite) lives
@@ -142,9 +142,6 @@ tasks.withType<JavaCompile>().configureEach {
     if (!hasModMenu) {
         exclude("**/*ModMenu*") // no Mod Menu build for this node → drop the integration class
     }
-    if (legacyNetworking) {
-        exclude("**/network/PayloadCodecTest*")
-    }
 }
 
 tasks.test {
@@ -159,16 +156,12 @@ tasks.processResources {
         "mod_author" to modAuthor,
         "description" to modDescription,
         "license" to modLicense,
-        "fabric_loader_version" to fabricLoaderVersion,
+        "fabric_loader_min" to fabricLoaderMin,
         "minecraft_version" to minecraftVersion,
         "java_version" to javaVersion.toString()
     )
     inputs.properties(replaceProperties)
     filesMatching("fabric.mod.json") { expand(replaceProperties) }
-    // The mixin config is authored for Java 21; a node on an older Java (1.20.1 = 17) must declare a
-    // compatibility level its runtime supports, or Mixin rejects the config at boot.
-    inputs.property("mixin_java", mixinJava)
-    filesMatching("$modId.mixins.json") { filter { it.replace("\"JAVA_21\"", "\"$mixinJava\"") } }
     // Don't ship the NeoForge or Forge metadata in the Fabric jar.
     exclude("META-INF/neoforge.mods.toml")
     exclude("META-INF/mods.toml")

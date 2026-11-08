@@ -10,6 +10,8 @@ plugins {
 // Per-node values, resolved from versions/<node>/gradle.properties (inheriting root gradle.properties).
 val minecraftVersion = property("minecraft_version") as String
 val fabricLoaderVersion = property("fabric_loader_version") as String
+// fabricloader floor for fabric.mod.json (see build.fabric-o.gradle.kts); defaults to the dev pin.
+val fabricLoaderMin = (project.findProperty("fabric_loader_min") as String?) ?: fabricLoaderVersion
 val fabricApiVersion = property("fabric_version") as String
 val jeiVersion = property("jei_version") as String
 val javaVersion = (property("java_version") as String).toInt()
@@ -148,7 +150,7 @@ tasks.processResources {
         "mod_author" to modAuthor,
         "description" to modDescription,
         "license" to modLicense,
-        "fabric_loader_version" to fabricLoaderVersion,
+        "fabric_loader_min" to fabricLoaderMin,
         "minecraft_version" to minecraftVersion,
         "java_version" to javaVersion.toString()
     )
