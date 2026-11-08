@@ -26,74 +26,10 @@ val hasRei = project.findProperty("rei_version") != null
 // 26.1.x line pins 18.x (a pre-release; see gradle.properties), so hasModMenu is true here.
 val hasModMenu = project.findProperty("modmenu_version") != null
 
-// ─── Stonecutter source replacements (forward-port 1.21.1-canonical source to 26.x) ──────────
-// Same as the neoforge node: the shared source is authored in 1.21.1 form, and these renames run
-// only on >=1.21.11 nodes. 26.1 is pure Mojmap, and Mojang renamed these classes regardless of
-// loader, so the fabric-26 node needs the identical forward-port (otherwise the source keeps
-// ResourceLocation while MC 26.1.2 ships Identifier). On 1.21.1 the reverse pair is a no-op.
-val is1_21_11Plus = stonecutter.eval(stonecutter.current.version, ">=1.21.11")
-// 26.2 is the first MC line that diverges from the 26.1.x API (not just from 1.21.1), so it needs its
-// own forward-port tier layered on top of the >=1.21.11 one below.
-val is26_2Plus = stonecutter.eval(stonecutter.current.version, ">=26.2")
-// 26.3 moved the render-pipeline API out of blaze3d into the new renderpearl package.
-val is26_3Plus = stonecutter.eval(stonecutter.current.version, ">=26.3")
-stonecutter {
-    replacements {
-        regex {
-            direction.set(is1_21_11Plus)
-            replace("\\bResourceLocation\\b", "Identifier", "\\bIdentifier\\b", "ResourceLocation")
-        }
-        regex {
-            direction.set(is1_21_11Plus)
-            replace("\\bResourceLocationArgument\\b", "IdentifierArgument", "\\bIdentifierArgument\\b", "ResourceLocationArgument")
-        }
-        regex {
-            direction.set(is1_21_11Plus)
-            replace("\\bnet\\.minecraft\\.Util\\b", "net.minecraft.util.Util", "\\bnet\\.minecraft\\.util\\.Util\\b", "net.minecraft.Util")
-        }
-        regex {
-            direction.set(is1_21_11Plus)
-            replace("net\\.minecraft\\.world\\.level\\.GameRules\\b", "net.minecraft.world.level.gamerules.GameRules", "net\\.minecraft\\.world\\.level\\.gamerules\\.GameRules\\b", "net.minecraft.world.level.GameRules")
-        }
-        // MC 26.2 moved screen/overlay/toast management off Minecraft and onto the Minecraft.gui (Gui)
-        // instance: minecraft.screen -> minecraft.gui.screen(); setScreen(..) -> gui.setScreen(..);
-        // getToastManager() -> gui.toastManager(). These run only on >=26.2 nodes (26.1.x keeps the
-        // Minecraft-level members), layering on top of the >=1.21.11 forward-port above.
-        regex {
-            direction.set(is26_2Plus)
-            replace("\\.getToastManager\\(\\)", ".gui.toastManager()", "\\.gui\\.toastManager\\(\\)", ".getToastManager()")
-        }
-        regex {
-            direction.set(is26_2Plus)
-            replace("\\.setScreen\\(", ".gui.setScreen(", "\\.gui\\.setScreen\\(", ".setScreen(")
-        }
-        regex {
-            direction.set(is26_2Plus)
-            replace("\\bMinecraft\\.getInstance\\(\\)\\.screen\\b", "Minecraft.getInstance().gui.screen()", "\\bMinecraft\\.getInstance\\(\\)\\.gui\\.screen\\(\\)", "Minecraft.getInstance().screen")
-        }
-        regex {
-            direction.set(is26_2Plus)
-            replace("\\bminecraft\\.screen\\b", "minecraft.gui.screen()", "\\bminecraft\\.gui\\.screen\\(\\)", "minecraft.screen")
-        }
-        regex {
-            direction.set(is26_2Plus)
-            replace("\\bmc\\.screen\\b", "mc.gui.screen()", "\\bmc\\.gui\\.screen\\(\\)", "mc.screen")
-        }
-        // MC 26.3 moved RenderPipeline from com.mojang.blaze3d.pipeline to com.mojang.renderpearl.api.pipeline.
-        // Both spellings are rewritten: the Java import AND the JVM descriptor in the RecipeButtonMixin @At
-        // target string, which a type-only rename would leave pointing at a class that no longer exists
-        // (the injection would then fail at runtime, not at compile time).
-        regex {
-            direction.set(is26_3Plus)
-            replace("\\bcom\\.mojang\\.blaze3d\\.pipeline\\.RenderPipeline\\b", "com.mojang.renderpearl.api.pipeline.RenderPipeline", "\\bcom\\.mojang\\.renderpearl\\.api\\.pipeline\\.RenderPipeline\\b", "com.mojang.blaze3d.pipeline.RenderPipeline")
-        }
-        regex {
-            direction.set(is26_3Plus)
-            // No leading \b: in a descriptor the class name follows the `L` type tag, a word character.
-            replace("Lcom/mojang/blaze3d/pipeline/RenderPipeline;", "Lcom/mojang/renderpearl/api/pipeline/RenderPipeline;", "Lcom/mojang/renderpearl/api/pipeline/RenderPipeline;", "Lcom/mojang/blaze3d/pipeline/RenderPipeline;")
-        }
-    }
-}
+// ─── Stonecutter source replacements ─────────────────────────────────────────────────────────
+// The forward-port regex tiers (ResourceLocation -> Identifier, Minecraft.screen -> gui.screen(),
+// RenderPipeline -> renderpearl, ...) are defined ONCE for every node in the controller,
+// stonecutter.gradle.kts, inside `stonecutter parameters { replacements { ... } }`.
 
 java {
     toolchain { languageVersion = JavaLanguageVersion.of(javaVersion) }
@@ -189,6 +125,7 @@ loom {
 // Keep the other loader's source — and, where REI is absent, the REI compat — out of this compile.
 tasks.withType<JavaCompile>().configureEach {
     exclude("**/platform/neoforge/**")
+    exclude("**/platform/forge/**")    // MinecraftForge platform layer
     exclude("**/gametest/neoforge/**") // NeoForge-specific game-test registration (src/test)
     if (!hasRei) {
         exclude("**/compat/rei/**")
@@ -217,8 +154,9 @@ tasks.processResources {
     )
     inputs.properties(replaceProperties)
     filesMatching("fabric.mod.json") { expand(replaceProperties) }
-    // Don't ship the NeoForge metadata in the Fabric jar.
+    // Don't ship the NeoForge or Forge metadata in the Fabric jar.
     exclude("META-INF/neoforge.mods.toml")
+    exclude("META-INF/mods.toml")
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 }
 

@@ -118,8 +118,8 @@ public final class DeferredCraftSync {
                 recipes.listDisplaysForRecipe(holder.id(), entry -> displayIds.add(entry.id().index()));
             }
         }
-        player.connection.send(new net.minecraft.network.protocol.common.ClientboundCustomPayloadPacket(
-                new DeferredCraftableSyncPayload(grid.ordinal(), displayIds, recipeIds)));
+        Services.PLATFORM.sendToPlayer(player,
+                new DeferredCraftableSyncPayload(grid.ordinal(), displayIds, recipeIds));
         // Record only after a successful push, so a tick that was throttled or that the client could
         // not receive doesn't poison the debounce (it would otherwise mark this state "synced" without
         // the client ever getting it).
@@ -193,8 +193,8 @@ public final class DeferredCraftSync {
             }
         }
         if (Services.PLATFORM.canReceive(player, com.legoj15.sprawlcrafting.network.CraftPreviewPayload.TYPE.id())) {
-            player.connection.send(new net.minecraft.network.protocol.common.ClientboundCustomPayloadPacket(
-                    new com.legoj15.sprawlcrafting.network.CraftPreviewPayload(displayId, lines)));
+            Services.PLATFORM.sendToPlayer(player,
+                    new com.legoj15.sprawlcrafting.network.CraftPreviewPayload(displayId, lines));
         }*/
         //?}
     }
@@ -226,9 +226,9 @@ public final class DeferredCraftSync {
                 ? ShortfallView.unavailable()
                 : CraftPlanner.shortfall(player, holder, GridContext.CRAFTING_TABLE);
         if (Services.PLATFORM.canReceive(player, com.legoj15.sprawlcrafting.network.ShortfallPayload.TYPE.id())) {
-            player.connection.send(new net.minecraft.network.protocol.common.ClientboundCustomPayloadPacket(
+            Services.PLATFORM.sendToPlayer(player,
                     new com.legoj15.sprawlcrafting.network.ShortfallPayload(
-                            token, view.targetItem(), view.targetCount(), view.approximate(), view.demands())));
+                            token, view.targetItem(), view.targetCount(), view.approximate(), view.demands()));
         }
     }*/
     //?}

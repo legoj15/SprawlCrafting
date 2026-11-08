@@ -27,77 +27,10 @@ val mcVersionRange = property("minecraft_version_range") as String
 // REI ships on the 1.21.1 line only; its presence is signalled by a node-level rei_version.
 val hasRei = project.findProperty("rei_version") != null
 
-// ─── Stonecutter source replacements (forward-port 1.21.1-canonical source to 26.x) ──────────
-// The shared source is authored in the 1.21.1 form. `direction` is true only on >=1.21.11 nodes
-// (i.e. 26.x), so the forward rename runs there; on 1.21.1 the reverse pair runs but matches
-// nothing in the canonical source (no-op), keeping the green 1.21.1 node untouched. Word
-// boundaries (\b) avoid clobbering substrings (e.g. ResourceLocationArgument, IdentifierException).
-val is1_21_11Plus = stonecutter.eval(stonecutter.current.version, ">=1.21.11")
-// 26.2 is the first MC line that diverges from the 26.1.x API (not just from 1.21.1), so it needs its
-// own forward-port tier layered on top of the >=1.21.11 one below.
-val is26_2Plus = stonecutter.eval(stonecutter.current.version, ">=26.2")
-// 26.3 moved the render-pipeline API out of blaze3d into the new renderpearl package.
-val is26_3Plus = stonecutter.eval(stonecutter.current.version, ">=26.3")
-stonecutter {
-    replacements {
-        // MC 1.21.11 renamed net.minecraft.resources.ResourceLocation -> Identifier (same package).
-        regex {
-            direction.set(is1_21_11Plus)
-            replace("\\bResourceLocation\\b", "Identifier", "\\bIdentifier\\b", "ResourceLocation")
-        }
-        regex {
-            direction.set(is1_21_11Plus)
-            replace("\\bResourceLocationArgument\\b", "IdentifierArgument", "\\bIdentifierArgument\\b", "ResourceLocationArgument")
-        }
-        // net.minecraft.Util moved to net.minecraft.util.Util.
-        regex {
-            direction.set(is1_21_11Plus)
-            replace("\\bnet\\.minecraft\\.Util\\b", "net.minecraft.util.Util", "\\bnet\\.minecraft\\.util\\.Util\\b", "net.minecraft.Util")
-        }
-        // GameRules moved into the net.minecraft.world.level.gamerules subpackage.
-        regex {
-            direction.set(is1_21_11Plus)
-            replace("net\\.minecraft\\.world\\.level\\.GameRules\\b", "net.minecraft.world.level.gamerules.GameRules", "net\\.minecraft\\.world\\.level\\.gamerules\\.GameRules\\b", "net.minecraft.world.level.GameRules")
-        }
-        // MC 26.2 moved screen/overlay/toast management off Minecraft and onto the Minecraft.gui (Gui)
-        // instance: minecraft.screen -> minecraft.gui.screen(); setScreen(..) -> gui.setScreen(..);
-        // getToastManager() -> gui.toastManager(). These run only on >=26.2 nodes (26.1.x keeps the
-        // Minecraft-level members), layering on top of the >=1.21.11 forward-port above.
-        regex {
-            direction.set(is26_2Plus)
-            replace("\\.getToastManager\\(\\)", ".gui.toastManager()", "\\.gui\\.toastManager\\(\\)", ".getToastManager()")
-        }
-        regex {
-            direction.set(is26_2Plus)
-            replace("\\.setScreen\\(", ".gui.setScreen(", "\\.gui\\.setScreen\\(", ".setScreen(")
-        }
-        regex {
-            direction.set(is26_2Plus)
-            replace("\\bMinecraft\\.getInstance\\(\\)\\.screen\\b", "Minecraft.getInstance().gui.screen()", "\\bMinecraft\\.getInstance\\(\\)\\.gui\\.screen\\(\\)", "Minecraft.getInstance().screen")
-        }
-        regex {
-            direction.set(is26_2Plus)
-            replace("\\bminecraft\\.screen\\b", "minecraft.gui.screen()", "\\bminecraft\\.gui\\.screen\\(\\)", "minecraft.screen")
-        }
-        regex {
-            direction.set(is26_2Plus)
-            replace("\\bmc\\.screen\\b", "mc.gui.screen()", "\\bmc\\.gui\\.screen\\(\\)", "mc.screen")
-        }
-        // MC 26.3 moved RenderPipeline from com.mojang.blaze3d.pipeline to com.mojang.renderpearl.api.pipeline.
-        // Both spellings are rewritten: the Java import AND the JVM descriptor in the RecipeButtonMixin @At
-        // target string, which a type-only rename would leave pointing at a class that no longer exists
-        // (the injection would then fail at runtime, not at compile time).
-        regex {
-            direction.set(is26_3Plus)
-            replace("\\bcom\\.mojang\\.blaze3d\\.pipeline\\.RenderPipeline\\b", "com.mojang.renderpearl.api.pipeline.RenderPipeline", "\\bcom\\.mojang\\.renderpearl\\.api\\.pipeline\\.RenderPipeline\\b", "com.mojang.blaze3d.pipeline.RenderPipeline")
-        }
-        regex {
-            direction.set(is26_3Plus)
-            // No leading \b: in a descriptor the class name follows the `L` type tag, a word character.
-            replace("Lcom/mojang/blaze3d/pipeline/RenderPipeline;", "Lcom/mojang/renderpearl/api/pipeline/RenderPipeline;", "Lcom/mojang/renderpearl/api/pipeline/RenderPipeline;", "Lcom/mojang/blaze3d/pipeline/RenderPipeline;")
-        }
-    }
-}
+// ─── Stonecutter source replacements ─────────────────────────────────────────────────────────
+// The forward-port regex tiers (ResourceLocation -> Identifier, Minecraft.screen -> gui.screen(),
+// RenderPipeline -> renderpearl, ...) are defined ONCE for every node in the controller,
+// stonecutter.gradle.kts, inside `stonecutter parameters { replacements { ... } }`.
 
 java {
     toolchain { languageVersion = JavaLanguageVersion.of(javaVersion) }
@@ -220,6 +153,7 @@ dependencies {
 // Keep the other loader's source — and, where REI is absent, the REI compat — out of this compile.
 tasks.withType<JavaCompile>().configureEach {
     exclude("**/platform/fabric/**")
+    exclude("**/platform/forge/**")    // MinecraftForge platform layer
     if (!hasRei) {
         exclude("**/compat/rei/**")
         exclude("**/*ReiPlugin*")
@@ -247,8 +181,9 @@ tasks.processResources {
     )
     inputs.properties(replaceProperties)
     filesMatching("META-INF/neoforge.mods.toml") { expand(replaceProperties) }
-    // Don't ship the Fabric metadata in the NeoForge jar.
+    // Don't ship the Fabric or (MinecraftForge) Forge metadata in the NeoForge jar.
     exclude("fabric.mod.json")
+    exclude("META-INF/mods.toml")
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 }
 

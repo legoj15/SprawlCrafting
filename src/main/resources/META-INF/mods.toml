@@ -1,0 +1,40 @@
+# MinecraftForge metadata (NOT NeoForge: that is META-INF/neoforge.mods.toml). Each node's build script
+# ships exactly one loader's metadata and excludes the others.
+modLoader = "javafml" #mandatory
+loaderVersion = "${forge_loader_version_range}" #mandatory
+license = "${license}" # Review your options at https://choosealicense.com/.
+issueTrackerURL = "https://github.com/legoj15/SprawlCrafting/issues" #optional
+logoFile = "assets/sprawlcrafting/icon.png" #optional — shared with Fabric; resolved from JAR root
+# Forge has no [[mixins]] block: the Mixin config is named by the jar manifest's MixinConfigs attribute
+# (build.forge.gradle.kts), which Forge's bundled Mixin reads.
+[[mods]] #mandatory
+modId = "${mod_id}" #mandatory
+version = "${version}" #mandatory
+displayName = "${mod_name}" #mandatory
+updateJSONURL = "https://raw.githubusercontent.com/legoj15/SprawlCrafting/main/update.json" #optional (see https://docs.minecraftforge.net/en/latest/misc/updatechecker/)
+displayURL = "https://github.com/legoj15/SprawlCrafting" #optional (displayed in the mod UI)
+credits = "${credits}" #optional
+authors = "${mod_author}" #optional
+# The mod must never gate server access on its own presence: IGNORE_ALL_VERSION shows no red X in the
+# server list whether it is on the client, the server, both, or neither (the payload channel is
+# registered optional in code for the same reason).
+displayTest = "IGNORE_ALL_VERSION" #optional
+description = '''${description}''' #mandatory (Supports multiline text)
+[[dependencies.${mod_id}]] #optional
+    modId = "forge" #mandatory
+    mandatory = true #mandatory
+    versionRange = "${forge_version_range}" #mandatory — the verified support range, NOT the build pin
+    ordering = "NONE"
+    side = "BOTH"
+[[dependencies.${mod_id}]]
+    modId = "minecraft"
+    mandatory = true
+    versionRange = "${minecraft_version_range}"
+    ordering = "NONE"
+    side = "BOTH"
+[[dependencies.${mod_id}]]
+    modId = "jei"
+    mandatory = false
+    versionRange = "[19,)"
+    ordering = "AFTER"
+    side = "CLIENT"

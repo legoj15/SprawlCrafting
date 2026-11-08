@@ -15,19 +15,49 @@ separate 1.12.2 Forge port.
 
 | Minecraft | Loaders | Build | JDK |
 |---|---|---|---|
-| 1.21.1 | Fabric, NeoForge | Stonecutter node | 21 |
+| 1.21.1 | Fabric, NeoForge, Forge | Stonecutter node | 21 |
 | 26.1.2 | Fabric, NeoForge | Stonecutter node | 25 |
 | 26.2 | Fabric, NeoForge | Stonecutter node | 25 |
 | 26.3 | Fabric, NeoForge | Stonecutter node | 25 |
 | 1.12.2 | Forge | separate RFG build | 25 host / Java 8 output |
 
 The modern loaders (1.21.1 / 26.x) share one source set via **Stonecutter**: `src/` is
-preprocessed per node into `versions/<node>/`, eight nodes total. Cross-version API
+preprocessed per node into `versions/<node>/`, nine nodes total. Cross-version API
 differences are handled inline with Stonecutter comment directives (e.g.
 `//? if >=1.21.11 { … }`). The **1.12.2 Forge** target is a separate, self-contained Gradle
 build (RetroFuturaGradle) because the legacy and modern toolchains can't coexist; see
 [`forge-1.12.2/README.md`](forge-1.12.2/README.md). Both trees compile in the same
 Minecraft-free planner (below).
+
+## The Forge 1.21.1 node (`1.21.1-forge`)
+
+MinecraftForge (not NeoForge) on 1.21.1, at feature parity with `1.21.1-neoforge`. Facts a future
+Forge node (26.x) needs:
+
+- **Build:** `build.forge.gradle.kts` on ForgeGradle 7 (`net.minecraftforge.gradle`, plus
+  `net.minecraftforge.jarjar`; both declared `apply false` in the controller and share the root
+  classloader with Loom and ModDevGradle without conflict). Forge 1.21.1 runs Mojmap at runtime, so
+  the shared source compiles as-is. Dev runs need `net.minecraftforge.gradle.merge-source-sets=true`
+  in the ROOT `gradle.properties` (the plugin ignores it in a node's file), or FML sees the
+  resources dir as a mod with no classes ("constructed 0 mods"). The shipped jar is the jar-in-jar
+  output (`sprawlcrafting-<ver>+mc1.21.1-forge.jar`); the classes-only `-slim.jar` is skipped by
+  `buildAndCollect`.
+- **Source replacements** (the 26.x forward-port regexes) live once in the controller's
+  `stonecutter parameters { replacements { … } }`, not in the per-node scripts.
+- **Metadata:** `META-INF/mods.toml` (Forge) is a different file from `neoforge.mods.toml`; every
+  node's script excludes the other loaders' metadata. Forge has no `[[mixins]]` block: the shared
+  `sprawlcrafting.mixins.json` is named by the jar manifest `MixinConfigs` attribute (dev runs pass
+  `--mixin.config=`). `displayTest = "IGNORE_ALL_VERSION"` keeps the server list free of red Xs.
+- **MixinExtras:** Forge 1.21.1 does not bundle it (Fabric Loader and NeoForge do), and
+  `RecipeButtonMixin` uses `@WrapOperation`, so the node jar-in-jars `mixinextras-forge`.
+- **Networking:** one optional `ChannelBuilder.payloadChannel()` (`platform/forge/ForgeNetwork`) that
+  accepts every protocol version, so it can never gate a connection. Payload type ids are the wire
+  ids, identical to the other loaders. Forge's patched vanilla codec can only encode its own wrapper,
+  so a raw `ClientboundCustomPayloadPacket(payload)` cannot be sent: all server-to-client sends go
+  through `IPlatformHelper.sendToPlayer` (Fabric/NeoForge keep the plain vanilla packet there).
+  `canReceive`/`canSendToServer` read the remote's registered channel list from `NetworkContext`.
+- **Not on this node:** REI (no Forge 1.21.1 build) and Mod Menu (Fabric-only); excluded by leaving
+  `rei_version` / `modmenu_version` unset. JEI works unchanged (`@JeiPlugin` is annotation-scanned).
 
 ## Core model
 
@@ -169,7 +199,7 @@ never receives an unsolicited packet.
 
 - `src/` — modern shared gameplay logic (`craft/` package), recipe-book / JEI / REI mixins,
   toast rendering, networking; preprocessed per node into `versions/<node>/` by Stonecutter
-  (`stonecutter.gradle.kts`, `build.<loader>.gradle.kts`).
+  (`stonecutter.gradle.kts`, `build.<loader>.gradle.kts`); loader code in `platform/{fabric,neoforge,forge}`.
 - `solver-core/` — the Minecraft-free planner + its JUnit suite; compiled into every build.
 - `forge-1.12.2/` — the separate legacy Forge build (RFG); also compiles in `solver-core`.
 - `release/` — the publish pipeline (GitHub / Modrinth / CurseForge / `update.json`).

@@ -10,7 +10,6 @@ import com.legoj15.sprawlcrafting.platform.Services;
 
 import net.minecraft.ChatFormatting;
 import net.minecraft.network.chat.Component;
-import net.minecraft.network.protocol.common.ClientboundCustomPayloadPacket;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.item.ItemStack;
 
@@ -143,16 +142,17 @@ public final class CraftQueueManager {
     }
 
     /**
-     * Vanilla send path — identical bytes to what both loaders' helpers produce. Guarded
-     * by a channel check so a modless/vanilla client (the payload is registered optional)
-     * is simply skipped rather than erroring on send.
+     * Routed through the platform helper (Forge cannot encode a raw payload in a vanilla packet; the
+     * other loaders' helpers send the identical vanilla packet). Guarded by a channel check so a
+     * modless/vanilla client (the payload is registered optional) is simply skipped rather than
+     * erroring on send.
      */
     private static void sync(ServerPlayer player, CraftJob job,
                              CraftProgressPayload.State state, ItemStack current) {
         if (!Services.PLATFORM.canReceive(player, CraftProgressPayload.TYPE.id())) {
             return;
         }
-        player.connection.send(new ClientboundCustomPayloadPacket(new CraftProgressPayload(
-                state, job.targetResult().copy(), current.copy(), job.craftsDone(), job.totalCrafts())));
+        Services.PLATFORM.sendToPlayer(player, new CraftProgressPayload(
+                state, job.targetResult().copy(), current.copy(), job.craftsDone(), job.totalCrafts()));
     }
 }

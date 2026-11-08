@@ -7,6 +7,7 @@ import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.network.Connection;
+import net.minecraft.network.protocol.common.ClientboundCustomPayloadPacket;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerPlayer;
@@ -40,6 +41,13 @@ public class FabricPlatformHelper implements IPlatformHelper {
         // not reach Fabric's server-side receiver. Client-only (ClientPlayNetworking loads
         // lazily, never on a dedicated server since this is only called client-side).
         ClientPlayNetworking.send(payload);
+    }
+
+    @Override
+    public void sendToPlayer(ServerPlayer player, CustomPacketPayload payload) {
+        // The plain vanilla packet: Fabric's PayloadTypeRegistry hooks the vanilla codec, so this is
+        // byte-identical to ServerPlayNetworking.send and is what the shared code always did.
+        player.connection.send(new ClientboundCustomPayloadPacket(payload));
     }
 
     @Override

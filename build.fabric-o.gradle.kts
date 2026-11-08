@@ -120,6 +120,7 @@ loom {
 // Keep the other loader's source — and, where REI is absent, the REI compat — out of this compile.
 tasks.withType<JavaCompile>().configureEach {
     exclude("**/platform/neoforge/**")
+    exclude("**/platform/forge/**")    // MinecraftForge platform layer
     exclude("**/gametest/neoforge/**") // NeoForge-specific game-test registration (src/test)
     if (!hasRei) {
         exclude("**/compat/rei/**")
@@ -148,8 +149,9 @@ tasks.processResources {
     )
     inputs.properties(replaceProperties)
     filesMatching("fabric.mod.json") { expand(replaceProperties) }
-    // Don't ship the NeoForge metadata in the Fabric jar.
+    // Don't ship the NeoForge or Forge metadata in the Fabric jar.
     exclude("META-INF/neoforge.mods.toml")
+    exclude("META-INF/mods.toml")
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 }
 

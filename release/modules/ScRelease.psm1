@@ -160,8 +160,8 @@ function Get-ScNodes {
         $pp = Join-Path $dir.FullName 'gradle.properties'
         if (-not (Test-Path $pp)) { continue }
         $p = Read-ScProperties $pp
-        $loader = $dir.Name.Substring($dir.Name.LastIndexOf('-') + 1)   # 'fabric' | 'neoforge'
-        $cfName = switch ($loader) { 'fabric' { 'Fabric' } 'neoforge' { 'NeoForge' } default { $loader } }
+        $loader = $dir.Name.Substring($dir.Name.LastIndexOf('-') + 1)   # 'fabric' | 'neoforge' | 'forge'
+        $cfName = switch ($loader) { 'fabric' { 'Fabric' } 'neoforge' { 'NeoForge' } 'forge' { 'Forge' } default { $loader } }
         $nodes += [pscustomobject]@{
             Node          = $dir.Name
             McVersion     = $p['minecraft_version']     # also the jar +mc tag and the CF/MR game version
