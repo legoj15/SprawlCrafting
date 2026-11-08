@@ -15,9 +15,11 @@ under the Java 8 toolchain. The runtime has been **playtested in a live client a
 - **Engine** (`forge.craft`): `CraftPlanner` (adapts `CraftingManager` recipes + the player
   inventory onto the solver), `CraftExecutor` (per-step craft against the live inventory, with
   crafting remainders and overflow-drop), `CraftJob`/`CraftStep`/`CraftQueueManager` (single job per
-  player, one component every 10 ticks), `CraftingTableReach` (3×3 steps pause unless a table is
-  within vanilla's 8-block reach), `GridContext` (2×2 inventory vs 3×3 table whole-chain gating,
-  with structural 3×3 detection so any modded station counts), `ServerGridPlacer` (atomic
+  player; a step of up to 16 crafts runs one craft per 10 ticks with a progress update and sound each,
+  a bigger batched step runs in per-tick bursts), `CraftingTableReach` (3×3 steps pause unless a
+  table is within vanilla's 8-block reach; a cheap per-tick re-check covers bursts), `GridContext`
+  (2×2 inventory vs 3×3 table whole-chain gating, with structural 3×3 detection so any modded
+  station counts), `ServerGridPlacer` (atomic
   vanilla-style placement for the JEI "+" and the final-step grid hand-off), `ExternalSlots`
   (sources a modded station's bound chest alongside the player inventory).
 - **Item identity is `(Item, metadata)`** (`ItemKey`), not `Item` — 1.12.2 packs distinct

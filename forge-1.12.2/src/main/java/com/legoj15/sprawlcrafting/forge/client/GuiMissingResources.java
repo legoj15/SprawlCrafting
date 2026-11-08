@@ -56,6 +56,15 @@ public class GuiMissingResources extends GuiScreen {
                 : CountFormat.format(count);
     }
 
+    /**
+     * The right-hand "how many" text of a list row: {@code × 1,234}, but for a saturated count just
+     * {@code more than 9.22e18}. The "×" is dropped there because "× more than ..." reads as a garbled
+     * multiplier; the words already say it is a quantity.
+     */
+    static String needText(long count) {
+        return CountFormat.isSaturated(count) ? countText(count) : "× " + countText(count);
+    }
+
     @Override
     public void initGui() {
         this.buttonList.clear();
@@ -122,7 +131,7 @@ public class GuiMissingResources extends GuiScreen {
                             + I18n.format("sprawlcrafting.gather.alt", demand.items().size() - 1);
                 }
                 this.drawString(this.fontRenderer, name, panelLeft + 32, y + 4, 0xFFFFFF);
-                String need = TextFormatting.GOLD + "× " + countText(demand.count());
+                String need = TextFormatting.GOLD + needText(demand.count());
                 this.drawString(this.fontRenderer, need,
                         panelRight - 12 - this.fontRenderer.getStringWidth(need), y + 4, 0xFFFFFF);
                 if (mouseX >= panelLeft + 10 && mouseX <= panelLeft + 26 && mouseY >= y && mouseY <= y + 16) {

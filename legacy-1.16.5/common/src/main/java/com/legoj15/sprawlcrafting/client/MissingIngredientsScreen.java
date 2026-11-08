@@ -130,7 +130,7 @@ public class MissingIngredientsScreen extends Screen {
         return new Rectangle2d(x, y, 16, 16);
     }
 
-    /** Slot-overlay count: at most four characters ({@code 999}, {@code 1.2K}, {@code 9e18}). */
+    /** Slot-overlay count: at most four characters ({@code 999}, {@code 1.2K}, {@code 9e18}); {@code 9e18+} when saturated. */
     private static String formatCount(long count) {
         return CountFormat.compact(count);
     }

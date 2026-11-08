@@ -71,22 +71,27 @@ Forge node (26.x) needs:
   re-checks and consumes its ingredients when it comes due. If they're gone, the job fails
   gracefully — already-crafted items remain.
 - **One job per player at a time.** Requesting a second craft while one runs is rejected.
-- **Cadence: one step per 10 ticks (0.5 s), crafted in bursts** — `CraftJob.TICKS_PER_STEP`
-  between steps, then one burst per tick until the step is done. A burst stops at
+- **Cadence: paced for ordinary steps, bursts for batched ones** — a step of at most
+  `CraftJob.BULK_THRESHOLD` (16) crafts keeps the Factorio-style rhythm: one craft per
+  `CraftJob.TICKS_PER_STEP` (10 ticks, 0.5 s), each with its own progress update and step sound. A
+  bigger step (a batched compressed-block chain, e.g. 6,561 crafts) waits `TICKS_PER_STEP` once,
+  then runs one burst per tick until it is done. A burst stops at
   `CraftJob.MAX_CRAFTS_PER_TICK` (64, one stack of a single-output recipe) or
   `CraftJob.BURST_BUDGET_NANOS` (2 ms of server time), whichever comes first, and always does at
-  least one craft. A typical step (1-16 crafts) finishes in its first burst; a batched step from a
-  compressed-block chain (e.g. 6,561 crafts) takes ~5-16 s instead of ~55 minutes at one craft per
+  least one craft; it takes ~5-16 s instead of ~55 minutes at one craft per
   half second. Every craft in a burst is still validated and applied on its own
   (`CraftExecutor.craftOnce`), so per-craft ingredient checks and graceful cancellation are
   unchanged. **Measured** (1.21.1 NeoForge game-test server, mock player, 9-ingredient
   `iron_block` recipe with the ingots behind 27 filler stacks, i.e. the worst slot-scan layout): a
   64-craft burst took 15.4 ms cold, then 2.5-6.1 ms warm (~40-95 µs per craft). Uncapped, one
   player's burst could take a third of a 50 ms tick, hence the time budget: 2 ms is 4% of a tick,
-  so a cheap recipe still runs the full 64 and a costly one ~20-50. Full-grid steps re-check
-  crafting-table reach once per half second, not every burst tick (the reach scan is the expensive
-  part). Mid-step progress is synced at most once per half second, so the toast's step sound keeps
-  its cadence (no 6,561 pops); step completions and terminal states sync immediately.
+  so a cheap recipe still runs the full 64 and a costly one ~20-50. Full-grid steps run the full
+  crafting-table scan once per half second (the scan is the expensive part); the burst ticks between
+  scans re-validate only the table that scan found (`CraftingTableReach.isStillInReach`: chunk
+  loaded, block still a table, still within reach) and pause the job the moment that fails, so a
+  player who walks away stops a burst within a tick. A bulk step's mid-step progress is synced at
+  most once per half second, so the toast's step sound keeps its cadence (no 6,561 pops); a paced
+  step syncs after every craft, and step completions and terminal states sync immediately.
 - **Deterministic recipe ambiguity.** When several recipes make a needed intermediate, pick
   the first whose raw cost is currently satisfiable, preferring fewer total steps. Planning
   is depth-limited and cycle-guarded (e.g. iron ingot ⇄ block). No player prompt.
@@ -121,7 +126,8 @@ than a full exponential search — see "Known limitations".
    tree against the player's inventory; emit a topologically ordered list of steps
    (recipe × count). Held items are used before any sub-craft is planned.
 3. **Execution (server, `CraftQueueManager` / `CraftExecutor`).** Each step starts 10 ticks
-   after the previous one and runs in bursts (≤ 64 crafts per tick); every craft re-checks and
+   after the previous one; a step of ≤ 16 crafts then runs one craft per 10 ticks, a bigger one in
+   bursts (≤ 64 crafts per tick); every craft re-checks and
    consumes its ingredients from the live inventory and inserts its output as real items.
    Shortfall → cancel + notify.
 4. **Progress toast (client).** While a job runs with the inventory closed, a vanilla toast
@@ -222,7 +228,8 @@ compression mods saturate at `Long.MAX_VALUE`. Counts are therefore `long` from 
 - **One formatter, every tree:** `solver-core`'s `CountFormat` (Minecraft-free, Java 8).
   `format`: `1,234` below 10,000, then three significant digits with a suffix (`12.3K`,
   `4.56M`, `7.89B`, `1.23T`, `4.56Q`), scientific from 10^18 (`9.22e18`). `compact` (≤ 4
-  chars, item-slot overlays): `999`, `1.2K`, `12K`, `9e18`. It never uses `String.format` /
+  chars, item-slot overlays): `999`, `1.2K`, `12K`, `9e18`; a saturated count gets a fifth char,
+  `9e18+`, so it never reads as an exact figure. It never uses `String.format` /
   `NumberFormat`, so output is identical in every JVM locale and a server-built string reads the
   same on every client. A saturated count reads "more than 9.22e18" via the
   `sprawlcrafting.gather.more_than` lang key (in every tree's lang file). The gather screen

@@ -24,6 +24,10 @@ import net.minecraft.world.phys.Vec3;
  * use the section palette ({@link LevelChunkSection#maybeHas}) to skip — in O(1) — any
  * section that provably contains no crafting table, so the common "no table nearby"
  * steady state costs a handful of palette checks regardless of reach.
+ *
+ * <p>The scan is the expensive half. {@link #findInReach} returns the table it found so a caller that
+ * must keep the gate closed every tick (a burst of crafts between two scans) can re-validate just that
+ * one block with {@link #isStillInReach}: a chunk lookup, one block read and the same reach test.
  */
 public final class CraftingTableReach {
 
@@ -36,6 +40,14 @@ public final class CraftingTableReach {
     }
 
     public static boolean isInReach(ServerPlayer player) {
+        return findInReach(player) != null;
+    }
+
+    /**
+     * The first crafting table in interaction reach of the player (an immutable position), or null if
+     * there is none. This is the full scan; see {@link #isStillInReach} for the cheap re-check.
+     */
+    public static BlockPos findInReach(ServerPlayer player) {
         Vec3 eye = player.getEyePosition();
         double radius = interactionRange(player) + INTERACTION_PADDING;
 
@@ -48,24 +60,55 @@ public final class CraftingTableReach {
 
         for (int cx = minX; cx <= maxX; cx++) {
             for (int cz = minZ; cz <= maxZ; cz++) {
-                //? if >=1.21.11 {
-                /*LevelChunk chunk = player.level().getChunkSource().getChunkNow(cx, cz);*/
-                //?} else {
-                LevelChunk chunk = player.serverLevel().getChunkSource().getChunkNow(cx, cz);
-                //?}
+                LevelChunk chunk = chunkNow(player, cx, cz);
                 if (chunk == null) {
                     continue; // never force-load a chunk just to look for a table
                 }
-                if (scanChunk(player, chunk, cx, cz, minSectionY, maxSectionY)) {
-                    return true;
+                BlockPos found = scanChunk(player, chunk, cx, cz, minSectionY, maxSectionY);
+                if (found != null) {
+                    return found;
                 }
             }
         }
-        return false;
+        return null;
     }
 
-    private static boolean scanChunk(ServerPlayer player, LevelChunk chunk, int cx, int cz,
-                                     int minSectionY, int maxSectionY) {
+    /**
+     * Cheap re-validation of a table {@link #findInReach} returned earlier: its chunk is still loaded,
+     * the block there is still a crafting table, and it is still within the player's interaction reach
+     * (the same test the scan applies, against the player's current position and reach attribute).
+     * Never loads a chunk. Null (no table remembered) is not in reach.
+     */
+    public static boolean isStillInReach(ServerPlayer player, BlockPos table) {
+        if (table == null) {
+            return false;
+        }
+        LevelChunk chunk = chunkNow(player, SectionPos.blockToSectionCoord(table.getX()),
+                SectionPos.blockToSectionCoord(table.getZ()));
+        return chunk != null && chunk.getBlockState(table).is(Blocks.CRAFTING_TABLE)
+                && withinReach(player, table);
+    }
+
+    private static LevelChunk chunkNow(ServerPlayer player, int cx, int cz) {
+        //? if >=1.21.11 {
+        /*return player.level().getChunkSource().getChunkNow(cx, cz);*/
+        //?} else {
+        return player.serverLevel().getChunkSource().getChunkNow(cx, cz);
+        //?}
+    }
+
+    private static boolean withinReach(ServerPlayer player, BlockPos pos) {
+        //? if >=1.21.11 {
+        /*return player.isWithinBlockInteractionRange(pos, INTERACTION_PADDING);*/
+        //?} else if >=1.20.5 {
+        return player.canInteractWithBlock(pos, INTERACTION_PADDING);
+        //?} else {
+        /*return canInteractWithBlock(player, pos);*/
+        //?}
+    }
+
+    private static BlockPos scanChunk(ServerPlayer player, LevelChunk chunk, int cx, int cz,
+                                      int minSectionY, int maxSectionY) {
         //? if >=1.21.11 {
         /*int loY = Math.max(minSectionY, chunk.getMinSectionY());
         int hiY = Math.min(maxSectionY, chunk.getMaxSectionY());*/
@@ -85,21 +128,15 @@ public final class CraftingTableReach {
                         if (section.getBlockState(dx, dy, dz).is(Blocks.CRAFTING_TABLE)) {
                             pos.set((cx << 4) + dx, SectionPos.sectionToBlockCoord(sectionY) + dy,
                                     (cz << 4) + dz);
-                            //? if >=1.21.11 {
-                            /*if (player.isWithinBlockInteractionRange(pos, INTERACTION_PADDING)) {*/
-                            //?} else if >=1.20.5 {
-                            if (player.canInteractWithBlock(pos, INTERACTION_PADDING)) {
-                            //?} else {
-                            /*if (canInteractWithBlock(player, pos)) {*/
-                            //?}
-                                return true;
+                            if (withinReach(player, pos)) {
+                                return pos.immutable();
                             }
                         }
                     }
                 }
             }
         }
-        return false;
+        return null;
     }
 
     /** The player's block-interaction reach: the 1.20.5+ attribute, or the fixed pre-attribute value. */

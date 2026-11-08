@@ -8,8 +8,9 @@ import com.legoj15.sprawlcrafting.Constants;
 
 /**
  * S2C: live state of the player's deferred craft job, driving the client's progress toast. Sent on
- * start, after every component craft, on pause retries, and on terminal transitions; the client just
- * renders the latest snapshot. 1.16.5 port of the modern {@code CraftProgressPayload} (same fields,
+ * start, after every craft of a small ({@code CraftJob.BULK_THRESHOLD} or fewer crafts) step, once per
+ * half second and at each step boundary while a large step runs in bursts, on pause retries, and on
+ * terminal transitions; the client just renders the latest snapshot. 1.16.5 port of the modern {@code CraftProgressPayload} (same fields,
  * same ordinal-keyed state wire format).
  */
 public final class CraftProgressPacket {

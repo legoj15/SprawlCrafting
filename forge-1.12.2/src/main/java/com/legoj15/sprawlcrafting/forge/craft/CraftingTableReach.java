@@ -17,6 +17,11 @@ import net.minecraft.world.World;
  * <p>Because the search only runs when a 3x3 step is due and no table is in reach (every half
  * second while paused), a bounded 17x17x17 cube scan — pruned to the sphere by the distance check
  * and skipping unloaded blocks — is cheap enough; there is no palette fast-path in 1.12.2.
+ *
+ * <p>Still, a long burst of crafts must keep the gate closed every tick, not every half second.
+ * {@link #findInReach} therefore returns the table it found, and a caller re-validates just that one
+ * block with {@link #isStillInReach} (a loaded-check, one block read and the same distance test) on the
+ * ticks between scans.
  */
 public final class CraftingTableReach {
 
@@ -28,6 +33,14 @@ public final class CraftingTableReach {
     }
 
     public static boolean isInReach(EntityPlayerMP player) {
+        return findInReach(player) != null;
+    }
+
+    /**
+     * The first crafting table within reach of the player, or null if there is none. This is the full
+     * cube scan; see {@link #isStillInReach} for the cheap re-check.
+     */
+    public static BlockPos findInReach(EntityPlayerMP player) {
         World world = player.getEntityWorld();
         int baseX = MathHelper.floor(player.posX);
         int baseY = MathHelper.floor(player.posY);
@@ -40,7 +53,7 @@ public final class CraftingTableReach {
                         continue;
                     }
                     // Vanilla distance check first, so most of the cube costs no block lookup.
-                    if (player.getDistanceSq(x + 0.5D, y + 0.5D, z + 0.5D) > MAX_DISTANCE_SQ) {
+                    if (!withinReach(player, x, y, z)) {
                         continue;
                     }
                     BlockPos pos = new BlockPos(x, y, z);
@@ -48,11 +61,31 @@ public final class CraftingTableReach {
                         continue; // never force-load a chunk just to look for a table
                     }
                     if (world.getBlockState(pos).getBlock() == Blocks.CRAFTING_TABLE) {
-                        return true;
+                        return pos;
                     }
                 }
             }
         }
-        return false;
+        return null;
+    }
+
+    /**
+     * Cheap re-validation of a table {@link #findInReach} returned earlier: its chunk is still loaded,
+     * the block there is still a crafting table, and it is still within vanilla's reach of the player
+     * (the same test the scan applies, against the player's current position). Never loads a chunk.
+     * Null (no table remembered) is not in reach.
+     */
+    public static boolean isStillInReach(EntityPlayerMP player, BlockPos table) {
+        if (table == null) {
+            return false;
+        }
+        World world = player.getEntityWorld();
+        return withinReach(player, table.getX(), table.getY(), table.getZ())
+                && world.isBlockLoaded(table)
+                && world.getBlockState(table).getBlock() == Blocks.CRAFTING_TABLE;
+    }
+
+    private static boolean withinReach(EntityPlayerMP player, int x, int y, int z) {
+        return player.getDistanceSq(x + 0.5D, y + 0.5D, z + 0.5D) <= MAX_DISTANCE_SQ;
     }
 }

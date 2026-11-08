@@ -10,6 +10,7 @@ import com.legoj15.sprawlcrafting.platform.Services;
 
 import net.minecraft.entity.player.ServerPlayerEntity;
 import net.minecraft.item.ItemStack;
+import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.text.ITextComponent;
 import net.minecraft.util.text.TextFormatting;
 import net.minecraft.util.text.TranslationTextComponent;
@@ -51,31 +52,44 @@ public final class CraftQueueManager {
     }
 
     /**
-     * Advances the player's job by one tick; when a burst is due, performs up to
-     * {@link CraftJob#MAX_CRAFTS_PER_TICK} crafts (within {@link CraftJob#BURST_BUDGET_NANOS}) of the current
-     * step, each validated and applied by
-     * {@link CraftExecutor#craftOnce} exactly as a lone craft is. A burst ends at a step boundary so the
-     * next step still waits its half second.
+     * Advances the player's job by one tick. When a craft is due: a paced step ({@code <=}
+     * {@link CraftJob#BULK_THRESHOLD} crafts) performs exactly one and syncs progress, once per
+     * {@link CraftJob#TICKS_PER_STEP} ticks; a bulk step performs a burst of up to
+     * {@link CraftJob#MAX_CRAFTS_PER_TICK} crafts (within {@link CraftJob#BURST_BUDGET_NANOS}) every tick
+     * until it is done. Each craft is validated and applied by {@link CraftExecutor#craftOnce} against the
+     * live inventory, exactly as a lone craft is. A burst ends at a step boundary so the next step still
+     * waits its half second.
      */
     public static void tick(ServerPlayerEntity player) {
         CraftJob job = ACTIVE.get(player.getUUID());
         if (job == null || !job.tick()) {
             return;
         }
-        // 3×3 steps only run with a crafting table in reach; re-check every half second (a long step
-        // bursts every tick, but the reach scan keeps its half-second cadence).
-        if (job.currentStep().needsFullGrid() && job.reachCheckDue()) {
-            if (!CraftingTableReach.isInReach(player)) {
+        // 3×3 steps only run with a crafting table in reach. The full scan runs when due (every half
+        // second, which is every craft of a paced step); a bulk step bursts every tick in between, so
+        // those ticks re-validate just the table the last scan found (cheap) and pause the moment it
+        // is gone or out of reach, instead of crafting on for up to half a second after the player left.
+        if (job.currentStep().needsFullGrid()) {
+            if (job.reachCheckDue()) {
+                BlockPos table = CraftingTableReach.findInReach(player);
+                if (table == null) {
+                    job.holdForRetry();
+                    sync(player, job, CraftProgressPacket.State.PAUSED, ItemStack.EMPTY);
+                    return;
+                }
+                job.markReachChecked(table);
+            } else if (!CraftingTableReach.isStillInReach(player, job.reachTable())) {
                 job.holdForRetry();
                 sync(player, job, CraftProgressPacket.State.PAUSED, ItemStack.EMPTY);
                 return;
             }
-            job.markReachChecked();
         }
+        boolean bulk = job.isBulkStep();
+        int cap = bulk ? CraftJob.MAX_CRAFTS_PER_TICK : 1;
         ItemStack lastCrafted = ItemStack.EMPTY;
         long deadline = System.nanoTime() + CraftJob.BURST_BUDGET_NANOS;
         bursts:
-        for (int burst = 0; burst < CraftJob.MAX_CRAFTS_PER_TICK; burst++) {
+        for (int burst = 0; burst < cap; burst++) {
             // Final craft due with a compatible crafting grid open: lay the recipe out in that grid for
             // the player to grab (a real vanilla craft) instead of auto-crafting it.
             if (job.isFinalStep() && job.isLastCraftOfStep() && canHandOff(player, job.currentStep())) {
@@ -109,7 +123,9 @@ public final class CraftQueueManager {
                                 job.targetResult().getHoverName()).withStyle(TextFormatting.GREEN));
                         return;
                     }
-                    if (stepDone) {
+                    if (stepDone || !bulk) {
+                        // A step boundary, or the one craft a paced step does per due tick: report it now
+                        // (progress bar + step sound), exactly as every craft was reported before bursts.
                         sync(player, job, CraftProgressPacket.State.CRAFTING, lastCrafted);
                         return;
                     }
@@ -132,8 +148,8 @@ public final class CraftQueueManager {
                     return;
             }
         }
-        // The burst hit its per-tick cap (count or time) mid-step; the step stays due and continues next tick. Report
-        // progress at most once per half second so the toast (and its step sound) keeps its cadence.
+        // A bulk burst hit its per-tick cap (count or time) mid-step; the step stays due and continues next
+        // tick. Report progress at most once per half second so the toast (and its step sound) keeps its cadence.
         if (job.progressSyncDue()) {
             sync(player, job, CraftProgressPacket.State.CRAFTING, lastCrafted);
         }

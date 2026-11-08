@@ -16,8 +16,9 @@ import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 
 /**
  * S2C: live state of the player's deferred craft job, driving the client's progress
- * toast. Sent on start, after every component craft, on pause retries, and on terminal
- * transitions; the client just renders the latest snapshot.
+ * toast. Sent on start, after every craft of a small ({@code CraftJob.BULK_THRESHOLD} or fewer crafts)
+ * step, once per half second and at each step boundary while a large step runs in bursts, on pause
+ * retries, and on terminal transitions; the client just renders the latest snapshot.
  *
  * @param current the item produced by the in-flight step (EMPTY when paused/terminal)
  */

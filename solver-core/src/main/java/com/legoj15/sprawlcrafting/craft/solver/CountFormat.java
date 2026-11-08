@@ -13,15 +13,17 @@ import java.math.RoundingMode;
  * then three significant digits with a short-scale suffix, trailing zeros dropped ({@code 12.3K},
  * {@code 4.56M}, {@code 7.89B}, {@code 1.23T}, {@code 4.56Q}, {@code 10K}); from 10<sup>18</sup> up,
  * scientific ({@code 9.22e18}). {@link #compact} is the same scheme squeezed to at most four characters
- * for a 16-pixel item-slot overlay ({@code 999}, {@code 1.2K}, {@code 12K}, {@code 9e18}).
+ * for a 16-pixel item-slot overlay ({@code 999}, {@code 1.2K}, {@code 12K}, {@code 9e18}); the one
+ * exception is a saturated count, which gets a fifth character ({@code 9e18+}, see below).
  *
  * <p>Locale-safe by construction: it never touches {@code String.format} / {@code NumberFormat}, so a
  * player whose JVM runs in a locale with other separators or digits (German, Arabic, Turkish) sees
  * the same text as everyone else, and a server-built string reads the same on every client.
  *
  * <p>The solver saturates counts at {@link Long#MAX_VALUE} rather than wrapping; such a count means
- * "at least this many". Callers show it through their "more than %s" translation key with
- * {@code format(Long.MAX_VALUE)} as the argument ({@link #isSaturated}).
+ * "at least this many" ({@link #isSaturated}). Callers with room show it through their "more than %s"
+ * translation key with {@code format(Long.MAX_VALUE)} as the argument; {@link #compact}, which has no
+ * room for words, marks it with a trailing {@code +} ({@code 9e18+}) so it never reads as an exact value.
  */
 public final class CountFormat {
 
@@ -62,11 +64,19 @@ public final class CountFormat {
         return suffixed(count, THREE);
     }
 
-    /** At most four characters, for an item-slot overlay: {@code 999}, {@code 1.2K}, {@code 12K}, {@code 9e18}. */
+    /**
+     * At most four characters, for an item-slot overlay: {@code 999}, {@code 1.2K}, {@code 12K},
+     * {@code 9e18}. A saturated count ({@link #isSaturated}) is "at least this many", so it gets a
+     * trailing {@code +} ({@code 9e18+}, five characters) rather than reading as an exact figure.
+     */
     public static String compact(long count) {
         if (count < 0) {
-            return "-" + compact(count == Long.MIN_VALUE ? Long.MAX_VALUE : -count);
+            return "-" + compactMagnitude(count == Long.MIN_VALUE ? Long.MAX_VALUE : -count);
         }
+        return isSaturated(count) ? compactMagnitude(count) + "+" : compactMagnitude(count);
+    }
+
+    private static String compactMagnitude(long count) {
         if (count < UNITS[0]) {
             return Long.toString(count);
         }

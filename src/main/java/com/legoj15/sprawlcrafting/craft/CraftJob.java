@@ -2,6 +2,7 @@ package com.legoj15.sprawlcrafting.craft;
 
 import java.util.List;
 
+import net.minecraft.core.BlockPos;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.item.ItemStack;
 
@@ -16,17 +17,27 @@ import net.minecraft.world.item.ItemStack;
  * the job fails gracefully and the player is notified; items already crafted stay in
  * the inventory.
  *
- * <p>Cadence: each step waits {@link #TICKS_PER_STEP} ticks, then runs in bursts of up to
- * {@link #MAX_CRAFTS_PER_TICK} crafts (and at most {@link #BURST_BUDGET_NANOS} of server time), one
- * burst per tick, until the step is done. A small step (the usual 1-16 crafts) therefore finishes in
- * its first burst, half a second after the previous step; a batched step from a compressed-block
- * chain (e.g. 6,561 crafts) takes roughly 5-16 seconds instead of the ~55 minutes one craft per half
- * second would take.
+ * <p>Cadence, by step size. A <em>paced</em> step (at most {@link #BULK_THRESHOLD} crafts: every
+ * ordinary recipe) keeps the Factorio-style rhythm: one craft per {@link #TICKS_PER_STEP} ticks, each
+ * with its own progress update and step sound. A <em>bulk</em> step (more than {@link #BULK_THRESHOLD}
+ * crafts, i.e. a batched compressed-block chain such as 6,561 crafts) waits {@link #TICKS_PER_STEP} ticks
+ * once, then runs in bursts of up to {@link #MAX_CRAFTS_PER_TICK} crafts (and at most
+ * {@link #BURST_BUDGET_NANOS} of server time), one burst per tick, until the step is done: roughly 5-16
+ * seconds instead of the ~55 minutes one craft per half second would take.
  */
 public final class CraftJob {
 
-    /** Half a second between steps. */
+    /** Half a second between crafts of a paced step, and between steps. */
     public static final int TICKS_PER_STEP = 10;
+
+    /**
+     * Largest step that is still paced one craft per {@link #TICKS_PER_STEP}. Ordinary recipes need a
+     * handful of crafts per step (even a full stack of sticks is 16), and for those the half-second craft-by-craft
+     * rhythm, with its visible progress and sound, is the intended experience. A step with more crafts
+     * than this is a batched step from a compression chain, where that rhythm would take minutes to
+     * hours, so it runs in bursts instead.
+     */
+    public static final int BULK_THRESHOLD = 16;
 
     /**
      * Most crafts one tick may perform for this player: one stack of a single-output recipe (the usual
@@ -56,6 +67,8 @@ public final class CraftJob {
     private int progressTicks;
     private int ticksSinceSync;
     private int ticksSinceReachCheck = TICKS_PER_STEP;
+    /** The crafting table the last passing reach scan found; the cheap per-tick re-check watches it. */
+    private BlockPos reachTable;
 
     public CraftJob(ResourceLocation targetRecipe, ItemStack targetResult, List<CraftStep> steps) {
         if (steps.isEmpty()) {
@@ -115,6 +128,15 @@ public final class CraftJob {
         return craftsDoneInStep == currentStep().crafts() - 1;
     }
 
+    /**
+     * True when the current step has more than {@link #BULK_THRESHOLD} crafts and so runs in bursts;
+     * false for a paced step (one craft per {@link #TICKS_PER_STEP}). Read before
+     * {@link #onCraftPerformed()}, which may advance to the next step.
+     */
+    public boolean isBulkStep() {
+        return currentStep().crafts() > BULK_THRESHOLD;
+    }
+
     public long totalCrafts() {
         return totalCrafts;
     }
@@ -127,8 +149,9 @@ public final class CraftJob {
     /**
      * Advances the job timer by one tick.
      *
-     * @return true if a burst of crafts is due now (the caller performs up to
-     *         {@link #MAX_CRAFTS_PER_TICK} crafts, calling {@link #onCraftPerformed()} after each)
+     * @return true if a craft is due now: one craft for a paced step, a burst of up to
+     *         {@link #MAX_CRAFTS_PER_TICK} for a bulk step (the caller calls {@link #onCraftPerformed()}
+     *         after each)
      */
     public boolean tick() {
         ticksSinceSync++;
@@ -150,10 +173,12 @@ public final class CraftJob {
     /**
      * Called after the current step's craft was successfully applied to the inventory.
      *
-     * @return true if that craft completed the step. The half-second wait restarts only then; a step
-     *         with crafts left stays due, so its next burst runs on the following tick.
+     * @return true if that craft completed the step. The half-second wait restarts after every craft of
+     *         a paced step and only at the step boundary of a bulk step (whose remaining crafts stay due,
+     *         so the next burst runs on the following tick).
      */
     public boolean onCraftPerformed() {
+        boolean paced = !isBulkStep();
         if (++craftsDoneInStep >= currentStep().crafts()) {
             craftsBeforeStep = saturatingAdd(craftsBeforeStep, craftsDoneInStep);
             craftsDoneInStep = 0;
@@ -161,13 +186,17 @@ public final class CraftJob {
             progressTicks = 0;
             return true;
         }
+        if (paced) {
+            progressTicks = 0;
+        }
         return false;
     }
 
     /**
-     * Whether a mid-step progress update should go to the client now. Bursts run every tick, but the
-     * toast only needs (and its per-update step sound should only get) one update per half second;
-     * step completions and terminal states always sync regardless.
+     * Whether a mid-step progress update should go to the client now. A bulk step's bursts run every
+     * tick, but the toast only needs (and its per-update step sound should only get) one update per half
+     * second; a paced step syncs after every craft instead, and step completions and terminal states
+     * always sync regardless.
      */
     public boolean progressSyncDue() {
         return ticksSinceSync >= TICKS_PER_STEP;
@@ -179,18 +208,28 @@ public final class CraftJob {
     }
 
     /**
-     * Whether a full-grid step should re-check crafting-table reach before this burst. Always true for
-     * a step's first burst (it waited a full half second), then once per half second while a long step
-     * keeps bursting every tick — the reach scan is the expensive part, and the pre-burst cadence
-     * checked it once per half second too.
+     * Whether a full-grid step should run the full crafting-table scan before this craft. Always true
+     * for a step's first craft (it waited a full half second), then once per half second while a bulk
+     * step keeps bursting every tick: the scan is the expensive part, and the pre-burst cadence checked
+     * it once per half second too. Between scans the burst re-validates the table the scan found with
+     * the cheap {@code CraftingTableReach.isStillInReach} instead.
      */
     public boolean reachCheckDue() {
         return ticksSinceReachCheck >= TICKS_PER_STEP;
     }
 
-    /** Records a reach check that passed (a failed one pauses via {@link #holdForRetry()}). */
-    public void markReachChecked() {
+    /**
+     * Records a scan that passed and the crafting table it found (a failed one pauses via
+     * {@link #holdForRetry()}); the table is what {@link #reachTable()} hands the cheap re-check.
+     */
+    public void markReachChecked(BlockPos table) {
         ticksSinceReachCheck = 0;
+        reachTable = table;
+    }
+
+    /** The table the last passing scan found, or null if none has passed yet. */
+    public BlockPos reachTable() {
+        return reachTable;
     }
 
     /**

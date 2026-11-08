@@ -12,6 +12,7 @@ import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.crafting.CraftingManager;
 import net.minecraft.item.crafting.IRecipe;
+import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.text.ITextComponent;
 import net.minecraft.util.text.TextComponentTranslation;
 import net.minecraft.util.text.TextFormatting;
@@ -58,30 +59,44 @@ public final class CraftQueueManager {
     }
 
     /**
-     * Advances the player's job by one tick; when a burst is due, performs up to
-     * {@link CraftJob#MAX_CRAFTS_PER_TICK} crafts (within {@link CraftJob#BURST_BUDGET_NANOS}) of the current
-     * step, each validated and applied by
-     * {@link CraftExecutor#craftOnce} exactly as a lone craft is. A burst ends at a step boundary so the
-     * next step still waits its half second.
+     * Advances the player's job by one tick. When a craft is due: a paced step ({@code <=}
+     * {@link CraftJob#BULK_THRESHOLD} crafts) performs exactly one and syncs progress, once per
+     * {@link CraftJob#TICKS_PER_STEP} ticks; a bulk step performs a burst of up to
+     * {@link CraftJob#MAX_CRAFTS_PER_TICK} crafts (within {@link CraftJob#BURST_BUDGET_NANOS}) every tick
+     * until it is done. Each craft is validated and applied by {@link CraftExecutor#craftOnce} against the
+     * live inventory, exactly as a lone craft is. A burst ends at a step boundary so the next step still
+     * waits its half second.
      */
     public static void tick(EntityPlayerMP player) {
         CraftJob job = ACTIVE.get(player.getUniqueID());
         if (job == null || !job.tick()) {
             return;
         }
-        // 3x3 steps only run with full-grid access; re-check every half second (a long step bursts
-        // every tick, but the reach scan keeps its half-second cadence).
-        if (job.currentStep().needsFullGrid() && job.reachCheckDue()) {
-            if (!hasFullGridAccess(player)) {
+        // 3x3 steps only run with full-grid access (a vanilla table in reach, or a 3x3 crafter open). The
+        // full check runs when due (every half second, which is every craft of a paced step); a bulk step
+        // bursts every tick in between, so those ticks re-validate just what the last check found (cheap)
+        // and pause the moment it is gone, instead of crafting on for up to half a second after the
+        // player left.
+        if (job.currentStep().needsFullGrid()) {
+            if (job.reachCheckDue()) {
+                BlockPos table = CraftingTableReach.findInReach(player);
+                if (table == null && !hasOpenCrafter(player)) {
+                    job.holdForRetry();
+                    sync(player, job, pausedState(job), ItemStack.EMPTY);
+                    return;
+                }
+                job.markReachChecked(table);
+            } else if (!CraftingTableReach.isStillInReach(player, job.reachTable()) && !hasOpenCrafter(player)) {
                 job.holdForRetry();
                 sync(player, job, pausedState(job), ItemStack.EMPTY);
                 return;
             }
-            job.markReachChecked();
         }
+        boolean bulk = job.isBulkStep();
+        int cap = bulk ? CraftJob.MAX_CRAFTS_PER_TICK : 1;
         ItemStack lastCrafted = ItemStack.EMPTY;
         long deadline = System.nanoTime() + CraftJob.BURST_BUDGET_NANOS;
-        for (int burst = 0; burst < CraftJob.MAX_CRAFTS_PER_TICK; burst++) {
+        for (int burst = 0; burst < cap; burst++) {
             // Final-step hand-off: if the very last craft is due and the player is looking at a
             // compatible grid, lay its ingredients there instead — a real, takeable vanilla craft —
             // and finish the job optimistically (grabbing is its own confirmation). Any doubt falls
@@ -107,7 +122,9 @@ public final class CraftQueueManager {
                             job.targetResult().getDisplayName()));
                     return;
                 }
-                if (stepDone) {
+                if (stepDone || !bulk) {
+                    // A step boundary, or the one craft a paced step does per due tick: report it now
+                    // (progress bar + step sound), exactly as every craft was reported before bursts.
                     sync(player, job, CraftProgressMessage.State.CRAFTING, lastCrafted);
                     return;
                 }
@@ -139,8 +156,8 @@ public final class CraftQueueManager {
             }
             return;
         }
-        // The burst hit its per-tick cap (count or time) mid-step; the step stays due and continues next tick. Report
-        // progress at most once per half second so the toast (and its step sound) keeps its cadence.
+        // A bulk burst hit its per-tick cap (count or time) mid-step; the step stays due and continues next
+        // tick. Report progress at most once per half second so the toast (and its step sound) keeps its cadence.
         if (job.progressSyncDue()) {
             sync(player, job, CraftProgressMessage.State.CRAFTING, lastCrafted);
         }
@@ -177,14 +194,14 @@ public final class CraftQueueManager {
     }
 
     /**
-     * Whether a 3x3 step may run right now: a vanilla crafting table within reach, or a 3x3 crafter
-     * open this instant. The open-container clause covers a Tinkers' Construct Crafting Station,
-     * which {@link CraftingTableReach} (it scans only for the vanilla table block) cannot see — so a
-     * chain started at a station no longer wedges forever on a base with no vanilla table.
+     * Whether a 3x3 crafter is open this instant. Alongside a vanilla table in reach this makes a 3x3
+     * step runnable: it covers a Tinkers' Construct Crafting Station, which {@link CraftingTableReach}
+     * (it scans only for the vanilla table block) cannot see, so a chain started at a station no longer
+     * wedges forever on a base with no vanilla table. Cheap (a walk of the open container's slots), so
+     * the burst ticks between table scans use it as-is.
      */
-    private static boolean hasFullGridAccess(EntityPlayerMP player) {
-        return CraftingTableReach.isInReach(player)
-                || GridContext.current(player) == GridContext.CRAFTING_TABLE;
+    private static boolean hasOpenCrafter(EntityPlayerMP player) {
+        return GridContext.current(player) == GridContext.CRAFTING_TABLE;
     }
 
     /**
