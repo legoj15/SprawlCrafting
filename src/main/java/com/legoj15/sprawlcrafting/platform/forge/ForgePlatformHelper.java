@@ -2,10 +2,10 @@ package com.legoj15.sprawlcrafting.platform.forge;
 
 import java.nio.file.Path;
 
+import com.legoj15.sprawlcrafting.network.SprawlPayload;
 import com.legoj15.sprawlcrafting.platform.services.IPlatformHelper;
 
 import net.minecraft.network.Connection;
-import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraftforge.fml.ModList;
@@ -43,12 +43,12 @@ public class ForgePlatformHelper implements IPlatformHelper {
     }
 
     @Override
-    public void sendToServer(CustomPacketPayload payload) {
+    public void sendToServer(SprawlPayload payload) {
         ForgeNetwork.channel().send(payload, PacketDistributor.SERVER.noArg());
     }
 
     @Override
-    public void sendToPlayer(ServerPlayer player, CustomPacketPayload payload) {
+    public void sendToPlayer(ServerPlayer player, SprawlPayload payload) {
         ForgeNetwork.channel().send(payload, player.connection.getConnection());
     }
 

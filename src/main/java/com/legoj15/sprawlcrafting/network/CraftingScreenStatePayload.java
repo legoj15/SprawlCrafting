@@ -2,11 +2,15 @@ package com.legoj15.sprawlcrafting.network;
 
 import com.legoj15.sprawlcrafting.Constants;
 
+import net.minecraft.resources.ResourceLocation;
+//? if >=1.20.5 {
 import io.netty.buffer.ByteBuf;
 import net.minecraft.network.codec.ByteBufCodecs;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
-import net.minecraft.resources.ResourceLocation;
+//?} else {
+/*import net.minecraft.network.FriendlyByteBuf;*/
+//?}
 
 /**
  * C2S: the dimensions of the crafting grid the player currently has on screen, or
@@ -17,7 +21,7 @@ import net.minecraft.resources.ResourceLocation;
  * step comes due, whether to hand the last craft off to an open grid for the player to
  * grab (see {@code CraftQueueManager}/{@code ClientCraftingView}).
  *
- * <p>On 1.21.1 the client only sends this while a job is active ({@code ClientJobTracker}),
+ * <p>On 1.21.1 (and 1.20.1) the client only sends this while a job is active ({@code ClientJobTracker}),
  * which both gates it to SprawlCrafting servers and keeps it to a handful of packets per job.
  * On 26.x it is sent continuously (on every crafting-screen open/close), gated instead by
  * {@code IPlatformHelper.canSendToServer} so vanilla/modless servers never see it — the server
@@ -25,10 +29,13 @@ import net.minecraft.resources.ResourceLocation;
  * DeferredCraftSync.maybeSync}) to players who actually have a recipe screen open. Sent only on
  * change (grid dimensions differ from the last send), so an idle player generates no traffic.
  */
-public record CraftingScreenStatePayload(int gridWidth, int gridHeight) implements CustomPacketPayload {
+public record CraftingScreenStatePayload(int gridWidth, int gridHeight) implements SprawlPayload {
 
-    public static final CustomPacketPayload.Type<CraftingScreenStatePayload> TYPE =
-            new CustomPacketPayload.Type<>(ResourceLocation.fromNamespaceAndPath(Constants.MOD_ID, "crafting_screen_state"));
+    public static final ResourceLocation ID =
+            ResourceLocation.fromNamespaceAndPath(Constants.MOD_ID, "crafting_screen_state");
+
+    //? if >=1.20.5 {
+    public static final CustomPacketPayload.Type<CraftingScreenStatePayload> TYPE = new CustomPacketPayload.Type<>(ID);
 
     public static final StreamCodec<ByteBuf, CraftingScreenStatePayload> STREAM_CODEC =
             StreamCodec.composite(
@@ -40,4 +47,20 @@ public record CraftingScreenStatePayload(int gridWidth, int gridHeight) implemen
     public CustomPacketPayload.Type<CraftingScreenStatePayload> type() {
         return TYPE;
     }
+    //?} else {
+    /*@Override
+    public ResourceLocation id() {
+        return ID;
+    }
+
+    @Override
+    public void write(FriendlyByteBuf buf) {
+        buf.writeVarInt(gridWidth);
+        buf.writeVarInt(gridHeight);
+    }
+
+    public static CraftingScreenStatePayload read(FriendlyByteBuf buf) {
+        return new CraftingScreenStatePayload(buf.readVarInt(), buf.readVarInt());
+    }*/
+    //?}
 }

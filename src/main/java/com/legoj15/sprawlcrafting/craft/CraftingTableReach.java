@@ -37,7 +37,7 @@ public final class CraftingTableReach {
 
     public static boolean isInReach(ServerPlayer player) {
         Vec3 eye = player.getEyePosition();
-        double radius = player.blockInteractionRange() + INTERACTION_PADDING;
+        double radius = interactionRange(player) + INTERACTION_PADDING;
 
         int minX = SectionPos.blockToSectionCoord(eye.x() - radius);
         int maxX = SectionPos.blockToSectionCoord(eye.x() + radius);
@@ -87,8 +87,10 @@ public final class CraftingTableReach {
                                     (cz << 4) + dz);
                             //? if >=1.21.11 {
                             /*if (player.isWithinBlockInteractionRange(pos, INTERACTION_PADDING)) {*/
-                            //?} else {
+                            //?} else if >=1.20.5 {
                             if (player.canInteractWithBlock(pos, INTERACTION_PADDING)) {
+                            //?} else {
+                            /*if (canInteractWithBlock(player, pos)) {*/
                             //?}
                                 return true;
                             }
@@ -99,4 +101,28 @@ public final class CraftingTableReach {
         }
         return false;
     }
+
+    /** The player's block-interaction reach: the 1.20.5+ attribute, or the fixed pre-attribute value. */
+    private static double interactionRange(ServerPlayer player) {
+        //? if >=1.20.5 {
+        return player.blockInteractionRange();
+        //?} else {
+        /*// No reach attribute before 1.20.5: vanilla's pick range was 5.0 in creative, 4.5 otherwise
+        // (the same defaults the 1.20.5 attribute adopted).
+        return player.isCreative() ? 5.0 : 4.5;*/
+        //?}
+    }
+
+    //? if <1.20.5 {
+    /*// Pre-1.20.5 port of Player.canInteractWithBlock: squared distance from the eye to the block's
+    // unit box against (reach + padding)^2, like the 1.20.5 method (which used AABB.distanceToSqr).
+    private static boolean canInteractWithBlock(ServerPlayer player, BlockPos pos) {
+        Vec3 eye = player.getEyePosition();
+        double dx = Math.max(Math.max(pos.getX() - eye.x(), eye.x() - (pos.getX() + 1)), 0.0);
+        double dy = Math.max(Math.max(pos.getY() - eye.y(), eye.y() - (pos.getY() + 1)), 0.0);
+        double dz = Math.max(Math.max(pos.getZ() - eye.z(), eye.z() - (pos.getZ() + 1)), 0.0);
+        double reach = interactionRange(player) + INTERACTION_PADDING;
+        return dx * dx + dy * dy + dz * dz < reach * reach;
+    }*/
+    //?}
 }

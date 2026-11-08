@@ -24,6 +24,13 @@ val hasRei = project.findProperty("rei_version") != null
 // Mod Menu provides the in-game config-screen button on Fabric; present only on nodes that pin a
 // modmenu_version (1.21.1). Where absent, the integration class is excluded (same gating as REI).
 val hasModMenu = project.findProperty("modmenu_version") != null
+// Pre-1.20.5 lines have no StreamCodec/CustomPacketPayload.Type: payloads serialize through
+// write/read(FriendlyByteBuf) instead, so the StreamCodec wire test can't compile there
+// (LegacyPayloadBufTest covers the legacy format on those nodes).
+val legacyNetworking = stonecutter.eval(stonecutter.current.version, "<1.20.5")
+
+// Mixin compatibilityLevel for this node's Java (the source mixins.json says JAVA_21).
+val mixinJava = if (javaVersion < 21) "JAVA_$javaVersion" else "JAVA_21"
 
 java {
     toolchain { languageVersion = JavaLanguageVersion.of(javaVersion) }
@@ -69,6 +76,12 @@ dependencies {
     modCompileOnly("mezz.jei:jei-$minecraftVersion-fabric-api:$jeiVersion")
     if (viewer == "jei" || viewer == "both") {
         modLocalRuntime("mezz.jei:jei-$minecraftVersion-fabric:$jeiVersion")
+        // Newer JEI builds (15.74 on 1.20.1) hard-depend on mezz_config. Production players get it
+        // jar-in-jar inside JEI, but Loom's dev runtime doesn't load nested jars, so add it explicitly
+        // on nodes that pin a mezz_config_version.
+        (project.findProperty("mezz_config_version") as String?)?.let {
+            modLocalRuntime("net.mezzdev.config:mezz_config-$minecraftVersion-fabric:$it")
+        }
     }
 
     if (hasRei) {
@@ -129,6 +142,9 @@ tasks.withType<JavaCompile>().configureEach {
     if (!hasModMenu) {
         exclude("**/*ModMenu*") // no Mod Menu build for this node → drop the integration class
     }
+    if (legacyNetworking) {
+        exclude("**/network/PayloadCodecTest*")
+    }
 }
 
 tasks.test {
@@ -149,6 +165,10 @@ tasks.processResources {
     )
     inputs.properties(replaceProperties)
     filesMatching("fabric.mod.json") { expand(replaceProperties) }
+    // The mixin config is authored for Java 21; a node on an older Java (1.20.1 = 17) must declare a
+    // compatibility level its runtime supports, or Mixin rejects the config at boot.
+    inputs.property("mixin_java", mixinJava)
+    filesMatching("$modId.mixins.json") { filter { it.replace("\"JAVA_21\"", "\"$mixinJava\"") } }
     // Don't ship the NeoForge or Forge metadata in the Fabric jar.
     exclude("META-INF/neoforge.mods.toml")
     exclude("META-INF/mods.toml")

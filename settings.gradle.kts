@@ -24,6 +24,9 @@ stonecutter {
         fun match(version: String, vararg loaders: String) =
             loaders.forEach { version("$version-$it", version).buildscript = getBuildscript(it, version) }
 
+        // 1.20.1 backport. Same Loom-remap build path as 1.21.1 for Fabric; the pre-1.20.2/1.20.5/1.21 API
+        // cliffs are handled by `//? if <1.20.x` source branches plus the back-port regex tiers in the controller.
+        match("1.20.1", "fabric")
         match("1.21.1", "fabric", "neoforge", "forge")
         // Phase 2b complete: NeoForge-26 surfaced the API cliffs; the code port now compiles, so the
         // 26.1.2-fabric node (modern plain Loom, build.fabric-m.gradle.kts) brings Fabric to parity.

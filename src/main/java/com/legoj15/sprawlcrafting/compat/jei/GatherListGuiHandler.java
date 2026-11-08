@@ -48,6 +48,8 @@ public class GatherListGuiHandler implements IGlobalGuiHandler {
     public static IGuiProperties guiProperties(MissingIngredientsScreen screen) {
         int w = screen.width;
         int h = screen.height;
+        // JEI 15 (1.20.1) names these with get- prefixes; later JEI lines dropped the prefix.
+        //? if >=1.20.2 {
         return new IGuiProperties() {
             @Override
             public Class<? extends Screen> screenClass() {
@@ -84,6 +86,44 @@ public class GatherListGuiHandler implements IGlobalGuiHandler {
                 return h;
             }
         };
+        //?} else {
+        /*return new IGuiProperties() {
+            @Override
+            public Class<? extends Screen> getScreenClass() {
+                return MissingIngredientsScreen.class;
+            }
+
+            @Override
+            public int getGuiLeft() {
+                return 0;
+            }
+
+            @Override
+            public int getGuiTop() {
+                return 0;
+            }
+
+            @Override
+            public int getGuiXSize() {
+                return w;
+            }
+
+            @Override
+            public int getGuiYSize() {
+                return h;
+            }
+
+            @Override
+            public int getScreenWidth() {
+                return w;
+            }
+
+            @Override
+            public int getScreenHeight() {
+                return h;
+            }
+        };*/
+        //?}
     }
 }
 

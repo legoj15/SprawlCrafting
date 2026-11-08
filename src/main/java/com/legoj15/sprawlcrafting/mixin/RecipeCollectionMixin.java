@@ -55,8 +55,15 @@ public abstract class RecipeCollectionMixin {
         if (width < 2 || height < 2) {
             return; // furnace-style books: deferred crafting doesn't apply
         }
-        RecipeCollection self = (RecipeCollection) (Object) this;
-        GridContext grid = DeferredCraftableCache.gridFor(width, height);
+        sprawlcrafting$markSolvable((RecipeCollection) (Object) this, DeferredCraftableCache.gridFor(width, height));
+    }
+    //?}
+
+    // The marking loop, split out per MC line (flat directive chain; Stonecutter blocks don't nest).
+    //? if >=1.21.11 {
+    /*// 26.x marks from the server-synced set inside the selectRecipes inject above.*/
+    //?} else if >=1.20.2 {
+    private static void sprawlcrafting$markSolvable(RecipeCollection self, GridContext grid) {
         for (RecipeHolder<?> holder : self.getRecipes(false)) {
             if (!self.isCraftable(holder) && DeferredCraftableCache.isSolvable(holder, grid)) {
                 ((RecipeCollectionAccessor) self).sprawlcrafting$craftable().add(holder);
@@ -64,5 +71,17 @@ public abstract class RecipeCollectionMixin {
             }
         }
     }
+    //?} else {
+    /*// 1.20.1: the collection holds bare recipes. Solve via the RecipeHolder shim, but mark the
+    // vanilla craftable set with the bare recipe it actually stores.
+    private static void sprawlcrafting$markSolvable(RecipeCollection self, GridContext grid) {
+        for (net.minecraft.world.item.crafting.Recipe<?> recipe : self.getRecipes(false)) {
+            RecipeHolder<?> holder = RecipeHolder.of(recipe);
+            if (!self.isCraftable(recipe) && DeferredCraftableCache.isSolvable(holder, grid)) {
+                ((RecipeCollectionAccessor) self).sprawlcrafting$craftable().add(recipe);
+                DeferredCraftableCache.markDeferredOnly(holder);
+            }
+        }
+    }*/
     //?}
 }

@@ -145,6 +145,9 @@ public class SprawlConfigScreen extends Screen {
     //?} else {
     @Override
     public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
+        //? if <1.20.2 {
+        /*renderBackground(guiGraphics); // 1.20.1's Screen.render doesn't draw the background itself*/
+        //?}
         super.render(guiGraphics, mouseX, mouseY, partialTick);
         guiGraphics.fill(0, 0, width, height, 0xC0000000);
         guiGraphics.drawCenteredString(this.font, getTitle(), width / 2, 18, TITLE_COLOR);

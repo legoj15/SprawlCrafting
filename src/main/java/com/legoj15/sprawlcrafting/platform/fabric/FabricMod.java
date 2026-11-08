@@ -19,11 +19,13 @@ import com.legoj15.sprawlcrafting.network.StartDeferredCraftPayload;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
-import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
-import net.minecraft.network.RegistryFriendlyByteBuf;
 import net.minecraft.server.level.ServerPlayer;
+//? if >=1.20.5 {
+import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
+import net.minecraft.network.RegistryFriendlyByteBuf;
+//?}
 
 public class FabricMod implements ModInitializer {
 
@@ -31,6 +33,7 @@ public class FabricMod implements ModInitializer {
     public void onInitialize() {
         CommonClass.init();
 
+        //? if >=1.20.5 {
         c2s().register(
                 StartDeferredCraftPayload.TYPE, StartDeferredCraftPayload.STREAM_CODEC);
         c2s().register(
@@ -42,6 +45,22 @@ public class FabricMod implements ModInitializer {
         ServerPlayNetworking.registerGlobalReceiver(CraftingScreenStatePayload.TYPE,
                 (payload, context) -> ClientCraftingView.update(
                         context.player().getUUID(), payload.gridWidth(), payload.gridHeight()));
+        //?} else {
+        /*// Pre-1.20.5 Fabric networking: channel id + raw buffer, and receivers run on the netty
+        // thread — decode there, then hop to the server thread (the 1.20.5+ API does that for us).
+        // S2C channels need no registration; the client registers its receiver (FabricClient).
+        ServerPlayNetworking.registerGlobalReceiver(StartDeferredCraftPayload.ID,
+                (server, player, handler, buf, responseSender) -> {
+                    StartDeferredCraftPayload payload = StartDeferredCraftPayload.read(buf);
+                    server.execute(() -> CraftRequests.handleStartRequest(player, payload.recipeId()));
+                });
+        ServerPlayNetworking.registerGlobalReceiver(CraftingScreenStatePayload.ID,
+                (server, player, handler, buf, responseSender) -> {
+                    CraftingScreenStatePayload payload = CraftingScreenStatePayload.read(buf);
+                    server.execute(() -> ClientCraftingView.update(
+                            player.getUUID(), payload.gridWidth(), payload.gridHeight()));
+                });*/
+        //?}
 
         // 26.x server-driven recipe-book layer: the deferred-craftability sync + display-keyed
         // start + plan-preview round-trip. 1.21.1 computes all of this on the client (no payloads).
@@ -90,20 +109,23 @@ public class FabricMod implements ModInitializer {
 
     // Fabric renamed the play-phase payload registries in 26.1.2 (playC2S/playS2C →
     // serverboundPlay/clientboundPlay). These gated accessors keep the registration calls above
-    // loader-version-agnostic so the shared source compiles on both MC lines.
-    private static PayloadTypeRegistry<RegistryFriendlyByteBuf> c2s() {
-        //? if >=1.21.11 {
-        /*return PayloadTypeRegistry.serverboundPlay();*/
-        //?} else {
-        return PayloadTypeRegistry.playC2S();
-        //?}
+    // loader-version-agnostic so the shared source compiles on both MC lines. Payload registries
+    // only exist from 1.20.5 (the CustomPacketPayload API); older lines use raw channel ids.
+    //? if >=1.21.11 {
+    /*private static PayloadTypeRegistry<RegistryFriendlyByteBuf> c2s() {
+        return PayloadTypeRegistry.serverboundPlay();
     }
 
     private static PayloadTypeRegistry<RegistryFriendlyByteBuf> s2c() {
-        //? if >=1.21.11 {
-        /*return PayloadTypeRegistry.clientboundPlay();*/
-        //?} else {
-        return PayloadTypeRegistry.playS2C();
-        //?}
+        return PayloadTypeRegistry.clientboundPlay();
+    }*/
+    //?} else if >=1.20.5 {
+    private static PayloadTypeRegistry<RegistryFriendlyByteBuf> c2s() {
+        return PayloadTypeRegistry.playC2S();
     }
+
+    private static PayloadTypeRegistry<RegistryFriendlyByteBuf> s2c() {
+        return PayloadTypeRegistry.playS2C();
+    }
+    //?}
 }

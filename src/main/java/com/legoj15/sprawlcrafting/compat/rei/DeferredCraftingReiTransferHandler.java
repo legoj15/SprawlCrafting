@@ -57,8 +57,14 @@ public class DeferredCraftingReiTransferHandler implements TransferHandler {
         if (displayId.isEmpty() || context.getMinecraft().level == null) {
             return Result.createNotApplicable();
         }
+        //? if >=1.20.2 {
         RecipeHolder<?> holder = context.getMinecraft().level.getRecipeManager()
                 .byKey(displayId.get()).orElse(null);
+        //?} else {
+        /*// 1.20.1 has no RecipeHolder: wrap the bare recipe in the shim.
+        RecipeHolder<?> holder = context.getMinecraft().level.getRecipeManager()
+                .byKey(displayId.get()).<RecipeHolder<?>>map(RecipeHolder::of).orElse(null);*/
+        //?}
         if (holder == null || !(holder.value() instanceof CraftingRecipe)) {
             return Result.createNotApplicable();
         }

@@ -70,51 +70,46 @@ public final class CraftQueueManager {
         // recipe out in that grid for them to grab (a real vanilla craft) instead of auto-crafting
         // it. Any case that can't cleanly hand off falls through to the normal auto-craft below.
         if (job.isFinalStep() && job.isLastCraftOfStep() && canHandOff(player, job.currentStep())) {
-            switch (CraftExecutor.tryFillFinalGrid(player, job.currentStep().recipeId())) {
-                case CraftExecutor.FillOutcome.Filled filled -> {
-                    job.onCraftPerformed();
-                    ACTIVE.remove(player.getUUID());
-                    sync(player, job, CraftProgressPayload.State.READY_IN_GRID, filled.result());
-                    notify(player, Component.translatable("sprawlcrafting.craft.ready_in_grid",
-                            job.targetResult().getHoverName()).withStyle(ChatFormatting.GREEN));
-                    return;
-                }
-                case CraftExecutor.FillOutcome.RecipeGone gone -> {
-                    ACTIVE.remove(player.getUUID());
-                    sync(player, job, CraftProgressPayload.State.CANCELLED, ItemStack.EMPTY);
-                    notify(player, Component.translatable("sprawlcrafting.craft.recipe_gone",
-                            job.targetResult().getHoverName()).withStyle(ChatFormatting.RED));
-                    return;
-                }
-                case CraftExecutor.FillOutcome.Fallback fallback -> {
-                    // Couldn't hand off (recipe locked, grid uncleanable, …) — auto-craft below.
-                }
-            }
-        }
-        switch (CraftExecutor.craftOnce(player, job.currentStep().recipeId())) {
-            case CraftExecutor.CraftResult.Success success -> {
+            // instanceof chains rather than a pattern-matching switch: the 1.20.1 node targets Java 17.
+            CraftExecutor.FillOutcome fill = CraftExecutor.tryFillFinalGrid(player, job.currentStep().recipeId());
+            if (fill instanceof CraftExecutor.FillOutcome.Filled filled) {
                 job.onCraftPerformed();
-                if (job.isFinished()) {
-                    ACTIVE.remove(player.getUUID());
-                    sync(player, job, CraftProgressPayload.State.FINISHED, success.crafted());
-                    notify(player, Component.translatable("sprawlcrafting.craft.finished",
-                            job.targetResult().getHoverName()).withStyle(ChatFormatting.GREEN));
-                } else {
-                    sync(player, job, CraftProgressPayload.State.CRAFTING, success.crafted());
-                }
-            }
-            case CraftExecutor.CraftResult.MissingIngredient missing -> {
                 ACTIVE.remove(player.getUUID());
-                sync(player, job, CraftProgressPayload.State.CANCELLED, ItemStack.EMPTY);
-                notify(player, Component.translatable("sprawlcrafting.craft.missing",
-                        job.targetResult().getHoverName(), missing.missing()).withStyle(ChatFormatting.RED));
+                sync(player, job, CraftProgressPayload.State.READY_IN_GRID, filled.result());
+                notify(player, Component.translatable("sprawlcrafting.craft.ready_in_grid",
+                        job.targetResult().getHoverName()).withStyle(ChatFormatting.GREEN));
+                return;
             }
-            case CraftExecutor.CraftResult.RecipeGone gone -> {
+            if (fill instanceof CraftExecutor.FillOutcome.RecipeGone) {
                 ACTIVE.remove(player.getUUID());
                 sync(player, job, CraftProgressPayload.State.CANCELLED, ItemStack.EMPTY);
                 notify(player, Component.translatable("sprawlcrafting.craft.recipe_gone",
                         job.targetResult().getHoverName()).withStyle(ChatFormatting.RED));
+                return;
             }
+            // FillOutcome.Fallback: couldn't hand off (recipe locked, grid uncleanable, …) — auto-craft below.
+        }
+        CraftExecutor.CraftResult craft = CraftExecutor.craftOnce(player, job.currentStep().recipeId());
+        if (craft instanceof CraftExecutor.CraftResult.Success success) {
+            job.onCraftPerformed();
+            if (job.isFinished()) {
+                ACTIVE.remove(player.getUUID());
+                sync(player, job, CraftProgressPayload.State.FINISHED, success.crafted());
+                notify(player, Component.translatable("sprawlcrafting.craft.finished",
+                        job.targetResult().getHoverName()).withStyle(ChatFormatting.GREEN));
+            } else {
+                sync(player, job, CraftProgressPayload.State.CRAFTING, success.crafted());
+            }
+        } else if (craft instanceof CraftExecutor.CraftResult.MissingIngredient missing) {
+            ACTIVE.remove(player.getUUID());
+            sync(player, job, CraftProgressPayload.State.CANCELLED, ItemStack.EMPTY);
+            notify(player, Component.translatable("sprawlcrafting.craft.missing",
+                    job.targetResult().getHoverName(), missing.missing()).withStyle(ChatFormatting.RED));
+        } else if (craft instanceof CraftExecutor.CraftResult.RecipeGone) {
+            ACTIVE.remove(player.getUUID());
+            sync(player, job, CraftProgressPayload.State.CANCELLED, ItemStack.EMPTY);
+            notify(player, Component.translatable("sprawlcrafting.craft.recipe_gone",
+                    job.targetResult().getHoverName()).withStyle(ChatFormatting.RED));
         }
     }
 
@@ -142,14 +137,14 @@ public final class CraftQueueManager {
     }
 
     /**
-     * Routed through the platform helper (Forge cannot encode a raw payload in a vanilla packet; the
-     * other loaders' helpers send the identical vanilla packet). Guarded by a channel check so a
-     * modless/vanilla client (the payload is registered optional) is simply skipped rather than
-     * erroring on send.
+     * Streams the snapshot through the platform helper (the vanilla payload packet on 1.20.5+, the
+     * loader's channel API before; Forge always goes through its own channel because its patched codec
+     * cannot encode a raw payload packet). Guarded by a channel check so a modless/vanilla client (the
+     * payload is registered optional) is simply skipped rather than erroring on send.
      */
     private static void sync(ServerPlayer player, CraftJob job,
                              CraftProgressPayload.State state, ItemStack current) {
-        if (!Services.PLATFORM.canReceive(player, CraftProgressPayload.TYPE.id())) {
+        if (!Services.PLATFORM.canReceive(player, CraftProgressPayload.ID)) {
             return;
         }
         Services.PLATFORM.sendToPlayer(player, new CraftProgressPayload(

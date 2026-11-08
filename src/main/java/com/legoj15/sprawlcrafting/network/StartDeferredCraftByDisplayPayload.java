@@ -2,11 +2,15 @@ package com.legoj15.sprawlcrafting.network;
 
 import com.legoj15.sprawlcrafting.Constants;
 
+import net.minecraft.resources.ResourceLocation;
+//? if >=1.20.5 {
 import io.netty.buffer.ByteBuf;
 import net.minecraft.network.codec.ByteBufCodecs;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
-import net.minecraft.resources.ResourceLocation;
+//?} else {
+/*import net.minecraft.network.FriendlyByteBuf;*/
+//?}
 
 /**
  * C2S (26.x only): the player confirmed a yellow recipe-book entry. On 26.x the client only
@@ -18,10 +22,14 @@ import net.minecraft.resources.ResourceLocation;
  *
  * @param displayId the {@code RecipeDisplayId} index the recipe book was showing
  */
-public record StartDeferredCraftByDisplayPayload(int displayId) implements CustomPacketPayload {
+public record StartDeferredCraftByDisplayPayload(int displayId) implements SprawlPayload {
 
+    public static final ResourceLocation ID =
+            ResourceLocation.fromNamespaceAndPath(Constants.MOD_ID, "start_craft_display");
+
+    //? if >=1.20.5 {
     public static final CustomPacketPayload.Type<StartDeferredCraftByDisplayPayload> TYPE =
-            new CustomPacketPayload.Type<>(ResourceLocation.fromNamespaceAndPath(Constants.MOD_ID, "start_craft_display"));
+            new CustomPacketPayload.Type<>(ID);
 
     public static final StreamCodec<ByteBuf, StartDeferredCraftByDisplayPayload> STREAM_CODEC =
             StreamCodec.composite(
@@ -32,4 +40,19 @@ public record StartDeferredCraftByDisplayPayload(int displayId) implements Custo
     public CustomPacketPayload.Type<StartDeferredCraftByDisplayPayload> type() {
         return TYPE;
     }
+    //?} else {
+    /*@Override
+    public ResourceLocation id() {
+        return ID;
+    }
+
+    @Override
+    public void write(FriendlyByteBuf buf) {
+        buf.writeVarInt(displayId);
+    }
+
+    public static StartDeferredCraftByDisplayPayload read(FriendlyByteBuf buf) {
+        return new StartDeferredCraftByDisplayPayload(buf.readVarInt());
+    }*/
+    //?}
 }

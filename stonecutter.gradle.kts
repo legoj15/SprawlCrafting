@@ -29,9 +29,9 @@ stonecutter parameters {
     // Per-node boolean constants for //? directives. The node project is named "<mc>-<loader>",
     // so the trailing segment is the loader: defines fabric/neoforge/forge true for the matching node.
     constants.match(current.project.substringAfterLast('-'), "fabric", "neoforge", "forge")
-    // REI ships compatible builds on the 1.21.1 line only (no 26.1.2 release), so its compat
-    // layer is gated on the MC version rather than the loader.
-    constants["rei"] = current.version == "1.21.1"
+    // REI ships compatible builds on the 1.20.1 and 1.21.1 lines only (no 26.x release, no Forge build),
+    // so its compat layer is gated on the MC version here and excluded by the Forge scripts.
+    constants["rei"] = current.version == "1.21.1" || current.version == "1.20.1"
 
     // ─── Source replacements (forward-port the 1.21.1-canonical source to 26.x) ──────────────────
     // ONE copy for every node and loader (it used to be duplicated in each per-node script). The shared
@@ -45,6 +45,16 @@ stonecutter parameters {
     val is26_2Plus = eval(current.version, ">=26.2")
     // 26.3 moved the render-pipeline API out of blaze3d into the new renderpearl package.
     val is26_3Plus = eval(current.version, ">=26.3")
+    // ─── Back-port replacements (1.21.1-canonical source down to 1.20.x) ─────────────────────
+    // Declared here, not in a loader script, so every loader on these lines (1.20.1-fabric now, a
+    // 1.20.1-forge node later) gets the identical source rewrite. Each pair runs forward only on the
+    // older nodes; on 1.21.1+ the reverse pattern never matches canonical source, so it is a no-op.
+    // The canonical (1.21.1) source must therefore never contain the reverse-side spellings:
+    // `new ResourceLocation(`, `RecipeBookMenu<?>`, `isSameItemSameTags`,
+    // `player.level().registryAccess()`, or the shim's FQN.
+    val pre1_21 = eval(current.version, "<1.21")
+    val pre1_20_5 = eval(current.version, "<1.20.5")
+    val pre1_20_2 = eval(current.version, "<1.20.2")
     replacements {
         // MC 1.21.11 renamed net.minecraft.resources.ResourceLocation -> Identifier (same package).
         regex {
@@ -102,6 +112,42 @@ stonecutter parameters {
             // No leading \b: in a descriptor the class name follows the `L` type tag, a word character.
             replace("Lcom/mojang/blaze3d/pipeline/RenderPipeline;", "Lcom/mojang/renderpearl/api/pipeline/RenderPipeline;", "Lcom/mojang/renderpearl/api/pipeline/RenderPipeline;", "Lcom/mojang/blaze3d/pipeline/RenderPipeline;")
         }
+        // ResourceLocation's factory methods arrived in 1.21; 1.20.x only has the public constructor.
+        regex {
+            direction.set(pre1_21)
+            replace("""\bResourceLocation\.fromNamespaceAndPath\(""", "new ResourceLocation(",
+                """\bnew ResourceLocation\((?!"minecraft", )""", "ResourceLocation.fromNamespaceAndPath(")
+        }
+        regex {
+            direction.set(pre1_21)
+            replace("""\bResourceLocation\.withDefaultNamespace\(""", """new ResourceLocation("minecraft", """,
+                """\bnew ResourceLocation\("minecraft", """, "ResourceLocation.withDefaultNamespace(")
+        }
+        // RecipeBookMenu gained a second type parameter in 1.21 (<Container> -> <RecipeInput, Recipe>).
+        regex {
+            direction.set(pre1_21)
+            replace("""\bRecipeBookMenu<\?, \?>""", "RecipeBookMenu<?>", """\bRecipeBookMenu<\?>""", "RecipeBookMenu<?, ?>")
+        }
+        // Data components (1.20.5) renamed the NBT-aware stack comparison.
+        regex {
+            direction.set(pre1_20_5)
+            replace("""\bisSameItemSameComponents\b""", "isSameItemSameTags", """\bisSameItemSameTags\b""", "isSameItemSameComponents")
+        }
+        // Entity.registryAccess() is absent on 1.20.1 (javap-verified); it is the level's registry access.
+        regex {
+            direction.set(pre1_20_5)
+            replace("""\bplayer\.registryAccess\(\)""", "player.level().registryAccess()",
+                """\bplayer\.level\(\)\.registryAccess\(\)""", "player.registryAccess()")
+        }
+        // RecipeHolder (1.20.2) did not exist yet: point every import/FQN at the id+recipe shim in
+        // craft/legacy, which mirrors the record API our code uses (id(), value()).
+        regex {
+            direction.set(pre1_20_2)
+            replace("""\bnet\.minecraft\.world\.item\.crafting\.RecipeHolder\b""",
+                "com.legoj15.sprawlcrafting.craft.legacy.RecipeHolder",
+                """\bcom\.legoj15\.sprawlcrafting\.craft\.legacy\.RecipeHolder\b""",
+                "net.minecraft.world.item.crafting.RecipeHolder")
+        }
     }
 }
 
@@ -114,7 +160,7 @@ stonecutter parameters {
 // Named `buildAndCollect` for uniformity with BuildCraft's task of the same purpose (theirs is
 // per-node and collects into build/libs/<version>/; this one is a single root task with an explicit
 // node list, collecting into testing/dist/ where the release matrix stages from).
-val releaseNodes = listOf("1.21.1-fabric", "1.21.1-neoforge", "1.21.1-forge", "26.1.2-neoforge", "26.1.2-fabric", "26.2-neoforge", "26.2-fabric", "26.3-neoforge", "26.3-fabric")
+val releaseNodes = listOf("1.20.1-fabric", "1.21.1-fabric", "1.21.1-neoforge", "1.21.1-forge", "26.1.2-neoforge", "26.1.2-fabric", "26.2-neoforge", "26.2-fabric", "26.3-neoforge", "26.3-fabric")
 // Project-scope reads: inside a task block `property()` resolves against the TASK, not the project.
 val modVersion = property("version") as String
 val distDir = layout.projectDirectory.dir("testing/dist").asFile.toPath()

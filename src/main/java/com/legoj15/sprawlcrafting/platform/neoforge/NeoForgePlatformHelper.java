@@ -2,10 +2,10 @@ package com.legoj15.sprawlcrafting.platform.neoforge;
 
 import java.nio.file.Path;
 
+import com.legoj15.sprawlcrafting.network.SprawlPayload;
 import com.legoj15.sprawlcrafting.platform.services.IPlatformHelper;
 import net.minecraft.network.Connection;
 import net.minecraft.network.protocol.common.ClientboundCustomPayloadPacket;
-import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerPlayer;
 import net.neoforged.fml.ModList;
@@ -39,7 +39,7 @@ public class NeoForgePlatformHelper implements IPlatformHelper {
     }
 
     @Override
-    public void sendToServer(CustomPacketPayload payload) {
+    public void sendToServer(SprawlPayload payload) {
         //? if >=1.21.11 {
         /*net.neoforged.neoforge.client.network.ClientPacketDistributor.sendToServer(payload);*/
         //?} else {
@@ -48,7 +48,7 @@ public class NeoForgePlatformHelper implements IPlatformHelper {
     }
 
     @Override
-    public void sendToPlayer(ServerPlayer player, CustomPacketPayload payload) {
+    public void sendToPlayer(ServerPlayer player, SprawlPayload payload) {
         // The plain vanilla packet: NeoForge's payload registry hooks the vanilla codec, so this is what
         // PacketDistributor.sendToPlayer sends, and what the shared code always did.
         player.connection.send(new ClientboundCustomPayloadPacket(payload));

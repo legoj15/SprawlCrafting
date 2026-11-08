@@ -185,11 +185,20 @@ public class MissingIngredientsScreen extends Screen {
                 Component.translatable("sprawlcrafting.gather.need", count).withStyle(ChatFormatting.GRAY));
     }
 
+    //? if >=1.20.2 {
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
         scrollAmount = Mth.clamp(scrollAmount - scrollY * SLOT, 0, maxScroll());
         return true;
     }
+    //?} else {
+    /*// 1.20.1 reports a single vertical scroll delta (horizontal scroll arrived in 1.20.2).
+    @Override
+    public boolean mouseScrolled(double mouseX, double mouseY, double scrollY) {
+        scrollAmount = Mth.clamp(scrollAmount - scrollY * SLOT, 0, maxScroll());
+        return true;
+    }*/
+    //?}
 
     @Override
     public void tick() {
@@ -253,6 +262,9 @@ public class MissingIngredientsScreen extends Screen {
     //?} else {
     @Override
     public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
+        //? if <1.20.2 {
+        /*renderBackground(guiGraphics); // 1.20.1's Screen.render doesn't draw the background itself*/
+        //?}
         super.render(guiGraphics, mouseX, mouseY, partialTick);
         lastMouseX = mouseX; // remembered for keyPressed (R/U has no mouse coords)
         lastMouseY = mouseY;

@@ -136,7 +136,13 @@ public class CraftProgressToast implements Toast {
             return Toast.Visibility.HIDE;
         }
 
+        //? if >=1.20.2 {
         guiGraphics.blitSprite(BACKGROUND_SPRITE, 0, 0, width(), height());
+        //?} else {
+        /*// Pre-sprite-atlas GUI: the recipe-toast background is the (0, 32) cell of toasts.png,
+        // exactly what vanilla's 1.20.1 RecipeToast blits.
+        guiGraphics.blit(Toast.TEXTURE, 0, 0, 0, 32, width(), height());*/
+        //?}
         Font font = toastComponent.getMinecraft().font;
 
         ItemStack icon = job.current().isEmpty() ? job.target() : job.current();

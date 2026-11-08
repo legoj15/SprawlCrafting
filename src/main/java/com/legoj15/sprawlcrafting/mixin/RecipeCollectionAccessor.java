@@ -15,8 +15,12 @@ public interface RecipeCollectionAccessor {
     //? if >=1.21.11 {
     /*@Accessor("craftable")
     Set<net.minecraft.world.item.crafting.display.RecipeDisplayId> sprawlcrafting$craftable();*/
-    //?} else {
+    //?} else if >=1.20.2 {
     @Accessor("craftable")
     Set<RecipeHolder<?>> sprawlcrafting$craftable();
+    //?} else {
+    /*// 1.20.1 keys the set on bare recipes (no RecipeHolder yet); never add a shim holder to it.
+    @Accessor("craftable")
+    Set<net.minecraft.world.item.crafting.Recipe<?>> sprawlcrafting$craftable();*/
     //?}
 }

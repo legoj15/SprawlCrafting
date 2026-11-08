@@ -154,6 +154,40 @@ public abstract class RecipeBookComponentMixin {
         }
     }
 
+    @Inject(method = "init(IILnet/minecraft/client/Minecraft;ZLnet/minecraft/world/inventory/RecipeBookMenu;)V",
+            at = @At("TAIL"))
+    private void sprawlcrafting$clearPreviewOnInit(CallbackInfo ci) {
+        DeferredClickState.clear();
+    }
+
+    // Right-click a red (unmakeable) recipe to open its gather list. HEAD so it runs before vanilla's
+    // own handling; the hovered button (a RecipeButton) decides if it's actually red and opens.
+    @Inject(method = "mouseClicked(DDI)Z", cancellable = true, at = @At("HEAD"))
+    private void sprawlcrafting$interceptGatherClick(double mouseX, double mouseY, int button,
+                                                     CallbackInfoReturnable<Boolean> cir) {
+        if (button != InputConstants.MOUSE_BUTTON_RIGHT || !((RecipeBookComponent) (Object) this).isVisible()) {
+            return;
+        }
+        if (!SprawlConfig.get().needsSystem()) {
+            return; // gather/"needs" helper disabled: right-click stays vanilla
+        }
+        if (((RecipeBookPageAccessor) recipeBookPage).sprawlcrafting$overlay().isVisible()) {
+            return; // variant overlay open: its right-clicks belong to OverlayRecipeComponentMixin,
+                    // not the recipe button it happens to sit over (which would otherwise leak through)
+        }
+        RecipeButton hovered = ((RecipeBookPageAccessor) recipeBookPage).sprawlcrafting$hoveredButton();
+        if (hovered instanceof GatherCandidate gather && gather.sprawlcrafting$tryOpenGatherList()) {
+            cir.setReturnValue(true);
+        }
+    }
+    //?}
+
+    // The yellow-recipe click interceptor, injected right before vanilla sends the place-recipe packet.
+    // Split per line because the handlePlaceRecipe descriptor changed: 1.20.2+ passes a RecipeHolder,
+    // 1.20.1 a bare Recipe (wrapped in the RecipeHolder shim for our client APIs).
+    //? if >=1.21.11 {
+    /*// 26.x: interceptor is in the RecipeDisplayId block above.*/
+    //?} else if >=1.20.2 {
     @Inject(method = "mouseClicked(DDI)Z",
             cancellable = true,
             at = @At(value = "INVOKE",
@@ -181,33 +215,35 @@ public abstract class RecipeBookComponentMixin {
         ((RecipeBookComponent) (Object) this).setupGhostRecipe(clicked, menu.slots);
         cir.setReturnValue(true);
     }
-
-    @Inject(method = "init(IILnet/minecraft/client/Minecraft;ZLnet/minecraft/world/inventory/RecipeBookMenu;)V",
-            at = @At("TAIL"))
-    private void sprawlcrafting$clearPreviewOnInit(CallbackInfo ci) {
-        DeferredClickState.clear();
-    }
-
-    // Right-click a red (unmakeable) recipe to open its gather list. HEAD so it runs before vanilla's
-    // own handling; the hovered button (a RecipeButton) decides if it's actually red and opens.
-    @Inject(method = "mouseClicked(DDI)Z", cancellable = true, at = @At("HEAD"))
-    private void sprawlcrafting$interceptGatherClick(double mouseX, double mouseY, int button,
-                                                     CallbackInfoReturnable<Boolean> cir) {
-        if (button != InputConstants.MOUSE_BUTTON_RIGHT || !((RecipeBookComponent) (Object) this).isVisible()) {
+    //?} else {
+    /*@Inject(method = "mouseClicked(DDI)Z",
+            cancellable = true,
+            at = @At(value = "INVOKE",
+                    target = "Lnet/minecraft/client/multiplayer/MultiPlayerGameMode;handlePlaceRecipe(ILnet/minecraft/world/item/crafting/Recipe;Z)V"))
+    private void sprawlcrafting$interceptDeferredClick(double mouseX, double mouseY, int button,
+                                                       CallbackInfoReturnable<Boolean> cir) {
+        RecipeCollection collection = recipeBookPage.getLastClickedRecipeCollection();
+        // Second click on the button that owns the pending preview confirms THAT recipe,
+        // regardless of which variant a grouped button's animation is currently showing.
+        if (collection != null
+                && DeferredClickState.pendingFor(RecipeHolder.ofAll(collection.getRecipes(false))) != null) {
+            DeferredClickState.confirmPending();
+            cir.setReturnValue(true);
             return;
         }
-        if (!SprawlConfig.get().needsSystem()) {
-            return; // gather/"needs" helper disabled: right-click stays vanilla
+        RecipeHolder<?> clicked = RecipeHolder.ofNullable(recipeBookPage.getLastClickedRecipe());
+        if (clicked == null || !DeferredCraftableCache.isDeferredOnly(clicked)) {
+            DeferredClickState.clear(); // vanilla click: drop any pending preview
+            return; // truly craftable (or unknown): vanilla places it into the grid
         }
-        if (((RecipeBookPageAccessor) recipeBookPage).sprawlcrafting$overlay().isVisible()) {
-            return; // variant overlay open: its right-clicks belong to OverlayRecipeComponentMixin,
-                    // not the recipe button it happens to sit over (which would otherwise leak through)
-        }
-        RecipeButton hovered = ((RecipeBookPageAccessor) recipeBookPage).sprawlcrafting$hoveredButton();
-        if (hovered instanceof GatherCandidate gather && gather.sprawlcrafting$tryOpenGatherList()) {
-            cir.setReturnValue(true);
-        }
-    }
+        GridContext grid = DeferredCraftableCache.gridFor(menu.getGridWidth(), menu.getGridHeight());
+        DeferredClickState.openPreview(clicked, grid);
+        // Show the final recipe's layout as a grid ghost (vanilla cleared the previous
+        // ghost just before this injection point), so the player sees what the last
+        // intermediates feed into. Cleared again automatically on confirm.
+        ((RecipeBookComponent) (Object) this).setupGhostRecipe(clicked.value(), menu.slots);
+        cir.setReturnValue(true);
+    }*/
     //?}
 
     @Inject(method = "recipesUpdated()V", at = @At("HEAD"))
