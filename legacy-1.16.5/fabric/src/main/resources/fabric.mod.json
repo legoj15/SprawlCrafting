@@ -1,0 +1,41 @@
+{
+    "schemaVersion": 1,
+    "id": "sprawlcrafting",
+    "version": "${version}",
+    "name": "SprawlCrafting",
+    "description": "Queued, deferred crafting: automatically crafts all intermediate ingredients from raw resources, Factorio style.",
+    "authors": [
+        "legoj15"
+    ],
+    "contact": {
+        "homepage": "https://github.com/legoj15/SprawlCrafting",
+        "sources": "https://github.com/legoj15/SprawlCrafting",
+        "issues": "https://github.com/legoj15/SprawlCrafting/issues"
+    },
+    "license": "MIT",
+    "icon": "assets/sprawlcrafting/icon.png",
+    "environment": "*",
+    "entrypoints": {
+        "main": [
+            "com.legoj15.sprawlcrafting.platform.fabric.FabricMod"
+        ],
+        "client": [
+            "com.legoj15.sprawlcrafting.platform.fabric.FabricClient"
+        ],
+        "modmenu": [
+            "com.legoj15.sprawlcrafting.platform.fabric.SprawlModMenuIntegration"
+        ]
+    },
+    "mixins": [
+        "sprawlcrafting.mixins.json"
+    ],
+    "depends": {
+        "fabricloader": ">=${fabric_loader_version}",
+        "fabric": "*",
+        "minecraft": "1.16.x",
+        "java": ">=8"
+    },
+    "suggests": {
+        "modmenu": "*"
+    }
+}

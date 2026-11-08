@@ -1,0 +1,35 @@
+modLoader = "javafml"
+loaderVersion = "[36,)"
+license = "MIT"
+issueTrackerURL = "https://github.com/legoj15/SprawlCrafting/issues"
+logoFile = "assets/sprawlcrafting/icon.png"
+
+[[mods]]
+modId = "sprawlcrafting"
+version = "${version}"
+displayName = "SprawlCrafting"
+updateJSONURL = "https://raw.githubusercontent.com/legoj15/SprawlCrafting/main/update.json"
+displayURL = "https://github.com/legoj15/SprawlCrafting"
+authors = "legoj15"
+description = '''Queued, deferred crafting: automatically crafts all intermediate ingredients from raw resources, Factorio style.'''
+
+[[dependencies.sprawlcrafting]]
+modId = "forge"
+mandatory = true
+versionRange = "[36,)"
+ordering = "NONE"
+side = "BOTH"
+
+[[dependencies.sprawlcrafting]]
+modId = "minecraft"
+mandatory = true
+versionRange = "[${minecraft_version},1.17)"
+ordering = "NONE"
+side = "BOTH"
+
+[[dependencies.sprawlcrafting]]
+modId = "jei"
+mandatory = false
+versionRange = "[7.6,)"
+ordering = "AFTER"
+side = "CLIENT"

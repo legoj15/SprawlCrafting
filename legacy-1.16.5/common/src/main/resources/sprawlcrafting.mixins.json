@@ -1,0 +1,21 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "com.legoj15.sprawlcrafting.mixin",
+  "refmap": "sprawlcrafting.refmap.json",
+  "compatibilityLevel": "JAVA_8",
+  "mixins": [],
+  "client": [
+    "RecipeBookGuiMixin",
+    "RecipeBookPageAccessor",
+    "RecipeListAccessor",
+    "RecipeListMixin",
+    "RecipeOverlayButtonMixin",
+    "RecipeOverlayGuiMixin",
+    "RecipeWidgetMixin"
+  ],
+  "server": [],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

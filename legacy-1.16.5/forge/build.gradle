@@ -1,0 +1,122 @@
+// =====================================================================================
+// SprawlCrafting :: Minecraft 1.16.5 Forge (ForgeGradle 7 + Renamer, Java 8 bytecode)
+//
+// FG7 runs on this build's Gradle 9.5 wrapper; its Mavenizer builds the 1.16.5 Forge artifact with
+// "official" mappings — which for 1.16.x means MCP/SRG CLASS names + Mojang MEMBER names. Production
+// 1.16.5 runs SRG names, so the jar is renamed (named -> SRG) by the Renamer plugin, which also
+// rewrites the Mixin refmap to SRG (func_/field_). Forge 1.16.5 bundles Mixin 0.8.4 and loads our
+// config from the jar manifest's MixinConfigs attribute.
+// =====================================================================================
+plugins {
+    id 'java'
+    id 'net.minecraftforge.gradle'
+    id 'net.minecraftforge.renamer'
+}
+
+def rootVersion = rootProject.ext.modVersion
+version = rootVersion
+group = 'com.legoj15.sprawlcrafting'
+base.archivesName = 'sprawlcrafting'
+
+java.toolchain.languageVersion = JavaLanguageVersion.of(8)
+
+sourceSets {
+    main {
+        java {
+            srcDir '../common/src/main/java'
+            srcDir '../../solver-core/src/main/java'
+        }
+        resources {
+            srcDir '../common/src/main/resources'
+        }
+    }
+    test {
+        java { srcDir '../../solver-core/src/test/java' }
+    }
+}
+
+renamer.enableMixinRefmaps {
+    config 'sprawlcrafting.mixins.json'
+    refMap = 'sprawlcrafting.refmap.json'
+}
+
+minecraft {
+    mappings channel: 'official', version: minecraft_version
+    runs {
+        configureEach {
+            workingDir.convention layout.projectDirectory.dir('run')
+            // Dev runs load classes from the build dirs, not a jar, so the MixinConfigs manifest
+            // attribute is invisible there: name the config explicitly.
+            args '-mixin.config=sprawlcrafting.mixins.json', '-mixin.config=sprawlcrafting.jei.mixins.json'
+        }
+        register('client') {}
+        register('server') {
+            workingDir = layout.projectDirectory.dir('run-server')
+            args '--nogui'
+        }
+    }
+}
+
+repositories {
+    minecraft.mavenizer(it)
+    maven fg.forgeMaven
+    maven fg.minecraftLibsMaven
+    maven { url = 'https://maven.blamejared.com/'; content { includeGroup 'mezz.jei' } }
+    mavenCentral()
+}
+
+dependencies {
+    implementation minecraft.dependency("net.minecraftforge:forge:$minecraft_version-$forge_version")
+    annotationProcessor 'org.spongepowered:mixin:0.8.5:processor'
+
+    // JEI API (SRG-named in its published jar) renamed to our dev names; compile-only soft dependency.
+    compileOnly renamer.dependency("mezz.jei:jei-1.16.5:${jei_version}:api")
+    // -Pjei pulls the full JEI into dev runs (runClient) for manual testing.
+    if (project.hasProperty('jei')) {
+        runtimeOnly renamer.dependency("mezz.jei:jei-1.16.5:${jei_version}")
+    }
+
+    testImplementation platform('org.junit:junit-bom:5.10.3')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+renamer.mappings(minecraft.dependency.toSrg)
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+}
+
+tasks.named('processResources', ProcessResources) {
+    def props = [version: rootVersion, minecraft_version: minecraft_version]
+    inputs.properties(props)
+    filesMatching('META-INF/mods.toml') { expand(props) }
+}
+
+tasks.named('jar', Jar) {
+    archiveVersion = "${rootVersion}+mc${minecraft_version}-forge"
+    archiveClassifier = 'dev'
+    manifest {
+        attributes([
+                'MixinConfigs'          : 'sprawlcrafting.mixins.json,sprawlcrafting.jei.mixins.json',
+                'Specification-Title'   : 'sprawlcrafting',
+                'Specification-Vendor'  : 'legoj15',
+                'Specification-Version' : '1',
+                'Implementation-Title'  : 'SprawlCrafting',
+                'Implementation-Version': rootVersion,
+                'Implementation-Vendor' : 'legoj15'
+        ])
+    }
+}
+
+// The production jar: named -> SRG classes + the SRG refmap. sprawlcrafting-<ver>+mc1.16.5-forge.jar
+renamer.classes(tasks.named('jar', Jar)) {
+    // RenameJar is not an archive task (no archiveVersion): name the output file directly.
+    archiveClassifier = ''
+    output = layout.buildDirectory.file("libs/sprawlcrafting-${rootVersion}+mc${minecraft_version}-forge.jar")
+    mappings renamer.mixin.generatedMappings
+}
+tasks.named('assemble') { dependsOn 'renameJar' }
