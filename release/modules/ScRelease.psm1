@@ -266,7 +266,7 @@ function Get-ScChangelogBody {
     $lines = @(Get-Content -Path $path)
     if ($lines.Count -lt 1) { throw 'changelog.md is empty.' }
     # Drop the first line (the "Changes since ..." header) and any leading blank lines.
-    $body = if ($lines.Count -gt 1) { $lines[1..($lines.Count - 1)] } else { @() }
+    $body = @(if ($lines.Count -gt 1) { $lines[1..($lines.Count - 1)] })   # @() — a 1-line body is a scalar (StrictMode .Count throw)
     while ($body.Count -gt 0 -and [string]::IsNullOrWhiteSpace($body[0])) { $body = @($body[1..($body.Count - 1)]) }
     return ($body -join "`n").TrimEnd()
 }
