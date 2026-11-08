@@ -6,3 +6,7 @@ One line per delegation: agent, lane, outcome, escalations. Used to tune the mod
 
 - researcher (Haiku): Forge toolchains + versions — good; found FG7 7.0.40 on Gradle 9.5, Forge exists for 26.x, no JEI/REI Forge on 26.x.
 - researcher (Haiku): IMDS mods — good; original = Forge 1.16.5 (CF 562331), Reborn = Forge 1.20.1 (Modrinth imds-reborn).
+- impl (Sonnet xhigh): 1.21.1-forge node (FG7 7.0.40, Forge 52.1.21) — green first pass; reviewer (Haiku) PASS WITH NITS. Also consolidated the 26.x regex tiers into the controller.
+- impl-opus: 1.20.1-fabric backport (SprawlPayload seam, RecipeHolder shim, back-port regex tiers) — green first pass, reviewer PASS WITH NITS; left work UNCOMMITTED citing its standing "orchestrator commits" rule (orchestrator committed 5bfda4a).
+- impl-opus: legacy-1.16.5 tree (Forge FG7 + Fabric Loom on Gradle 9.5, Java 8 toolchain, MCP-class layered mappings) — green first pass, reviewer PASS WITH NITS.
+- Orchestrator: merged the three lanes into integ-ports; resolved the duplicate sendToPlayer overload (CustomPacketPayload vs SprawlPayload) onto SprawlPayload.
