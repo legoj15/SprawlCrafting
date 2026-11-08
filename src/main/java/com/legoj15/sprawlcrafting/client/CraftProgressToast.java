@@ -1,5 +1,6 @@
 package com.legoj15.sprawlcrafting.client;
 
+import com.legoj15.sprawlcrafting.craft.solver.CountFormat;
 import com.legoj15.sprawlcrafting.network.CraftProgressPayload;
 
 import net.minecraft.client.gui.Font;
@@ -86,7 +87,7 @@ public class CraftProgressToast implements Toast {
                 drawClipped(guiGraphics, font, Component.translatable("sprawlcrafting.toast.crafting",
                         job.target().getHoverName()), 7, TITLE_COLOR);
                 guiGraphics.text(font, Component.translatable("sprawlcrafting.toast.step",
-                        job.done(), job.total()), TEXT_X, 18, SUBTITLE_COLOR, false);
+                        CountFormat.format(job.done()), CountFormat.format(job.total())), TEXT_X, 18, SUBTITLE_COLOR, false);
                 drawProgressBar(guiGraphics, job);
             }
             case PAUSED -> {
@@ -153,7 +154,7 @@ public class CraftProgressToast implements Toast {
                 drawClipped(guiGraphics, font, Component.translatable("sprawlcrafting.toast.crafting",
                         job.target().getHoverName()), 7, TITLE_COLOR);
                 guiGraphics.drawString(font, Component.translatable("sprawlcrafting.toast.step",
-                        job.done(), job.total()), TEXT_X, 18, SUBTITLE_COLOR, false);
+                        CountFormat.format(job.done()), CountFormat.format(job.total())), TEXT_X, 18, SUBTITLE_COLOR, false);
                 drawProgressBar(guiGraphics, job);
             }
             case PAUSED -> {

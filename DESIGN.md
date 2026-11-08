@@ -2,7 +2,7 @@
 
 Factorio-style deferred crafting for the vanilla inventory and crafting table: request a
 final item, and the mod automatically crafts every intermediate from your raw resources,
-one component every half second. Intermediates are crafted as **real items** into the
+one step every half second. Intermediates are crafted as **real items** into the
 player's inventory and consumed by later steps, so a craft is crash-safe and visible to
 other mods.
 
@@ -71,7 +71,22 @@ Forge node (26.x) needs:
   re-checks and consumes its ingredients when it comes due. If they're gone, the job fails
   gracefully — already-crafted items remain.
 - **One job per player at a time.** Requesting a second craft while one runs is rejected.
-- **Cadence: one component craft per 10 ticks (0.5 s)** — `CraftJob.TICKS_PER_STEP`.
+- **Cadence: one step per 10 ticks (0.5 s), crafted in bursts** — `CraftJob.TICKS_PER_STEP`
+  between steps, then one burst per tick until the step is done. A burst stops at
+  `CraftJob.MAX_CRAFTS_PER_TICK` (64, one stack of a single-output recipe) or
+  `CraftJob.BURST_BUDGET_NANOS` (2 ms of server time), whichever comes first, and always does at
+  least one craft. A typical step (1-16 crafts) finishes in its first burst; a batched step from a
+  compressed-block chain (e.g. 6,561 crafts) takes ~5-16 s instead of ~55 minutes at one craft per
+  half second. Every craft in a burst is still validated and applied on its own
+  (`CraftExecutor.craftOnce`), so per-craft ingredient checks and graceful cancellation are
+  unchanged. **Measured** (1.21.1 NeoForge game-test server, mock player, 9-ingredient
+  `iron_block` recipe with the ingots behind 27 filler stacks, i.e. the worst slot-scan layout): a
+  64-craft burst took 15.4 ms cold, then 2.5-6.1 ms warm (~40-95 µs per craft). Uncapped, one
+  player's burst could take a third of a 50 ms tick, hence the time budget: 2 ms is 4% of a tick,
+  so a cheap recipe still runs the full 64 and a costly one ~20-50. Full-grid steps re-check
+  crafting-table reach once per half second, not every burst tick (the reach scan is the expensive
+  part). Mid-step progress is synced at most once per half second, so the toast's step sound keeps
+  its cadence (no 6,561 pops); step completions and terminal states sync immediately.
 - **Deterministic recipe ambiguity.** When several recipes make a needed intermediate, pick
   the first whose raw cost is currently satisfiable, preferring fewer total steps. Planning
   is depth-limited and cycle-guarded (e.g. iron ingot ⇄ block). No player prompt.
@@ -105,9 +120,10 @@ than a full exponential search — see "Known limitations".
 2. **Planning (server, `CraftPlanner` → `RecipeGraphSolver`).** Walk the recipe dependency
    tree against the player's inventory; emit a topologically ordered list of steps
    (recipe × count). Held items are used before any sub-craft is planned.
-3. **Execution (server, `CraftQueueManager` / `CraftExecutor`).** Every 10 ticks, re-check
-   and consume the current step's ingredients from the live inventory and insert its output
-   as real items. Shortfall → cancel + notify.
+3. **Execution (server, `CraftQueueManager` / `CraftExecutor`).** Each step starts 10 ticks
+   after the previous one and runs in bursts (≤ 64 crafts per tick); every craft re-checks and
+   consumes its ingredients from the live inventory and inserts its output as real items.
+   Shortfall → cancel + notify.
 4. **Progress toast (client).** While a job runs with the inventory closed, a vanilla toast
    (persistent per job, progress bar, state colors) shows the current item and overall
    progress, alongside a per-step craft sound.
@@ -196,6 +212,37 @@ presence**: payloads are registered optional and every send is channel-guarded (
 The server only sends in response to a client-initiated craft, so a peer lacking the mod
 never receives an unsolicited packet.
 
+### Big counts: formatting and wire versioning
+
+Batched plans make gather lists of 4e10 .. 2.7e14 items normal, and the top tiers of
+compression mods saturate at `Long.MAX_VALUE`. Counts are therefore `long` from the solver
+(`ShortfallResult.demandsLong()` + `saturated()`) through every tree's `ShortfallView` /
+`ItemDemand` to the gather screen.
+
+- **One formatter, every tree:** `solver-core`'s `CountFormat` (Minecraft-free, Java 8).
+  `format`: `1,234` below 10,000, then three significant digits with a suffix (`12.3K`,
+  `4.56M`, `7.89B`, `1.23T`, `4.56Q`), scientific from 10^18 (`9.22e18`). `compact` (≤ 4
+  chars, item-slot overlays): `999`, `1.2K`, `12K`, `9e18`. It never uses `String.format` /
+  `NumberFormat`, so output is identical in every JVM locale and a server-built string reads the
+  same on every client. A saturated count reads "more than 9.22e18" via the
+  `sprawlcrafting.gather.more_than` lang key (in every tree's lang file). The gather screen
+  (slot overlay + hover tooltip), the JEI gather tooltip (REI's shows no counts), the plan
+  preview, the "Crafting X - N component steps" chat line and the progress toast all use it.
+- **26.x wire (`ShortfallPayload`):** its layout (VarInt counts, no saturated flag) is frozen —
+  a mod-1.0.3 peer decodes it. Long counts travel on a **new payload id**,
+  `sprawlcrafting:shortfall_v2` (`ShortfallV2Payload`: same fields + `saturated`, VarLong
+  counts). The server sends V2 when `canReceive(player, ShortfallV2Payload.ID)`, else the old
+  payload with counts clamped to `Integer.MAX_VALUE`, else nothing; a new client registers
+  receivers for both, so it also works against a 1.0.3 server. Both are registered optional on
+  Fabric and NeoForge, so neither gates a connection. (Forge 1.21.1 carries no shortfall payload:
+  the gather list is client-side there. A future Forge 26.x node must register both ids.)
+- **Progress (`CraftProgressPayload`, 1.12.2 `CraftProgressMessage`, 1.16.5 packet):** stays
+  int on the wire. `CraftJob` counts in saturating `long`s and `wireDone()`/`wireTotal()`
+  scale a job of more than `Integer.MAX_VALUE` crafts down proportionally, so the bar's ratio
+  holds and nothing goes negative.
+- **1.12.2 / 1.16.5 / 1.20.1 / 1.21.1:** the gather list is computed on the client, so no
+  count crosses the wire and the frozen 1.12.2 main channel (ids 0-2) is untouched.
+
 ## Module layout
 
 - `src/` — modern shared gameplay logic (`craft/` package), recipe-book / JEI / REI mixins,
@@ -216,9 +263,19 @@ never receives an unsolicited packet.
 - **Greedy, no cross-slot backtracking.** Slots resolve left-to-right against one virtual
   inventory; under shared-resource contention a solvable target can be reported unsolvable.
   Full search is exponential — rejected.
-- **Search budget instead of memoization.** Pathological graphs (the 16-color bed cycle with
-  all dyes stocked but no wool/planks, or hostile datapacks) abort with a "too complex"
-  message after `MAX_ATTEMPTS` rather than hanging the server thread.
+- **Search budget instead of memoization.** The solver plans in batches: identical slots are
+  merged and quantities carried, so a recipe is resolved once per batch size rather than once
+  per unit, and a `PlannedStep` can hold thousands of crafts. `MAX_ATTEMPTS` counts *batched
+  resolver visits* (one recipe resolved for one batch size) per planning pass. `solve` may run
+  two passes — the batched pass, then, if that fails, the exact per-unit (slot-by-slot) fallback
+  — so nothing makeable under the old per-unit planner becomes unmakeable; each pass gets its
+  own budget. `shortfall` walks quantities with saturating `long` counts (pinned at
+  `Long.MAX_VALUE`, reported via `saturated()`), gets `MAX_ATTEMPTS` search visits plus as many
+  expansion visits, then verifies its own list against the planner (a `solve`-sized run per
+  check, with a couple of top-up rounds if the planner rejects it). Pathological graphs (the
+  16-color bed cycle with all dyes stocked but no wool/planks, or hostile datapacks) abort
+  with a "too complex" message, or an "approximate" gather list, when the budget runs out
+  rather than hanging the server thread.
 - **Planned by item identity.** Components / NBT are ignored at plan time; execution
   re-checks with `Ingredient.test` and cancels gracefully on divergence. Damaged, enchanted,
   and renamed stacks are excluded from both planning and consumption (recipe-book parity).

@@ -10,6 +10,7 @@ import com.legoj15.sprawlcrafting.network.CraftPreviewPayload;
 import com.legoj15.sprawlcrafting.network.CraftProgressPayload;
 import com.legoj15.sprawlcrafting.network.DeferredCraftableSyncPayload;
 import com.legoj15.sprawlcrafting.network.ShortfallPayload;
+import com.legoj15.sprawlcrafting.network.ShortfallV2Payload;
 
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
@@ -44,7 +45,12 @@ public class FabricClient implements ClientModInitializer {
         ClientPlayNetworking.registerGlobalReceiver(ShortfallPayload.TYPE,
                 (payload, context) -> MissingIngredients.accept(
                         payload.token(), payload.targetItem(), payload.targetCount(),
-                        payload.approximate(), payload.demands()));*/
+                        payload.approximate(), false, payload.demands()));
+        // V2 (long counts + saturated); the legacy receiver above stays for mod-1.0.3 servers.
+        ClientPlayNetworking.registerGlobalReceiver(ShortfallV2Payload.TYPE,
+                (payload, context) -> MissingIngredients.accept(
+                        payload.token(), payload.targetItem(), payload.targetCount(),
+                        payload.approximate(), payload.saturated(), payload.demands()));*/
         //?}
         // Tell the server which crafting grid is on screen (only while a job is active), so a
         // deferred craft's final step can be handed off to it for the player to grab.

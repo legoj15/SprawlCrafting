@@ -6,6 +6,7 @@ import java.util.List;
 import com.google.common.collect.ImmutableList;
 import com.legoj15.sprawlcrafting.craft.ItemDemand;
 import com.legoj15.sprawlcrafting.craft.ShortfallView;
+import com.legoj15.sprawlcrafting.craft.solver.CountFormat;
 import com.mojang.blaze3d.matrix.MatrixStack;
 import com.mojang.blaze3d.systems.RenderSystem;
 
@@ -129,8 +130,9 @@ public class MissingIngredientsScreen extends Screen {
         return new Rectangle2d(x, y, 16, 16);
     }
 
-    private static String formatCount(int count) {
-        return count >= 1000 ? (count / 1000) + "k" : Integer.toString(count);
+    /** Slot-overlay count: at most four characters ({@code 999}, {@code 1.2K}, {@code 9e18}). */
+    private static String formatCount(long count) {
+        return CountFormat.compact(count);
     }
 
     @Override
@@ -186,7 +188,7 @@ public class MissingIngredientsScreen extends Screen {
             Row row = rows.get(hovered);
             ItemStack shown = displayed(row);
             List<ITextComponent> tooltip = ImmutableList.<ITextComponent>of(shown.getHoverName(),
-                    new TranslationTextComponent("sprawlcrafting.gather.need", row.count).withStyle(TextFormatting.GRAY));
+                    new TranslationTextComponent("sprawlcrafting.gather.need", GatherTooltip.countText(row.count)).withStyle(TextFormatting.GRAY));
             renderComponentTooltip(poseStack, tooltip, mouseX, mouseY);
         }
     }
@@ -201,9 +203,9 @@ public class MissingIngredientsScreen extends Screen {
 
     private static final class Row {
         final List<ItemStack> stacks;
-        final int count;
+        final long count;
 
-        Row(List<ItemStack> stacks, int count) {
+        Row(List<ItemStack> stacks, long count) {
             this.stacks = stacks;
             this.count = count;
         }

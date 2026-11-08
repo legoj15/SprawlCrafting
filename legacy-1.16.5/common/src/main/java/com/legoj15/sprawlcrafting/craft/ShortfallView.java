@@ -16,18 +16,26 @@ public final class ShortfallView {
     private final ResourceLocation targetItem;
     private final int targetCount;
     private final boolean approximate;
+    private final boolean saturated;
     private final List<ItemDemand> demands;
 
-    public ShortfallView(ResourceLocation targetItem, int targetCount, boolean approximate, List<ItemDemand> demands) {
+    public ShortfallView(ResourceLocation targetItem, int targetCount, boolean approximate, boolean saturated,
+                         List<ItemDemand> demands) {
         this.targetItem = targetItem;
         this.targetCount = targetCount;
         this.approximate = approximate;
+        this.saturated = saturated;
         this.demands = demands;
     }
 
     /** A placeholder for a recipe that could not be planned at all (target unknown). */
     public static ShortfallView unavailable() {
-        return new ShortfallView(new ResourceLocation("minecraft", "air"), 0, false, ImmutableList.<ItemDemand>of());
+        return new ShortfallView(new ResourceLocation("minecraft", "air"), 0, false, false, ImmutableList.<ItemDemand>of());
+    }
+
+    /** True if some count saturated at {@link Long#MAX_VALUE} (that row reads "more than ..."). */
+    public boolean saturated() {
+        return saturated;
     }
 
     public ResourceLocation targetItem() {

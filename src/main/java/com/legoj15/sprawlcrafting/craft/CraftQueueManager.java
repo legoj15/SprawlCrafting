@@ -54,62 +54,91 @@ public final class CraftQueueManager {
         ClientCraftingView.clearAll();
     }
 
-    /** Advances the player's job by one tick; performs a craft when one comes due. */
+    /**
+     * Advances the player's job by one tick; when a burst is due, performs up to
+     * {@link CraftJob#MAX_CRAFTS_PER_TICK} crafts (within {@link CraftJob#BURST_BUDGET_NANOS}) of the
+     * current step (each one validated and applied
+     * by {@link CraftExecutor#craftOnce} against the live inventory, exactly as a lone craft is). A
+     * burst ends early at a step boundary, so the next step still waits its half second.
+     */
     public static void tick(ServerPlayer player) {
         CraftJob job = ACTIVE.get(player.getUUID());
         if (job == null || !job.tick()) {
             return;
         }
-        // 3×3 steps only run with a crafting table in reach; re-check every half second.
-        if (job.currentStep().needsFullGrid() && !CraftingTableReach.isInReach(player)) {
-            job.holdForRetry();
-            sync(player, job, CraftProgressPayload.State.PAUSED, ItemStack.EMPTY);
-            return;
-        }
-        // If the final craft is due and the player has a compatible crafting grid open, lay the
-        // recipe out in that grid for them to grab (a real vanilla craft) instead of auto-crafting
-        // it. Any case that can't cleanly hand off falls through to the normal auto-craft below.
-        if (job.isFinalStep() && job.isLastCraftOfStep() && canHandOff(player, job.currentStep())) {
-            // instanceof chains rather than a pattern-matching switch: the 1.20.1 node targets Java 17.
-            CraftExecutor.FillOutcome fill = CraftExecutor.tryFillFinalGrid(player, job.currentStep().recipeId());
-            if (fill instanceof CraftExecutor.FillOutcome.Filled filled) {
-                job.onCraftPerformed();
-                ACTIVE.remove(player.getUUID());
-                sync(player, job, CraftProgressPayload.State.READY_IN_GRID, filled.result());
-                notify(player, Component.translatable("sprawlcrafting.craft.ready_in_grid",
-                        job.targetResult().getHoverName()).withStyle(ChatFormatting.GREEN));
+        // 3×3 steps only run with a crafting table in reach; re-check every half second (a long step
+        // bursts every tick, but the reach scan keeps its half-second cadence).
+        if (job.currentStep().needsFullGrid() && job.reachCheckDue()) {
+            if (!CraftingTableReach.isInReach(player)) {
+                job.holdForRetry();
+                sync(player, job, CraftProgressPayload.State.PAUSED, ItemStack.EMPTY);
                 return;
             }
-            if (fill instanceof CraftExecutor.FillOutcome.RecipeGone) {
+            job.markReachChecked();
+        }
+        ItemStack lastCrafted = ItemStack.EMPTY;
+        long deadline = System.nanoTime() + CraftJob.BURST_BUDGET_NANOS;
+        for (int burst = 0; burst < CraftJob.MAX_CRAFTS_PER_TICK; burst++) {
+            // If the final craft is due and the player has a compatible crafting grid open, lay the
+            // recipe out in that grid for them to grab (a real vanilla craft) instead of auto-crafting
+            // it. Any case that can't cleanly hand off falls through to the normal auto-craft below.
+            if (job.isFinalStep() && job.isLastCraftOfStep() && canHandOff(player, job.currentStep())) {
+                // instanceof chains rather than a pattern-matching switch: the 1.20.1 node targets Java 17.
+                CraftExecutor.FillOutcome fill = CraftExecutor.tryFillFinalGrid(player, job.currentStep().recipeId());
+                if (fill instanceof CraftExecutor.FillOutcome.Filled filled) {
+                    job.onCraftPerformed();
+                    ACTIVE.remove(player.getUUID());
+                    sync(player, job, CraftProgressPayload.State.READY_IN_GRID, filled.result());
+                    notify(player, Component.translatable("sprawlcrafting.craft.ready_in_grid",
+                            job.targetResult().getHoverName()).withStyle(ChatFormatting.GREEN));
+                    return;
+                }
+                if (fill instanceof CraftExecutor.FillOutcome.RecipeGone) {
+                    ACTIVE.remove(player.getUUID());
+                    sync(player, job, CraftProgressPayload.State.CANCELLED, ItemStack.EMPTY);
+                    notify(player, Component.translatable("sprawlcrafting.craft.recipe_gone",
+                            job.targetResult().getHoverName()).withStyle(ChatFormatting.RED));
+                    return;
+                }
+                // FillOutcome.Fallback: couldn't hand off (recipe locked, grid uncleanable, …) — auto-craft below.
+            }
+            CraftExecutor.CraftResult craft = CraftExecutor.craftOnce(player, job.currentStep().recipeId());
+            if (craft instanceof CraftExecutor.CraftResult.Success success) {
+                lastCrafted = success.crafted();
+                boolean stepDone = job.onCraftPerformed();
+                if (job.isFinished()) {
+                    ACTIVE.remove(player.getUUID());
+                    sync(player, job, CraftProgressPayload.State.FINISHED, lastCrafted);
+                    notify(player, Component.translatable("sprawlcrafting.craft.finished",
+                            job.targetResult().getHoverName()).withStyle(ChatFormatting.GREEN));
+                    return;
+                }
+                if (stepDone) {
+                    sync(player, job, CraftProgressPayload.State.CRAFTING, lastCrafted);
+                    return;
+                }
+                if (System.nanoTime() - deadline >= 0) {
+                    break; // time budget spent; the step stays due and continues next tick
+                }
+                continue;
+            }
+            if (craft instanceof CraftExecutor.CraftResult.MissingIngredient missing) {
+                ACTIVE.remove(player.getUUID());
+                sync(player, job, CraftProgressPayload.State.CANCELLED, ItemStack.EMPTY);
+                notify(player, Component.translatable("sprawlcrafting.craft.missing",
+                        job.targetResult().getHoverName(), missing.missing()).withStyle(ChatFormatting.RED));
+            } else if (craft instanceof CraftExecutor.CraftResult.RecipeGone) {
                 ACTIVE.remove(player.getUUID());
                 sync(player, job, CraftProgressPayload.State.CANCELLED, ItemStack.EMPTY);
                 notify(player, Component.translatable("sprawlcrafting.craft.recipe_gone",
                         job.targetResult().getHoverName()).withStyle(ChatFormatting.RED));
-                return;
             }
-            // FillOutcome.Fallback: couldn't hand off (recipe locked, grid uncleanable, …) — auto-craft below.
+            return;
         }
-        CraftExecutor.CraftResult craft = CraftExecutor.craftOnce(player, job.currentStep().recipeId());
-        if (craft instanceof CraftExecutor.CraftResult.Success success) {
-            job.onCraftPerformed();
-            if (job.isFinished()) {
-                ACTIVE.remove(player.getUUID());
-                sync(player, job, CraftProgressPayload.State.FINISHED, success.crafted());
-                notify(player, Component.translatable("sprawlcrafting.craft.finished",
-                        job.targetResult().getHoverName()).withStyle(ChatFormatting.GREEN));
-            } else {
-                sync(player, job, CraftProgressPayload.State.CRAFTING, success.crafted());
-            }
-        } else if (craft instanceof CraftExecutor.CraftResult.MissingIngredient missing) {
-            ACTIVE.remove(player.getUUID());
-            sync(player, job, CraftProgressPayload.State.CANCELLED, ItemStack.EMPTY);
-            notify(player, Component.translatable("sprawlcrafting.craft.missing",
-                    job.targetResult().getHoverName(), missing.missing()).withStyle(ChatFormatting.RED));
-        } else if (craft instanceof CraftExecutor.CraftResult.RecipeGone) {
-            ACTIVE.remove(player.getUUID());
-            sync(player, job, CraftProgressPayload.State.CANCELLED, ItemStack.EMPTY);
-            notify(player, Component.translatable("sprawlcrafting.craft.recipe_gone",
-                    job.targetResult().getHoverName()).withStyle(ChatFormatting.RED));
+        // The burst hit its per-tick cap (count or time) mid-step; the step stays due and continues next tick. Report
+        // progress at most once per half second so the toast (and its step sound) keeps its cadence.
+        if (job.progressSyncDue()) {
+            sync(player, job, CraftProgressPayload.State.CRAFTING, lastCrafted);
         }
     }
 
@@ -144,10 +173,13 @@ public final class CraftQueueManager {
      */
     private static void sync(ServerPlayer player, CraftJob job,
                              CraftProgressPayload.State state, ItemStack current) {
+        job.markSynced();
         if (!Services.PLATFORM.canReceive(player, CraftProgressPayload.ID)) {
             return;
         }
+        // The progress fields stay int on the wire (mod-1.0.3 layout); wireDone/wireTotal scale a job
+        // of more than Integer.MAX_VALUE crafts down proportionally rather than wrapping.
         Services.PLATFORM.sendToPlayer(player, new CraftProgressPayload(
-                state, job.targetResult().copy(), current.copy(), job.craftsDone(), job.totalCrafts()));
+                state, job.targetResult().copy(), current.copy(), job.wireDone(), job.wireTotal()));
     }
 }

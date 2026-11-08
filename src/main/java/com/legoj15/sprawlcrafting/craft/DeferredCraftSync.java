@@ -225,7 +225,14 @@ public final class DeferredCraftSync {
         ShortfallView view = holder == null
                 ? ShortfallView.unavailable()
                 : CraftPlanner.shortfall(player, holder, GridContext.CRAFTING_TABLE);
-        if (Services.PLATFORM.canReceive(player, com.legoj15.sprawlcrafting.network.ShortfallPayload.TYPE.id())) {
+        // Wire versioning: a client that registered the V2 channel gets long counts + the saturated
+        // flag; a mod-1.0.3 client only knows the original payload, whose ItemDemand codec clamps each
+        // count to Integer.MAX_VALUE; a modless client gets nothing.
+        if (Services.PLATFORM.canReceive(player, com.legoj15.sprawlcrafting.network.ShortfallV2Payload.ID)) {
+            Services.PLATFORM.sendToPlayer(player,
+                    new com.legoj15.sprawlcrafting.network.ShortfallV2Payload(token, view.targetItem(),
+                            view.targetCount(), view.approximate(), view.saturated(), view.demands()));
+        } else if (Services.PLATFORM.canReceive(player, com.legoj15.sprawlcrafting.network.ShortfallPayload.ID)) {
             Services.PLATFORM.sendToPlayer(player,
                     new com.legoj15.sprawlcrafting.network.ShortfallPayload(
                             token, view.targetItem(), view.targetCount(), view.approximate(), view.demands()));

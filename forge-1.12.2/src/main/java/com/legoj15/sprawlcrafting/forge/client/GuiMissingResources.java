@@ -3,6 +3,7 @@ package com.legoj15.sprawlcrafting.forge.client;
 import java.io.IOException;
 import java.util.List;
 
+import com.legoj15.sprawlcrafting.craft.solver.CountFormat;
 import com.legoj15.sprawlcrafting.forge.craft.ItemDemand;
 import com.legoj15.sprawlcrafting.forge.craft.ShortfallView;
 
@@ -42,6 +43,17 @@ public class GuiMissingResources extends GuiScreen {
     public GuiMissingResources(ShortfallView data, GuiScreen parent) {
         this.data = data;
         this.parent = parent;
+    }
+
+    /**
+     * A gather count as text in the shared {@link CountFormat} scheme ({@code 1,234}, {@code 12.3K},
+     * {@code 9.22e18}); a count the solver saturated at {@link Long#MAX_VALUE} reads "more than ...".
+     * Shared with the JEI gather tooltip ({@code MissingResourcesError}).
+     */
+    public static String countText(long count) {
+        return CountFormat.isSaturated(count)
+                ? I18n.format("sprawlcrafting.gather.more_than", CountFormat.format(Long.MAX_VALUE))
+                : CountFormat.format(count);
     }
 
     @Override
@@ -110,7 +122,7 @@ public class GuiMissingResources extends GuiScreen {
                             + I18n.format("sprawlcrafting.gather.alt", demand.items().size() - 1);
                 }
                 this.drawString(this.fontRenderer, name, panelLeft + 32, y + 4, 0xFFFFFF);
-                String need = TextFormatting.GOLD + "× " + demand.count();
+                String need = TextFormatting.GOLD + "× " + countText(demand.count());
                 this.drawString(this.fontRenderer, need,
                         panelRight - 12 - this.fontRenderer.getStringWidth(need), y + 4, 0xFFFFFF);
                 if (mouseX >= panelLeft + 10 && mouseX <= panelLeft + 26 && mouseY >= y && mouseY <= y + 16) {

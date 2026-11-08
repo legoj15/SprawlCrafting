@@ -7,7 +7,8 @@ import net.minecraft.resources.ResourceLocation;
  * Each execution consumes its ingredients from the player's live inventory and places the
  * result back into it as real items, so later steps (and the player) can see and use them.
  *
- * <p>One step execution completes every {@link CraftJob#TICKS_PER_STEP} ticks.
+ * <p>A step starts {@link CraftJob#TICKS_PER_STEP} ticks after the previous one and then runs up to
+ * {@link CraftJob#MAX_CRAFTS_PER_TICK} crafts per tick until all {@code crafts} are done.
  *
  * @param needsFullGrid true if the recipe does not fit a 2×2 grid; such steps only
  *                      execute while a crafting table is within the player's reach

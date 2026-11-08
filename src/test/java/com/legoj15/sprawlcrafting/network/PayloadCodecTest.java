@@ -138,6 +138,40 @@ class PayloadCodecTest {
         assertTrue(decoded.demands().isEmpty());
     }
 
+    @Test
+    void shortfallV2PayloadCarriesLongCountsAndSaturatedFlag() {
+        // approximate=false / saturated=true on purpose: two adjacent BOOLs, so a swapped field order
+        // compiles but fails here. 282429536481 = 9^12 is past Integer.MAX_VALUE; Long.MAX_VALUE is the
+        // solver's saturation marker and must survive the VarLong encoding unchanged.
+        ShortfallV2Payload original = new ShortfallV2Payload(
+                11, ResourceLocation.fromNamespaceAndPath("minecraft", "netherite_sword"), 1, false, true,
+                List.of(new ItemDemand(List.of(ResourceLocation.fromNamespaceAndPath("minecraft", "cobblestone")),
+                                282_429_536_481L),
+                        new ItemDemand(List.of(ResourceLocation.fromNamespaceAndPath("minecraft", "dirt")),
+                                Long.MAX_VALUE)));
+        ByteBuf b = buf();
+        ShortfallV2Payload.STREAM_CODEC.encode(b, original);
+        ShortfallV2Payload decoded = ShortfallV2Payload.STREAM_CODEC.decode(b);
+        assertEquals(original, decoded);
+        assertFalse(decoded.approximate());
+        assertTrue(decoded.saturated());
+        assertEquals(0, b.readableBytes(), "codec must consume the whole buffer");
+    }
+
+    @Test
+    void legacyShortfallPayloadClampsCountsAboveIntRange() {
+        // The mod-1.0.3 payload keeps its VarInt count; a long count must clamp, never wrap.
+        ShortfallPayload original = new ShortfallPayload(
+                3, ResourceLocation.fromNamespaceAndPath("minecraft", "piston"), 1, false,
+                List.of(new ItemDemand(List.of(ResourceLocation.fromNamespaceAndPath("minecraft", "cobblestone")),
+                        282_429_536_481L)));
+        ByteBuf b = buf();
+        ShortfallPayload.STREAM_CODEC.encode(b, original);
+        ShortfallPayload decoded = ShortfallPayload.STREAM_CODEC.decode(b);
+        assertEquals(Integer.MAX_VALUE, decoded.demands().get(0).count());
+        assertEquals(0, b.readableBytes(), "codec must consume the whole buffer");
+    }
+
     // --- CraftProgressPayload.State: the one hand-rolled enum codec on the wire ---
 
     /** Mirror of the private STATE_CODEC (CraftProgressPayload.java:34) — same idMapper shape. */

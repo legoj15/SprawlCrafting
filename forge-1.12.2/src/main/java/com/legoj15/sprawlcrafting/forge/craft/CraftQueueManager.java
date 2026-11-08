@@ -57,64 +57,92 @@ public final class CraftQueueManager {
         ACTIVE.clear();
     }
 
-    /** Advances the player's job by one tick; performs a craft when one comes due. */
+    /**
+     * Advances the player's job by one tick; when a burst is due, performs up to
+     * {@link CraftJob#MAX_CRAFTS_PER_TICK} crafts (within {@link CraftJob#BURST_BUDGET_NANOS}) of the current
+     * step, each validated and applied by
+     * {@link CraftExecutor#craftOnce} exactly as a lone craft is. A burst ends at a step boundary so the
+     * next step still waits its half second.
+     */
     public static void tick(EntityPlayerMP player) {
         CraftJob job = ACTIVE.get(player.getUniqueID());
         if (job == null || !job.tick()) {
             return;
         }
-        // 3x3 steps only run with full-grid access; re-check every half second.
-        if (job.currentStep().needsFullGrid() && !hasFullGridAccess(player)) {
-            job.holdForRetry();
-            sync(player, job, pausedState(job), ItemStack.EMPTY);
-            return;
-        }
-        // Final-step hand-off: if the very last craft is due and the player is looking at a
-        // compatible grid, lay its ingredients there instead — a real, takeable vanilla craft —
-        // and finish the job optimistically (grabbing is its own confirmation). Any doubt falls
-        // through to the auto-craft below, which remains the only place the item is granted.
-        IRecipe handOff = handOffCandidate(player, job);
-        if (handOff != null
-                && ServerGridPlacer.placeFinalCraft(player, handOff) == ServerGridPlacer.HandOffResult.FILLED) {
-            ACTIVE.remove(player.getUniqueID());
-            job.onCraftPerformed();
-            sync(player, job, CraftProgressMessage.State.READY_IN_GRID, job.targetResult());
-            notify(player, message("sprawlcrafting.craft.ready_in_grid", TextFormatting.GREEN,
-                    job.targetResult().getDisplayName()));
-            return;
-        }
-        CraftExecutor.CraftResult result = CraftExecutor.craftOnce(player, job.currentStep().recipeId());
-        if (result instanceof CraftExecutor.CraftResult.Success) {
-            ItemStack crafted = ((CraftExecutor.CraftResult.Success) result).crafted();
-            job.onCraftPerformed();
-            if (job.isFinished()) {
-                ACTIVE.remove(player.getUniqueID());
-                sync(player, job, CraftProgressMessage.State.FINISHED, crafted);
-                notify(player, message("sprawlcrafting.craft.finished", TextFormatting.GREEN,
-                        job.targetResult().getDisplayName()));
-            } else {
-                sync(player, job, CraftProgressMessage.State.CRAFTING, crafted);
-            }
-        } else if (result instanceof CraftExecutor.CraftResult.MissingIngredient) {
-            // A chest-dependent job whose station is currently closed can't see the connected
-            // inventory; the missing item may be sitting in it, so wait for the player to reopen
-            // the station rather than cancelling. (With the station open the chest IS visible, so a
-            // genuine shortfall — e.g. a hopper drained it — still cancels, as before.)
-            if (job.externalDependent() && !ExternalSlots.present(player)) {
+        // 3x3 steps only run with full-grid access; re-check every half second (a long step bursts
+        // every tick, but the reach scan keeps its half-second cadence).
+        if (job.currentStep().needsFullGrid() && job.reachCheckDue()) {
+            if (!hasFullGridAccess(player)) {
                 job.holdForRetry();
-                sync(player, job, CraftProgressMessage.State.PAUSED_STATION, ItemStack.EMPTY);
+                sync(player, job, pausedState(job), ItemStack.EMPTY);
                 return;
             }
-            ACTIVE.remove(player.getUniqueID());
-            sync(player, job, CraftProgressMessage.State.CANCELLED, ItemStack.EMPTY);
-            notify(player, message("sprawlcrafting.craft.missing", TextFormatting.RED,
-                    job.targetResult().getDisplayName(),
-                    ((CraftExecutor.CraftResult.MissingIngredient) result).missing()));
-        } else {
-            ACTIVE.remove(player.getUniqueID());
-            sync(player, job, CraftProgressMessage.State.CANCELLED, ItemStack.EMPTY);
-            notify(player, message("sprawlcrafting.craft.recipe_gone", TextFormatting.RED,
-                    job.targetResult().getDisplayName()));
+            job.markReachChecked();
+        }
+        ItemStack lastCrafted = ItemStack.EMPTY;
+        long deadline = System.nanoTime() + CraftJob.BURST_BUDGET_NANOS;
+        for (int burst = 0; burst < CraftJob.MAX_CRAFTS_PER_TICK; burst++) {
+            // Final-step hand-off: if the very last craft is due and the player is looking at a
+            // compatible grid, lay its ingredients there instead — a real, takeable vanilla craft —
+            // and finish the job optimistically (grabbing is its own confirmation). Any doubt falls
+            // through to the auto-craft below, which remains the only place the item is granted.
+            IRecipe handOff = handOffCandidate(player, job);
+            if (handOff != null
+                    && ServerGridPlacer.placeFinalCraft(player, handOff) == ServerGridPlacer.HandOffResult.FILLED) {
+                ACTIVE.remove(player.getUniqueID());
+                job.onCraftPerformed();
+                sync(player, job, CraftProgressMessage.State.READY_IN_GRID, job.targetResult());
+                notify(player, message("sprawlcrafting.craft.ready_in_grid", TextFormatting.GREEN,
+                        job.targetResult().getDisplayName()));
+                return;
+            }
+            CraftExecutor.CraftResult result = CraftExecutor.craftOnce(player, job.currentStep().recipeId());
+            if (result instanceof CraftExecutor.CraftResult.Success) {
+                lastCrafted = ((CraftExecutor.CraftResult.Success) result).crafted();
+                boolean stepDone = job.onCraftPerformed();
+                if (job.isFinished()) {
+                    ACTIVE.remove(player.getUniqueID());
+                    sync(player, job, CraftProgressMessage.State.FINISHED, lastCrafted);
+                    notify(player, message("sprawlcrafting.craft.finished", TextFormatting.GREEN,
+                            job.targetResult().getDisplayName()));
+                    return;
+                }
+                if (stepDone) {
+                    sync(player, job, CraftProgressMessage.State.CRAFTING, lastCrafted);
+                    return;
+                }
+                if (System.nanoTime() - deadline >= 0) {
+                    break; // time budget spent; the step stays due and continues next tick
+                }
+                continue;
+            }
+            if (result instanceof CraftExecutor.CraftResult.MissingIngredient) {
+                // A chest-dependent job whose station is currently closed can't see the connected
+                // inventory; the missing item may be sitting in it, so wait for the player to reopen
+                // the station rather than cancelling. (With the station open the chest IS visible, so a
+                // genuine shortfall — e.g. a hopper drained it — still cancels, as before.)
+                if (job.externalDependent() && !ExternalSlots.present(player)) {
+                    job.holdForRetry();
+                    sync(player, job, CraftProgressMessage.State.PAUSED_STATION, ItemStack.EMPTY);
+                    return;
+                }
+                ACTIVE.remove(player.getUniqueID());
+                sync(player, job, CraftProgressMessage.State.CANCELLED, ItemStack.EMPTY);
+                notify(player, message("sprawlcrafting.craft.missing", TextFormatting.RED,
+                        job.targetResult().getDisplayName(),
+                        ((CraftExecutor.CraftResult.MissingIngredient) result).missing()));
+            } else {
+                ACTIVE.remove(player.getUniqueID());
+                sync(player, job, CraftProgressMessage.State.CANCELLED, ItemStack.EMPTY);
+                notify(player, message("sprawlcrafting.craft.recipe_gone", TextFormatting.RED,
+                        job.targetResult().getDisplayName()));
+            }
+            return;
+        }
+        // The burst hit its per-tick cap (count or time) mid-step; the step stays due and continues next tick. Report
+        // progress at most once per half second so the toast (and its step sound) keeps its cadence.
+        if (job.progressSyncDue()) {
+            sync(player, job, CraftProgressMessage.State.CRAFTING, lastCrafted);
         }
     }
 
@@ -183,7 +211,9 @@ public final class CraftQueueManager {
 
     private static void sync(EntityPlayerMP player, CraftJob job,
                              CraftProgressMessage.State state, ItemStack current) {
+        job.markSynced();
+        // done/total stay int on the frozen main channel; wireDone/wireTotal scale an over-int job down.
         SprawlNetwork.sendProgress(player, new CraftProgressMessage(
-                state, job.targetResult().copy(), current.copy(), job.craftsDone(), job.totalCrafts()));
+                state, job.targetResult().copy(), current.copy(), job.wireDone(), job.wireTotal()));
     }
 }

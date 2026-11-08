@@ -4,10 +4,12 @@ import java.util.ArrayList;
 import java.util.List;
 
 import com.legoj15.sprawlcrafting.craft.ItemDemand;
+import com.legoj15.sprawlcrafting.craft.solver.CountFormat;
 
 import net.minecraft.item.ItemStack;
 import net.minecraft.util.ResourceLocation;
 import net.minecraft.util.text.ITextComponent;
+import net.minecraft.util.text.StringTextComponent;
 import net.minecraft.util.text.TextFormatting;
 import net.minecraft.util.text.TranslationTextComponent;
 
@@ -23,13 +25,23 @@ public final class GatherTooltip {
     private GatherTooltip() {
     }
 
+    /**
+     * A gather count as text, in the shared {@link CountFormat} scheme ({@code 1,234}, {@code 12.3K},
+     * {@code 9.22e18}); a count the solver saturated at {@link Long#MAX_VALUE} reads "more than ...".
+     */
+    public static ITextComponent countText(long count) {
+        return CountFormat.isSaturated(count)
+                ? new TranslationTextComponent("sprawlcrafting.gather.more_than", CountFormat.format(Long.MAX_VALUE))
+                : new StringTextComponent(CountFormat.format(count));
+    }
+
     public static List<ITextComponent> compact(List<ItemDemand> demands, boolean approximate) {
         List<ITextComponent> out = new ArrayList<>();
         out.add(new TranslationTextComponent("sprawlcrafting.gather.header").withStyle(TextFormatting.GOLD));
         int shown = Math.min(MAX_LINES, demands.size());
         for (int i = 0; i < shown; i++) {
             ItemDemand demand = demands.get(i);
-            out.add(new TranslationTextComponent("sprawlcrafting.gather.line", demand.count(),
+            out.add(new TranslationTextComponent("sprawlcrafting.gather.line", countText(demand.count()),
                     nameOf(demand.items().get(0))).withStyle(TextFormatting.GRAY));
         }
         if (demands.size() > shown) {

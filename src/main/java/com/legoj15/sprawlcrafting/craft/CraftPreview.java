@@ -6,6 +6,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import com.legoj15.sprawlcrafting.craft.solver.CountFormat;
+
 import net.minecraft.ChatFormatting;
 import net.minecraft.core.RegistryAccess;
 import net.minecraft.network.chat.Component;
@@ -30,19 +32,22 @@ public final class CraftPreview {
                 job.targetResult().getHoverName()).withStyle(ChatFormatting.YELLOW));
         // Aggregate intermediate output per item (a chain may revisit the same recipe in
         // non-adjacent steps); the final step is the target itself — the header covers it.
-        Map<Item, Integer> totals = new LinkedHashMap<>();
+        // long totals: a batched step can be thousands of crafts, so count × crafts overflows int.
+        // Shown as a pre-formatted string (CountFormat), which also reads the same on every client
+        // when the 26.x server builds these lines.
+        Map<Item, Long> totals = new LinkedHashMap<>();
         Map<Item, Component> names = new HashMap<>();
         for (CraftStep step : job.steps().subList(0, job.steps().size() - 1)) {
             ItemStack produced = RecipeIds.byId(recipes, step.recipeId())
                     .map(holder -> RecipeIds.resultOf(holder.value(), registries))
                     .orElse(ItemStack.EMPTY);
             if (!produced.isEmpty()) {
-                totals.merge(produced.getItem(), produced.getCount() * step.crafts(), Integer::sum);
+                totals.merge(produced.getItem(), (long) produced.getCount() * step.crafts(), CraftJob::saturatingAdd);
                 names.putIfAbsent(produced.getItem(), produced.getHoverName());
             }
         }
         totals.forEach((item, count) -> out.add(Component.translatable("sprawlcrafting.preview.step",
-                count, names.get(item)).withStyle(ChatFormatting.GRAY)));
+                CountFormat.format(count), names.get(item)).withStyle(ChatFormatting.GRAY)));
         out.add(Component.translatable("sprawlcrafting.preview.confirm")
                 .withStyle(ChatFormatting.GREEN, ChatFormatting.ITALIC));
         return out;

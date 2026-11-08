@@ -1,5 +1,6 @@
 package com.legoj15.sprawlcrafting.forge.client;
 
+import com.legoj15.sprawlcrafting.craft.solver.CountFormat;
 import com.legoj15.sprawlcrafting.forge.network.CraftProgressMessage;
 
 import net.minecraft.client.gui.Gui;
@@ -47,7 +48,8 @@ public final class CraftProgressToast implements IToast {
         toastGui.getMinecraft().fontRenderer.drawString(statusLabel(state), 30, 7, statusColor(state));
         String name = target.isEmpty() ? "" : target.getDisplayName();
         String line = trim(toastGui, name, WIDTH - 30 - 34)
-                + " " + I18n.format("sprawlcrafting.toast.step", done, total);
+                + " " + I18n.format("sprawlcrafting.toast.step",
+                CountFormat.format(done), CountFormat.format(total));
         toastGui.getMinecraft().fontRenderer.drawString(line, 30, 18, 0xFF404040);
 
         // Thin progress bar along the toast's bottom edge, tinted by state.

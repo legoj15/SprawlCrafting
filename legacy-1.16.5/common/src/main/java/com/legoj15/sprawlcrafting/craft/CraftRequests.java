@@ -55,7 +55,8 @@ public final class CraftRequests {
             CraftJob job = outcome.job();
             CraftQueueManager.start(player, job);
             notify(player, new TranslationTextComponent("sprawlcrafting.craft.started",
-                    job.targetResult().getHoverName(), job.totalCrafts()));
+                    job.targetResult().getHoverName(),
+                    com.legoj15.sprawlcrafting.craft.solver.CountFormat.format(job.totalCrafts())));
             return;
         }
         notify(player, describeRejection(recipe, outcome));

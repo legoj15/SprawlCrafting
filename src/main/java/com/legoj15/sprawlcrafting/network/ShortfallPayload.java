@@ -22,6 +22,11 @@ import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
  * and whether the search hit its budget so the list may be incomplete ({@code approximate}). An
  * empty {@code demands} means nothing to gather / not plannable.
  *
+ * <p><b>Frozen mod-1.0.3 wire format.</b> Counts travel as VarInts (clamped to
+ * {@code Integer.MAX_VALUE} on encode) and there is no saturated flag. The server sends this only to a
+ * client that lacks {@link ShortfallV2Payload} (a 1.0.3 client); a new client still registers it so a
+ * 1.0.3 server's replies keep working. Never change its layout: add a new payload id instead.
+ *
  * <p>The codec is declared over a bare {@code ByteBuf} (item identity travels as a
  * {@link ResourceLocation}, not an {@code ItemStack}), so it carries no registry and is
  * unit-testable; the client resolves the ids to items for icons.

@@ -13,6 +13,7 @@ import com.legoj15.sprawlcrafting.network.RequestCraftPreviewPayload;
 import com.legoj15.sprawlcrafting.network.RequestShortfallByDisplayPayload;
 import com.legoj15.sprawlcrafting.network.RequestShortfallByRecipePayload;
 import com.legoj15.sprawlcrafting.network.ShortfallPayload;
+import com.legoj15.sprawlcrafting.network.ShortfallV2Payload;
 import com.legoj15.sprawlcrafting.network.StartDeferredCraftByDisplayPayload;
 import com.legoj15.sprawlcrafting.network.StartDeferredCraftPayload;
 
@@ -83,6 +84,8 @@ public class FabricMod implements ModInitializer {
                 RequestShortfallByRecipePayload.TYPE, RequestShortfallByRecipePayload.STREAM_CODEC);
         s2c().register(
                 ShortfallPayload.TYPE, ShortfallPayload.STREAM_CODEC);
+        s2c().register(
+                ShortfallV2Payload.TYPE, ShortfallV2Payload.STREAM_CODEC);
         ServerPlayNetworking.registerGlobalReceiver(RequestShortfallByDisplayPayload.TYPE,
                 (payload, context) -> DeferredCraftSync.handleShortfallByDisplay(
                         context.player(), payload.token(), payload.displayId()));

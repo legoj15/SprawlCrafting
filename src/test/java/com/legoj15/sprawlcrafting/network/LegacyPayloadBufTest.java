@@ -21,6 +21,7 @@ import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.resources.ResourceLocation;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class LegacyPayloadBufTest {
@@ -81,6 +82,23 @@ class LegacyPayloadBufTest {
         ShortfallPayload decodedEmpty = roundTrip(empty, ShortfallPayload::read);
         assertEquals(empty, decodedEmpty);
         assertTrue(decodedEmpty.demands().isEmpty());
+
+        // The 1.0.3 layout keeps its VarInt count: a long count clamps rather than wrapping.
+        ShortfallPayload huge = new ShortfallPayload(3, id("piston"), 1, false,
+                List.of(new ItemDemand(List.of(id("cobblestone")), 282_429_536_481L)));
+        assertEquals(Integer.MAX_VALUE, roundTrip(huge, ShortfallPayload::read).demands().get(0).count());
+    }
+
+    @Test
+    void shortfallV2PayloadCarriesLongCountsAndSaturatedFlag() {
+        // approximate=false / saturated=true: adjacent booleans, so a swapped write/read order fails here.
+        ShortfallV2Payload original = new ShortfallV2Payload(11, id("netherite_sword"), 1, false, true,
+                List.of(new ItemDemand(List.of(id("cobblestone")), 282_429_536_481L),
+                        new ItemDemand(List.of(id("dirt")), Long.MAX_VALUE)));
+        ShortfallV2Payload decoded = roundTrip(original, ShortfallV2Payload::read);
+        assertEquals(original, decoded);
+        assertFalse(decoded.approximate());
+        assertTrue(decoded.saturated());
     }
 }*/
 //?}

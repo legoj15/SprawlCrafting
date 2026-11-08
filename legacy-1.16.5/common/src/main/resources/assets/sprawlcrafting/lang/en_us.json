@@ -26,6 +26,7 @@
   "sprawlcrafting.gather.title": "To craft %s, you still need:",
   "sprawlcrafting.gather.line": "%s× %s",
   "sprawlcrafting.gather.need": "Still need: %s",
+  "sprawlcrafting.gather.more_than": "more than %s",
   "sprawlcrafting.gather.more": "…and %s more",
   "sprawlcrafting.gather.click": "Click to see the full gather list",
   "sprawlcrafting.gather.rightclick": "Right-click to see what you need",

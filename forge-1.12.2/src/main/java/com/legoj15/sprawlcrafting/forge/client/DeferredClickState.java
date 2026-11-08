@@ -3,6 +3,7 @@ package com.legoj15.sprawlcrafting.forge.client;
 import java.util.ArrayList;
 import java.util.List;
 
+import com.legoj15.sprawlcrafting.craft.solver.CountFormat;
 import com.legoj15.sprawlcrafting.forge.craft.CraftJob;
 import com.legoj15.sprawlcrafting.forge.craft.CraftStep;
 
@@ -55,7 +56,7 @@ public final class DeferredClickState {
         lines.add(TextFormatting.YELLOW + I18n.format("sprawlcrafting.preview.header",
                 plan.targetResult().getDisplayName()));
         lines.add(TextFormatting.GRAY + I18n.format("sprawlcrafting.preview.steps",
-                plan.totalCrafts()));
+                CountFormat.format(plan.totalCrafts())));
         List<CraftStep> steps = plan.steps();
         int shown = 0;
         for (int i = 0; i < steps.size() && shown < 6; i++) {
@@ -66,8 +67,10 @@ public final class DeferredClickState {
             }
             ItemStack output = recipe.getRecipeOutput();
             String name = output.isEmpty() ? step.recipeId().toString() : output.getDisplayName();
-            int total = step.crafts() * Math.max(1, output.getCount());
-            lines.add(TextFormatting.DARK_GRAY + I18n.format("sprawlcrafting.preview.step", total, name));
+            // long: a batched step's crafts x output count overflows int.
+            long total = (long) step.crafts() * Math.max(1, output.getCount());
+            lines.add(TextFormatting.DARK_GRAY + I18n.format("sprawlcrafting.preview.step",
+                    CountFormat.format(total), name));
             shown++;
         }
         if (steps.size() > shown) {

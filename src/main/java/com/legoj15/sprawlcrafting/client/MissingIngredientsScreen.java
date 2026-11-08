@@ -5,6 +5,7 @@ import java.util.List;
 
 import com.legoj15.sprawlcrafting.craft.ItemDemand;
 import com.legoj15.sprawlcrafting.craft.ShortfallView;
+import com.legoj15.sprawlcrafting.craft.solver.CountFormat;
 
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.gui.screens.Screen;
@@ -175,14 +176,16 @@ public class MissingIngredientsScreen extends Screen {
         return new Rect2i(x, y, 16, 16);
     }
 
-    private static String formatCount(int count) {
-        return count >= 1000 ? (count / 1000) + "k" : Integer.toString(count);
+    /** Slot-overlay count: at most four characters ({@code 999}, {@code 1.2K}, {@code 9e18}). */
+    private static String formatCount(long count) {
+        return CountFormat.compact(count);
     }
 
-    private List<Component> itemTooltip(ItemStack shown, int count) {
+    private List<Component> itemTooltip(ItemStack shown, long count) {
         return List.of(
                 shown.getHoverName(),
-                Component.translatable("sprawlcrafting.gather.need", count).withStyle(ChatFormatting.GRAY));
+                Component.translatable("sprawlcrafting.gather.need", GatherTooltip.countText(count))
+                        .withStyle(ChatFormatting.GRAY));
     }
 
     //? if >=1.20.2 {
@@ -320,6 +323,6 @@ public class MissingIngredientsScreen extends Screen {
     }
     //?}
 
-    private record Row(List<ItemStack> stacks, int count) {
+    private record Row(List<ItemStack> stacks, long count) {
     }
 }

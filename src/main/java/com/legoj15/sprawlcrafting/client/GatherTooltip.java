@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import com.legoj15.sprawlcrafting.craft.ItemDemand;
+import com.legoj15.sprawlcrafting.craft.solver.CountFormat;
 
 import net.minecraft.ChatFormatting;
 import net.minecraft.network.chat.Component;
@@ -23,14 +24,15 @@ public final class GatherTooltip {
     private GatherTooltip() {
     }
 
-    /** Header, the first few items as "count× Name", an overflow note, an approximate note, the hint. */
+    /** Header, the first few items as "count× Name" (see {@link #countText}), an overflow note, an approximate note, the hint. */
     public static List<Component> compact(List<ItemDemand> demands, boolean approximate) {
         List<Component> out = new ArrayList<>();
         out.add(Component.translatable("sprawlcrafting.gather.header").withStyle(ChatFormatting.GOLD));
         int shown = Math.min(MAX_LINES, demands.size());
         for (int i = 0; i < shown; i++) {
             ItemDemand demand = demands.get(i);
-            out.add(Component.translatable("sprawlcrafting.gather.line", demand.count(), nameOf(demand.items().get(0)))
+            out.add(Component.translatable("sprawlcrafting.gather.line", countText(demand.count()),
+                            nameOf(demand.items().get(0)))
                     .withStyle(ChatFormatting.GRAY));
         }
         if (demands.size() > shown) {
@@ -51,6 +53,16 @@ public final class GatherTooltip {
                 Component.translatable("sprawlcrafting.gather.header").withStyle(ChatFormatting.GOLD),
                 Component.translatable("sprawlcrafting.gather.click")
                         .withStyle(ChatFormatting.GREEN, ChatFormatting.ITALIC));
+    }
+
+    /**
+     * A gather count as text, in the shared {@link CountFormat} scheme ({@code 1,234}, {@code 12.3K},
+     * {@code 9.22e18}); a count the solver saturated at {@link Long#MAX_VALUE} reads "more than …".
+     */
+    public static Component countText(long count) {
+        return CountFormat.isSaturated(count)
+                ? Component.translatable("sprawlcrafting.gather.more_than", CountFormat.format(Long.MAX_VALUE))
+                : Component.literal(CountFormat.format(count));
     }
 
     static Component nameOf(ResourceLocation itemId) {

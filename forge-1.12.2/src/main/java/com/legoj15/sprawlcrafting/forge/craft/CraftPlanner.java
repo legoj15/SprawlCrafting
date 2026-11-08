@@ -316,11 +316,13 @@ public final class CraftPlanner {
 
         private ShortfallView shortfallOf(McRecipe target) {
             if (!target.fits(grid)) {
-                return new ShortfallView(target.resultStack, false, java.util.Collections.<ItemDemand>emptyList());
+                return new ShortfallView(target.resultStack, false, false,
+                        java.util.Collections.<ItemDemand>emptyList());
             }
             RecipeGraphSolver.ShortfallResult<ItemKey> result = solver.shortfall(target, inventory);
             List<ItemDemand> demands = new ArrayList<ItemDemand>();
-            for (Map.Entry<ItemKey, Integer> entry : result.demands().entrySet()) {
+            // demandsLong, not the int-clamped demands(): batched gather lists exceed Integer.MAX_VALUE.
+            for (Map.Entry<ItemKey, Long> entry : result.demandsLong().entrySet()) {
                 List<ItemKey> alternatives = result.alternatives().get(entry.getKey());
                 if (alternatives == null || alternatives.isEmpty()) {
                     alternatives = java.util.Collections.singletonList(entry.getKey());
@@ -333,7 +335,7 @@ public final class CraftPlanner {
                     return demand.representative().toString();
                 }
             }));
-            return new ShortfallView(target.resultStack, result.approximate(), demands);
+            return new ShortfallView(target.resultStack, result.approximate(), result.saturated(), demands);
         }
 
         private PlanOutcome planTarget(McRecipe target) {

@@ -116,7 +116,8 @@ public final class CraftRequests {
         if (outcome instanceof StartOutcome.Started) {
             CraftJob job = ((StartOutcome.Started) outcome).job();
             feedback = new TextComponentTranslation("sprawlcrafting.craft.started",
-                    job.targetResult().getDisplayName(), job.totalCrafts());
+                    job.targetResult().getDisplayName(),
+                    com.legoj15.sprawlcrafting.craft.solver.CountFormat.format(job.totalCrafts()));
         } else if (outcome instanceof StartOutcome.Busy) {
             feedback = coloured(new TextComponentTranslation("sprawlcrafting.craft.busy"), TextFormatting.RED);
         } else {

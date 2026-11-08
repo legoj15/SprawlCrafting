@@ -18,6 +18,7 @@ import com.legoj15.sprawlcrafting.network.RequestCraftPreviewPayload;
 import com.legoj15.sprawlcrafting.network.RequestShortfallByDisplayPayload;
 import com.legoj15.sprawlcrafting.network.RequestShortfallByRecipePayload;
 import com.legoj15.sprawlcrafting.network.ShortfallPayload;
+import com.legoj15.sprawlcrafting.network.ShortfallV2Payload;
 import com.legoj15.sprawlcrafting.network.StartDeferredCraftByDisplayPayload;
 import com.legoj15.sprawlcrafting.network.StartDeferredCraftPayload;
 
@@ -117,7 +118,14 @@ public class NeoForgeMod {
                 ShortfallPayload.STREAM_CODEC,
                 (payload, context) -> MissingIngredients.accept(
                         payload.token(), payload.targetItem(), payload.targetCount(),
-                        payload.approximate(), payload.demands()));*/
+                        payload.approximate(), false, payload.demands()));
+        // V2 (long counts + saturated); the legacy one above stays for mod-1.0.3 servers.
+        registrar.playToClient(
+                ShortfallV2Payload.TYPE,
+                ShortfallV2Payload.STREAM_CODEC,
+                (payload, context) -> MissingIngredients.accept(
+                        payload.token(), payload.targetItem(), payload.targetCount(),
+                        payload.approximate(), payload.saturated(), payload.demands()));*/
         //?}
     }
 

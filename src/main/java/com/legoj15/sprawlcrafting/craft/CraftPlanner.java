@@ -227,18 +227,19 @@ public final class CraftPlanner {
             }
             ResourceLocation targetId = BuiltInRegistries.ITEM.getKey(target.result());
             if (!target.fits(grid)) {
-                return new ShortfallView(targetId, target.resultCount(), false, List.of());
+                return new ShortfallView(targetId, target.resultCount(), false, false, List.of());
             }
             RecipeGraphSolver.ShortfallResult<Item> result = solver.shortfall(target, inventory);
             List<ItemDemand> demands = new ArrayList<>();
-            result.demands().forEach((item, count) -> {
+            // demandsLong, not the int-clamped demands(): batched gather lists exceed Integer.MAX_VALUE.
+            result.demandsLong().forEach((item, count) -> {
                 List<Item> altItems = result.alternatives().getOrDefault(item, List.of(item));
                 List<ResourceLocation> altIds = altItems.stream()
                         .map(BuiltInRegistries.ITEM::getKey).toList();
                 demands.add(new ItemDemand(altIds, count));
             });
             demands.sort(Comparator.comparing(d -> d.items().get(0).toString()));
-            return new ShortfallView(targetId, target.resultCount(), result.approximate(), demands);
+            return new ShortfallView(targetId, target.resultCount(), result.approximate(), result.saturated(), demands);
         }
 
         private boolean fits2x2(ResourceLocation recipeId, McRecipe target) {

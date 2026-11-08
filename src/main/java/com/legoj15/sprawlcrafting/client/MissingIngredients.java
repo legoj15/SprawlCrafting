@@ -45,10 +45,12 @@ public final class MissingIngredients {
         return token;
     }
 
-    public static void accept(int token, ResourceLocation targetItem, int targetCount,
-                              boolean approximate, java.util.List<com.legoj15.sprawlcrafting.craft.ItemDemand> demands) {
+    // Fed by both the V2 payload and the legacy mod-1.0.3 one (whose counts are clamped ints, so
+    // saturated is always false there).
+    public static void accept(int token, ResourceLocation targetItem, int targetCount, boolean approximate,
+                              boolean saturated, java.util.List<com.legoj15.sprawlcrafting.craft.ItemDemand> demands) {
         latestToken = token;
-        latest = new ShortfallView(targetItem, targetCount, approximate, demands);
+        latest = new ShortfallView(targetItem, targetCount, approximate, saturated, demands);
     }
 
     public static java.util.Optional<ShortfallView> ifReady(int token) {

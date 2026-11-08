@@ -1,5 +1,6 @@
 package com.legoj15.sprawlcrafting.client;
 
+import com.legoj15.sprawlcrafting.craft.solver.CountFormat;
 import com.legoj15.sprawlcrafting.network.CraftProgressPacket;
 import com.mojang.blaze3d.matrix.MatrixStack;
 
@@ -51,7 +52,7 @@ public class CraftProgressToast implements IToast {
                 drawClipped(poseStack, font, new TranslationTextComponent("sprawlcrafting.toast.crafting",
                         job.target().getHoverName()), 7, TITLE_COLOR);
                 font.draw(poseStack, new TranslationTextComponent("sprawlcrafting.toast.step",
-                        job.done(), job.total()), TEXT_X, 18, SUBTITLE_COLOR);
+                        CountFormat.format(job.done()), CountFormat.format(job.total())), TEXT_X, 18, SUBTITLE_COLOR);
                 drawProgressBar(poseStack, job);
                 break;
             case PAUSED:
