@@ -2,8 +2,9 @@ package com.legoj15.sprawlcrafting.platform.services;
 
 import java.nio.file.Path;
 
+import com.legoj15.sprawlcrafting.network.SprawlPayload;
+
 import net.minecraft.network.Connection;
-import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerPlayer;
 
@@ -21,7 +22,16 @@ public interface IPlatformHelper {
      * client code. The raw vanilla send path works on NeoForge but is unreliable on Fabric,
      * so each loader routes through its own networking API here.
      */
-    void sendToServer(CustomPacketPayload payload);
+    void sendToServer(SprawlPayload payload);
+
+    /**
+     * Sends a custom payload from the server to one player. Callers check {@link #canReceive}
+     * first, so a modless/vanilla client is skipped rather than sent an unknown channel. On
+     * 1.20.5+ every loader sends the vanilla {@code ClientboundCustomPayloadPacket}; before
+     * 1.20.5 each loader's channel API frames the payload ({@code SprawlPayload.write}), which is
+     * why this lives on the platform helper rather than in shared code.
+     */
+    void sendToPlayer(ServerPlayer player, SprawlPayload payload);
 
     /**
      * Gets the name of the current platform

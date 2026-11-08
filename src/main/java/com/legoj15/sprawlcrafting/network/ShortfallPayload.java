@@ -5,11 +5,15 @@ import java.util.List;
 import com.legoj15.sprawlcrafting.Constants;
 import com.legoj15.sprawlcrafting.craft.ItemDemand;
 
+import net.minecraft.resources.ResourceLocation;
+//? if >=1.20.5 {
 import io.netty.buffer.ByteBuf;
 import net.minecraft.network.codec.ByteBufCodecs;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
-import net.minecraft.resources.ResourceLocation;
+//?} else {
+/*import net.minecraft.network.FriendlyByteBuf;*/
+//?}
 
 /**
  * S2C (26.x only): the server-computed "gather list" for a recipe — the raw materials the player
@@ -18,7 +22,7 @@ import net.minecraft.resources.ResourceLocation;
  * and whether the search hit its budget so the list may be incomplete ({@code approximate}). An
  * empty {@code demands} means nothing to gather / not plannable.
  *
- * <p>The codec is declared over a bare {@link ByteBuf} (item identity travels as a
+ * <p>The codec is declared over a bare {@code ByteBuf} (item identity travels as a
  * {@link ResourceLocation}, not an {@code ItemStack}), so it carries no registry and is
  * unit-testable; the client resolves the ids to items for icons.
  *
@@ -30,10 +34,12 @@ import net.minecraft.resources.ResourceLocation;
  * @param demands      the raw items + counts to acquire
  */
 public record ShortfallPayload(int token, ResourceLocation targetItem, int targetCount,
-                               boolean approximate, List<ItemDemand> demands) implements CustomPacketPayload {
+                               boolean approximate, List<ItemDemand> demands) implements SprawlPayload {
 
-    public static final CustomPacketPayload.Type<ShortfallPayload> TYPE =
-            new CustomPacketPayload.Type<>(ResourceLocation.fromNamespaceAndPath(Constants.MOD_ID, "shortfall"));
+    public static final ResourceLocation ID = ResourceLocation.fromNamespaceAndPath(Constants.MOD_ID, "shortfall");
+
+    //? if >=1.20.5 {
+    public static final CustomPacketPayload.Type<ShortfallPayload> TYPE = new CustomPacketPayload.Type<>(ID);
 
     public static final StreamCodec<ByteBuf, ShortfallPayload> STREAM_CODEC =
             StreamCodec.composite(
@@ -48,4 +54,24 @@ public record ShortfallPayload(int token, ResourceLocation targetItem, int targe
     public CustomPacketPayload.Type<ShortfallPayload> type() {
         return TYPE;
     }
+    //?} else {
+    /*@Override
+    public ResourceLocation id() {
+        return ID;
+    }
+
+    @Override
+    public void write(FriendlyByteBuf buf) {
+        buf.writeVarInt(token);
+        buf.writeResourceLocation(targetItem);
+        buf.writeVarInt(targetCount);
+        buf.writeBoolean(approximate);
+        buf.writeCollection(demands, (b, demand) -> demand.write(b));
+    }
+
+    public static ShortfallPayload read(FriendlyByteBuf buf) {
+        return new ShortfallPayload(buf.readVarInt(), buf.readResourceLocation(), buf.readVarInt(),
+                buf.readBoolean(), buf.readList(ItemDemand::read));
+    }*/
+    //?}
 }

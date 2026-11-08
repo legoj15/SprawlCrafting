@@ -2,9 +2,10 @@ package com.legoj15.sprawlcrafting.platform.neoforge;
 
 import java.nio.file.Path;
 
+import com.legoj15.sprawlcrafting.network.SprawlPayload;
 import com.legoj15.sprawlcrafting.platform.services.IPlatformHelper;
 import net.minecraft.network.Connection;
-import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
+import net.minecraft.network.protocol.common.ClientboundCustomPayloadPacket;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerPlayer;
 import net.neoforged.fml.ModList;
@@ -38,12 +39,18 @@ public class NeoForgePlatformHelper implements IPlatformHelper {
     }
 
     @Override
-    public void sendToServer(CustomPacketPayload payload) {
+    public void sendToServer(SprawlPayload payload) {
         //? if >=1.21.11 {
         /*net.neoforged.neoforge.client.network.ClientPacketDistributor.sendToServer(payload);*/
         //?} else {
         PacketDistributor.sendToServer(payload);
         //?}
+    }
+
+    @Override
+    public void sendToPlayer(ServerPlayer player, SprawlPayload payload) {
+        // Vanilla send path (the payload is a CustomPacketPayload on 1.20.5+), as the shared code did.
+        player.connection.send(new ClientboundCustomPayloadPacket(payload));
     }
 
     @Override

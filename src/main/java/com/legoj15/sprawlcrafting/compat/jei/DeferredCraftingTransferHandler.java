@@ -38,17 +38,32 @@ import net.minecraft.world.item.crafting.RecipeHolder;
  * resources, the transfer button turns yellow and inviting instead — clicking it sends
  * the same start packet the recipe book uses.
  */
+// JEI's recipe type R is RecipeHolder<CraftingRecipe> on 1.20.2+, but the bare CraftingRecipe on
+// 1.20.1 (JEI 15); the 1.20.1 branch wraps it in the RecipeHolder shim right after the JEI call.
+//? if >=1.20.2 {
 public class DeferredCraftingTransferHandler
         implements IRecipeTransferHandler<CraftingMenu, RecipeHolder<CraftingRecipe>> {
+//?} else {
+/*public class DeferredCraftingTransferHandler
+        implements IRecipeTransferHandler<CraftingMenu, CraftingRecipe> {*/
+//?}
 
     private static final IRecipeTransferError DEFERRED_AVAILABLE = new DeferredCraftError();
 
+    //? if >=1.20.2 {
     private final IRecipeTransferHandler<CraftingMenu, RecipeHolder<CraftingRecipe>> vanilla;
 
     public DeferredCraftingTransferHandler(
             IRecipeTransferHandler<CraftingMenu, RecipeHolder<CraftingRecipe>> vanilla) {
         this.vanilla = vanilla;
     }
+    //?} else {
+    /*private final IRecipeTransferHandler<CraftingMenu, CraftingRecipe> vanilla;
+
+    public DeferredCraftingTransferHandler(IRecipeTransferHandler<CraftingMenu, CraftingRecipe> vanilla) {
+        this.vanilla = vanilla;
+    }*/
+    //?}
 
     @Override
     public Class<? extends CraftingMenu> getContainerClass() {
@@ -63,31 +78,42 @@ public class DeferredCraftingTransferHandler
     @Override
     //? if >=1.21.11 {
     /*public IRecipeType<RecipeHolder<CraftingRecipe>> getRecipeType() {*/
-    //?} else {
+    //?} else if >=1.20.2 {
     public RecipeType<RecipeHolder<CraftingRecipe>> getRecipeType() {
+    //?} else {
+    /*public RecipeType<CraftingRecipe> getRecipeType() {*/
     //?}
         return RecipeTypes.CRAFTING;
     }
 
     @Override
+    //? if >=1.20.2 {
     public IRecipeTransferError transferRecipe(CraftingMenu container, RecipeHolder<CraftingRecipe> recipe,
+    //?} else {
+    /*public IRecipeTransferError transferRecipe(CraftingMenu container, CraftingRecipe recipe,*/
+    //?}
                                                IRecipeSlotsView recipeSlots, Player player,
                                                boolean maxTransfer, boolean doTransfer) {
         IRecipeTransferError vanillaError =
                 vanilla.transferRecipe(container, recipe, recipeSlots, player, maxTransfer, doTransfer);
+        //? if >=1.20.2 {
+        RecipeHolder<CraftingRecipe> holder = recipe;
+        //?} else {
+        /*RecipeHolder<CraftingRecipe> holder = RecipeHolder.of(recipe);*/
+        //?}
         if (vanillaError == null || vanillaError.getType() != IRecipeTransferError.Type.USER_FACING) {
             return vanillaError; // direct transfer worked (or an internal error we don't own)
         }
         if (!SprawlConfig.get().jeiIntegration()) {
             return vanillaError; // JEI integration disabled: leave JEI's own (red) error untouched
         }
-        Craftability craftability = DeferredCraftableCache.classify(recipe, GridContext.CRAFTING_TABLE);
+        Craftability craftability = DeferredCraftableCache.classify(holder, GridContext.CRAFTING_TABLE);
         if (craftability == Craftability.DEFERRED) {
             if (ClientJobTracker.hasActiveJob()) {
                 return vanillaError; // busy: don't offer to queue another deferred craft
             }
             if (doTransfer) {
-                DeferredClickState.sendStartPacket(recipe);
+                DeferredClickState.sendStartPacket(holder);
                 return null;
             }
             return DEFERRED_AVAILABLE;
@@ -107,10 +133,10 @@ public class DeferredCraftingTransferHandler
                 // (see MissingIngredients#pollPendingOpen). Return null like the deferred path so JEI
                 // returns to the crafting table rather than kicking the player out.
                 MissingIngredients.requestOpenNextTick(
-                        () -> MissingIngredientsView.open(recipe, GridContext.CRAFTING_TABLE));
+                        () -> MissingIngredientsView.open(holder, GridContext.CRAFTING_TABLE));
                 return null;
             }
-            return new GatherListError(recipe);
+            return new GatherListError(holder);
         }
         return vanillaError;
     }

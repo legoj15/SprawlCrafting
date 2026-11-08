@@ -36,8 +36,11 @@ public final class RecipeIds {
     public static Optional<RecipeHolder<?>> byId(RecipeManager recipes, ResourceLocation id) {
         //? if >=1.21.11 {
         /*return recipes.byKey(net.minecraft.resources.ResourceKey.create(net.minecraft.core.registries.Registries.RECIPE, id));*/
-        //?} else {
+        //?} else if >=1.20.2 {
         return recipes.byKey(id);
+        //?} else {
+        /*// 1.20.1: byKey yields the bare recipe; wrap it in the RecipeHolder shim.
+        return recipes.byKey(id).<RecipeHolder<?>>map(RecipeHolder::of);*/
         //?}
     }
 
@@ -55,8 +58,15 @@ public final class RecipeIds {
             }
         }
         return crafting;*/
-        //?} else {
+        //?} else if >=1.20.2 {
         return recipes.getAllRecipesFor(RecipeType.CRAFTING);
+        //?} else {
+        /*// 1.20.1: getAllRecipesFor yields bare recipes; wrap each in the RecipeHolder shim.
+        java.util.List<RecipeHolder<CraftingRecipe>> crafting = new java.util.ArrayList<>();
+        for (CraftingRecipe recipe : recipes.getAllRecipesFor(RecipeType.CRAFTING)) {
+            crafting.add(RecipeHolder.of(recipe));
+        }
+        return crafting;*/
         //?}
     }
 

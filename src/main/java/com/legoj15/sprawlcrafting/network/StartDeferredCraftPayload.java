@@ -2,10 +2,14 @@ package com.legoj15.sprawlcrafting.network;
 
 import com.legoj15.sprawlcrafting.Constants;
 
+import net.minecraft.resources.ResourceLocation;
+//? if >=1.20.5 {
 import io.netty.buffer.ByteBuf;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
-import net.minecraft.resources.ResourceLocation;
+//?} else {
+/*import net.minecraft.network.FriendlyByteBuf;*/
+//?}
 
 /**
  * C2S: the player confirmed a yellow-outlined recipe in the recipe book. The server
@@ -14,13 +18,15 @@ import net.minecraft.resources.ResourceLocation;
  * player has open server-side.
  *
  * <p>Registered per loader (NeoForge {@code RegisterPayloadHandlersEvent}, Fabric
- * {@code PayloadTypeRegistry}); both route to
- * {@code CraftRequests.handleStartRequest} on the server thread.
+ * {@code PayloadTypeRegistry}, or the pre-1.20.5 channel APIs keyed on {@link #ID}); all
+ * route to {@code CraftRequests.handleStartRequest} on the server thread.
  */
-public record StartDeferredCraftPayload(ResourceLocation recipeId) implements CustomPacketPayload {
+public record StartDeferredCraftPayload(ResourceLocation recipeId) implements SprawlPayload {
 
-    public static final CustomPacketPayload.Type<StartDeferredCraftPayload> TYPE =
-            new CustomPacketPayload.Type<>(ResourceLocation.fromNamespaceAndPath(Constants.MOD_ID, "start_craft"));
+    public static final ResourceLocation ID = ResourceLocation.fromNamespaceAndPath(Constants.MOD_ID, "start_craft");
+
+    //? if >=1.20.5 {
+    public static final CustomPacketPayload.Type<StartDeferredCraftPayload> TYPE = new CustomPacketPayload.Type<>(ID);
 
     public static final StreamCodec<ByteBuf, StartDeferredCraftPayload> STREAM_CODEC =
             StreamCodec.composite(
@@ -31,4 +37,19 @@ public record StartDeferredCraftPayload(ResourceLocation recipeId) implements Cu
     public CustomPacketPayload.Type<StartDeferredCraftPayload> type() {
         return TYPE;
     }
+    //?} else {
+    /*@Override
+    public ResourceLocation id() {
+        return ID;
+    }
+
+    @Override
+    public void write(FriendlyByteBuf buf) {
+        buf.writeResourceLocation(recipeId);
+    }
+
+    public static StartDeferredCraftPayload read(FriendlyByteBuf buf) {
+        return new StartDeferredCraftPayload(buf.readResourceLocation());
+    }*/
+    //?}
 }

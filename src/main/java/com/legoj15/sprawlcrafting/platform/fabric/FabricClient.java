@@ -21,9 +21,19 @@ public class FabricClient implements ClientModInitializer {
     @Override
     public void onInitializeClient() {
         SprawlConfig.get(); // load (and create on first run) the config at client start
+        //? if >=1.20.5 {
         // Handler runs on the render thread (Fabric dispatches before invoking).
         ClientPlayNetworking.registerGlobalReceiver(CraftProgressPayload.TYPE,
                 (payload, context) -> ClientJobTracker.accept(payload));
+        //?} else {
+        /*// Pre-1.20.5: channel id + raw buffer, delivered on the netty thread — decode there, then
+        // hand the snapshot to the render thread.
+        ClientPlayNetworking.registerGlobalReceiver(CraftProgressPayload.ID,
+                (client, handler, buf, responseSender) -> {
+                    CraftProgressPayload payload = CraftProgressPayload.read(buf);
+                    client.execute(() -> ClientJobTracker.accept(payload));
+                });*/
+        //?}
         // 26.x: receive the server-computed deferred-craftable set + plan previews. 1.21.1 computes
         // these on the client, so it registers no receivers here.
         //? if >=1.21.11 {

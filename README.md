@@ -64,13 +64,13 @@ Every setting defaults to **on** and can be changed in-game or by editing the co
 
 There are two independent builds: the modern Fabric/NeoForge tree (Stonecutter) and the legacy 1.12.2 Forge module. They share the same planning core (`solver-core/`) but can't share a toolchain.
 
-### Modern loaders (1.21.1, 26.1.2, 26.2, 26.3)
+### Modern loaders (1.20.1, 1.21.1, 26.1.2, 26.2, 26.3)
 
-SprawlCrafting uses Stonecutter: one shared source set in `src/`, preprocessed per version into `versions/<node>/`. The eight nodes are `1.21.1-fabric`, `1.21.1-neoforge`, `26.1.2-fabric`, `26.1.2-neoforge`, `26.2-fabric`, `26.2-neoforge`, `26.3-fabric`, and `26.3-neoforge`.
+SprawlCrafting uses Stonecutter: one shared source set in `src/`, preprocessed per version into `versions/<node>/`. The nine nodes are `1.20.1-fabric`, `1.21.1-fabric`, `1.21.1-neoforge`, `26.1.2-fabric`, `26.1.2-neoforge`, `26.2-fabric`, `26.2-neoforge`, `26.3-fabric`, and `26.3-neoforge`.
 
 **The required JDK depends on the Minecraft version:**
 
-- **1.21.1** nodes need **JDK 21**
+- **1.20.1** and **1.21.1** nodes build with a **JDK 21** host (the 1.20.1 jar itself targets Java 17)
 - **26.1.2**, **26.2**, and **26.3** nodes need **JDK 25** (Minecraft 26.1+ requires the Java 25 toolchain)
 
 Build or run a single node with its node-prefixed task:
@@ -83,7 +83,7 @@ Build or run a single node with its node-prefixed task:
 ./gradlew :26.1.2-neoforge:runClient  # dev client, NeoForge 26.1.2
 ```
 
-Swap the prefix for any of the eight nodes.
+Swap the prefix for any of the nine nodes.
 
 ### 1.12.2 (Forge)
 

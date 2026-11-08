@@ -5,11 +5,15 @@ import java.util.Set;
 
 import com.legoj15.sprawlcrafting.Constants;
 
+import net.minecraft.resources.ResourceLocation;
+//? if >=1.20.5 {
 import io.netty.buffer.ByteBuf;
 import net.minecraft.network.codec.ByteBufCodecs;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
-import net.minecraft.resources.ResourceLocation;
+//?} else {
+/*import net.minecraft.network.FriendlyByteBuf;*/
+//?}
 
 /**
  * S2C (26.x only): the server-computed set of recipes craftable only via deferral, for the
@@ -27,10 +31,12 @@ import net.minecraft.resources.ResourceLocation;
  * @param recipeIds   deferred-craftable recipe identifiers (JEI key)
  */
 public record DeferredCraftableSyncPayload(int grid, Set<Integer> displayIds, Set<ResourceLocation> recipeIds)
-        implements CustomPacketPayload {
+        implements SprawlPayload {
 
-    public static final CustomPacketPayload.Type<DeferredCraftableSyncPayload> TYPE =
-            new CustomPacketPayload.Type<>(ResourceLocation.fromNamespaceAndPath(Constants.MOD_ID, "deferred_sync"));
+    public static final ResourceLocation ID = ResourceLocation.fromNamespaceAndPath(Constants.MOD_ID, "deferred_sync");
+
+    //? if >=1.20.5 {
+    public static final CustomPacketPayload.Type<DeferredCraftableSyncPayload> TYPE = new CustomPacketPayload.Type<>(ID);
 
     public static final StreamCodec<ByteBuf, DeferredCraftableSyncPayload> STREAM_CODEC =
             StreamCodec.composite(
@@ -45,4 +51,24 @@ public record DeferredCraftableSyncPayload(int grid, Set<Integer> displayIds, Se
     public CustomPacketPayload.Type<DeferredCraftableSyncPayload> type() {
         return TYPE;
     }
+    //?} else {
+    /*@Override
+    public ResourceLocation id() {
+        return ID;
+    }
+
+    @Override
+    public void write(FriendlyByteBuf buf) {
+        buf.writeVarInt(grid);
+        buf.writeCollection(displayIds, FriendlyByteBuf::writeVarInt);
+        buf.writeCollection(recipeIds, FriendlyByteBuf::writeResourceLocation);
+    }
+
+    public static DeferredCraftableSyncPayload read(FriendlyByteBuf buf) {
+        int grid = buf.readVarInt();
+        Set<Integer> displayIds = buf.readCollection(HashSet::new, FriendlyByteBuf::readVarInt);
+        Set<ResourceLocation> recipeIds = buf.readCollection(HashSet::new, FriendlyByteBuf::readResourceLocation);
+        return new DeferredCraftableSyncPayload(grid, displayIds, recipeIds);
+    }*/
+    //?}
 }

@@ -3,7 +3,9 @@ package com.legoj15.sprawlcrafting.craft;
 import java.util.ArrayList;
 import java.util.List;
 
+//? if >=1.20.5 {
 import net.minecraft.core.component.DataComponents;
+//?}
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerPlayer;
@@ -149,10 +151,14 @@ public final class CraftExecutor {
         /*if (!player.getRecipeBook().contains(holder.id())) {
             return new FillOutcome.Fallback();
         }*/
-        //?} else {
+        //?} else if >=1.20.2 {
         if (!player.getRecipeBook().contains(holder)) {
             return new FillOutcome.Fallback();
         }
+        //?} else {
+        /*if (!player.getRecipeBook().contains(holder.id())) {
+            return new FillOutcome.Fallback();
+        }*/
         //?}
         ItemStack expected = RecipeIds.resultOf(recipe, player.registryAccess());
         if (expected.isEmpty()) {
@@ -166,11 +172,16 @@ public final class CraftExecutor {
         }
         craftingMenu.handlePlacement(false, false, holder,
                 (net.minecraft.server.level.ServerLevel) player.level(), player.getInventory());*/
-        //?} else {
+        //?} else if >=1.20.2 {
         if (!(menu instanceof net.minecraft.world.inventory.RecipeBookMenu<?, ?> recipeBookMenu)) {
             return new FillOutcome.Fallback();
         }
         recipeBookMenu.handlePlacement(false, holder, player);
+        //?} else {
+        /*if (!(menu instanceof net.minecraft.world.inventory.RecipeBookMenu<?, ?> recipeBookMenu)) {
+            return new FillOutcome.Fallback();
+        }
+        recipeBookMenu.handlePlacement(false, holder.value(), player); // 1.20.1 places a bare Recipe*/
         //?}
 
         // finishPlacingRecipe (inside handlePlacement) already recomputed + synced the result
@@ -283,7 +294,11 @@ public final class CraftExecutor {
 
     /** Vanilla recipe-book parity: never consume damaged, enchanted, or renamed stacks. */
     static boolean usableAsIngredient(ItemStack stack) {
+        //? if >=1.20.5 {
         return !stack.isDamaged() && !stack.isEnchanted() && !stack.has(DataComponents.CUSTOM_NAME);
+        //?} else {
+        /*return !stack.isDamaged() && !stack.isEnchanted() && !stack.hasCustomHoverName(); // pre-components NBT name*/
+        //?}
     }
 
     private static int findMatchingSlot(Inventory inventory, Ingredient ingredient, int[] reserved) {

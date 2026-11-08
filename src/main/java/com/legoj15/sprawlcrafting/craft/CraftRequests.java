@@ -64,19 +64,29 @@ public final class CraftRequests {
                 && !player.getRecipeBook().contains(holder.id())) {
             return;
         }*/
-        //?} else {
+        //?} else if >=1.20.2 {
         if (player.serverLevel().getGameRules().getBoolean(GameRules.RULE_LIMITED_CRAFTING)
                 && !player.getRecipeBook().contains(holder)) {
             return;
         }
+        //?} else {
+        /*// 1.20.1 has no RecipeHolder (the shim's id is the recipe id); its RecipeBook keys on ids.
+        if (player.serverLevel().getGameRules().getBoolean(GameRules.RULE_LIMITED_CRAFTING)
+                && !player.getRecipeBook().contains(holder.id())) {
+            return;
+        }*/
         //?}
-        Component feedback = switch (tryStart(player, holder)) {
-            case StartOutcome.Started started -> Component.translatable("sprawlcrafting.craft.started",
+        // instanceof chain rather than a pattern-matching switch: the 1.20.1 node targets Java 17.
+        StartOutcome outcome = tryStart(player, holder);
+        Component feedback;
+        if (outcome instanceof StartOutcome.Started started) {
+            feedback = Component.translatable("sprawlcrafting.craft.started",
                     started.job().targetResult().getHoverName(), started.job().totalCrafts());
-            case StartOutcome.Busy busy -> Component.translatable("sprawlcrafting.craft.busy")
-                    .withStyle(ChatFormatting.RED);
-            case StartOutcome.Rejected rejected -> describeRejection(holder, rejected.outcome());
-        };
+        } else if (outcome instanceof StartOutcome.Rejected rejected) {
+            feedback = describeRejection(holder, rejected.outcome());
+        } else {
+            feedback = Component.translatable("sprawlcrafting.craft.busy").withStyle(ChatFormatting.RED);
+        }
         notify(player, feedback);
     }
 
@@ -91,21 +101,25 @@ public final class CraftRequests {
 
     public static Component describeRejection(RecipeHolder<?> holder, PlanOutcome outcome) {
         Component recipeName = Component.literal(holder.id().toString());
-        return (switch (outcome) {
-            case PlanOutcome.Unsupported unsupported ->
-                    Component.translatable("sprawlcrafting.craft.unsupported", recipeName);
-            case PlanOutcome.NeedsBiggerGrid needsGrid ->
-                    Component.translatable("sprawlcrafting.craft.needs_table", recipeName);
-            case PlanOutcome.TooComplex tooComplex ->
-                    Component.translatable("sprawlcrafting.craft.too_complex", recipeName);
-            case PlanOutcome.Unsolvable unsolvable -> Component.translatable(
+        // instanceof chain rather than a pattern-matching switch: the 1.20.1 node targets Java 17.
+        net.minecraft.network.chat.MutableComponent message;
+        if (outcome instanceof PlanOutcome.Unsupported) {
+            message = Component.translatable("sprawlcrafting.craft.unsupported", recipeName);
+        } else if (outcome instanceof PlanOutcome.NeedsBiggerGrid) {
+            message = Component.translatable("sprawlcrafting.craft.needs_table", recipeName);
+        } else if (outcome instanceof PlanOutcome.TooComplex) {
+            message = Component.translatable("sprawlcrafting.craft.too_complex", recipeName);
+        } else if (outcome instanceof PlanOutcome.Unsolvable unsolvable) {
+            message = Component.translatable(
                     "sprawlcrafting.craft.unsolvable", recipeName,
                     unsolvable.missing().isEmpty()
                             ? Component.literal("?")
                             : Component.literal(unsolvable.missing().stream()
                                     .map(item -> Component.translatable(item.getDescriptionId()).getString())
                                     .collect(Collectors.joining(", "))));
-            case PlanOutcome.Planned planned -> throw new IllegalArgumentException("not a rejection");
-        }).withStyle(ChatFormatting.RED);
+        } else {
+            throw new IllegalArgumentException("not a rejection"); // PlanOutcome.Planned
+        }
+        return message.withStyle(ChatFormatting.RED);
     }
 }

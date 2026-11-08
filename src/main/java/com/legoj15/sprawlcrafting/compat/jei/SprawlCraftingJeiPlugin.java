@@ -41,7 +41,11 @@ public class SprawlCraftingJeiPlugin implements IModPlugin {
         IRecipeTransferHandlerHelper helper = registration.getTransferHelper();
         // Same slot layout JEI's own VanillaPlugin registers for the crafting table:
         // grid slots 1-9, player inventory 10-45.
+        //? if >=1.20.2 {
         IRecipeTransferInfo<CraftingMenu, RecipeHolder<CraftingRecipe>> tableInfo =
+        //?} else {
+        /*IRecipeTransferInfo<CraftingMenu, CraftingRecipe> tableInfo =*/
+        //?}
                 helper.createBasicRecipeTransferInfo(CraftingMenu.class, MenuType.CRAFTING,
                         RecipeTypes.CRAFTING, 1, 9, 10, 36);
         registration.addRecipeTransferHandler(

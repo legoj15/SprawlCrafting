@@ -44,7 +44,7 @@ public abstract class OverlayRecipeButtonMixin implements GatherCandidate {
         MissingIngredientsView.open(recipe);
         return true;
     }*/
-    //?} else {
+    //?} else if >=1.20.2 {
     @Shadow
     @Final
     RecipeHolder<?> recipe;
@@ -57,5 +57,19 @@ public abstract class OverlayRecipeButtonMixin implements GatherCandidate {
         MissingIngredientsView.open(recipe, GridContext.CRAFTING_TABLE);
         return true;
     }
+    //?} else {
+    /*// 1.20.1: the variant button holds a bare Recipe; wrap it in the RecipeHolder shim for our APIs.
+    @Shadow
+    @Final
+    net.minecraft.world.item.crafting.Recipe<?> recipe;
+
+    @Override
+    public boolean sprawlcrafting$tryOpenGatherList() {
+        if (isCraftable || recipe == null) {
+            return false; // craftable (incl. our deferred yellow): vanilla's left-click handles it
+        }
+        MissingIngredientsView.open(RecipeHolder.of(recipe), GridContext.CRAFTING_TABLE);
+        return true;
+    }*/
     //?}
 }

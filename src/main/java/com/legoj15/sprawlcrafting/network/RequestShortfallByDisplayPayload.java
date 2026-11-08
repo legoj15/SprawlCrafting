@@ -2,11 +2,15 @@ package com.legoj15.sprawlcrafting.network;
 
 import com.legoj15.sprawlcrafting.Constants;
 
+import net.minecraft.resources.ResourceLocation;
+//? if >=1.20.5 {
 import io.netty.buffer.ByteBuf;
 import net.minecraft.network.codec.ByteBufCodecs;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
-import net.minecraft.resources.ResourceLocation;
+//?} else {
+/*import net.minecraft.network.FriendlyByteBuf;*/
+//?}
 
 /**
  * C2S (26.x only): right-clicking a red recipe-book entry asks the server for its "gather list" —
@@ -19,11 +23,14 @@ import net.minecraft.resources.ResourceLocation;
  * @param token     client-allocated correlation id, echoed back in {@link ShortfallPayload}
  * @param displayId the {@code RecipeDisplayId} index of the clicked entry
  */
-public record RequestShortfallByDisplayPayload(int token, int displayId) implements CustomPacketPayload {
+public record RequestShortfallByDisplayPayload(int token, int displayId) implements SprawlPayload {
 
+    public static final ResourceLocation ID =
+            ResourceLocation.fromNamespaceAndPath(Constants.MOD_ID, "request_shortfall_display");
+
+    //? if >=1.20.5 {
     public static final CustomPacketPayload.Type<RequestShortfallByDisplayPayload> TYPE =
-            new CustomPacketPayload.Type<>(
-                    ResourceLocation.fromNamespaceAndPath(Constants.MOD_ID, "request_shortfall_display"));
+            new CustomPacketPayload.Type<>(ID);
 
     public static final StreamCodec<ByteBuf, RequestShortfallByDisplayPayload> STREAM_CODEC =
             StreamCodec.composite(
@@ -35,4 +42,20 @@ public record RequestShortfallByDisplayPayload(int token, int displayId) impleme
     public CustomPacketPayload.Type<RequestShortfallByDisplayPayload> type() {
         return TYPE;
     }
+    //?} else {
+    /*@Override
+    public ResourceLocation id() {
+        return ID;
+    }
+
+    @Override
+    public void write(FriendlyByteBuf buf) {
+        buf.writeVarInt(token);
+        buf.writeVarInt(displayId);
+    }
+
+    public static RequestShortfallByDisplayPayload read(FriendlyByteBuf buf) {
+        return new RequestShortfallByDisplayPayload(buf.readVarInt(), buf.readVarInt());
+    }*/
+    //?}
 }
