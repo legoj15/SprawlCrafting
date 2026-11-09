@@ -25,7 +25,8 @@ import net.minecraft.world.item.ItemStack;
  * with its own progress update and step sound. A <em>bulk</em> step (more than {@link #BULK_THRESHOLD}
  * crafts, i.e. a batched compressed-block chain such as 6,561 crafts) waits {@link #TICKS_PER_STEP} ticks
  * once, then runs in bursts of up to {@link #MAX_CRAFTS_PER_TICK} crafts (and at most
- * {@link #BURST_BUDGET_NANOS} of server time), one burst per tick, until the step is done: roughly 5-16
+ * {@link #BURST_BUDGET_NANOS} of server time, and all players' bursts together at most
+ * {@link #SERVER_TICK_BURST_BUDGET_NANOS}), one burst per tick, until the step is done: roughly 5-16
  * seconds instead of the ~55 minutes one craft per half second would take.
  */
 public final class CraftJob {
@@ -55,8 +56,18 @@ public final class CraftJob {
      * filler stacks — the worst slot-scan layout): a 64-craft burst took 15.4 ms cold, then 2.5-6.1 ms
      * warm (~40-95 us per craft). Unbounded, that is up to a third of a 50 ms tick for one player, so the
      * budget caps it at 2 ms (4% of a tick): a cheap recipe still runs the full 64, a costly one ~20-50.
+     * This is the per-job ceiling; {@link #SERVER_TICK_BURST_BUDGET_NANOS} bounds all players together.
      */
     public static final long BURST_BUDGET_NANOS = 2_000_000L;
+
+    /**
+     * Wall-time budget that every player's burst shares within one server tick (see {@link BurstBudget}):
+     * 10 ms, a fifth of a 50 ms tick, so N players bursting together cost about this instead of N times
+     * {@link #BURST_BUDGET_NANOS}. Up to five bulk jobs still get the full per-job 2 ms; beyond that the
+     * budget is split evenly. A burst's first craft is exempt (no job starves), so past roughly
+     * 100-200 concurrent bulk jobs the one-craft floor, not this figure, sets the cost.
+     */
+    public static final long SERVER_TICK_BURST_BUDGET_NANOS = 10_000_000L;
 
     private final ResourceLocation targetRecipe;
     private final ItemStack targetResult;
@@ -144,6 +155,18 @@ public final class CraftJob {
      */
     public boolean isBulkStep() {
         return currentStep().crafts() > BULK_THRESHOLD;
+    }
+
+    /**
+     * Whether this job bursts this server tick, so it shares the tick's burst budget (see
+     * {@link BurstBudget}): a bulk step whose half-second wait is up. The budget is split when the
+     * tick's first burst asks, before the players later in the loop have run their own {@link #tick()},
+     * so a wait one tick short of done already counts. A job paused for a crafting table, or waiting out
+     * the half second after a step boundary, has that wait reset and is not counted until it is nearly
+     * up, so it does not shrink the slice of the jobs that do burst.
+     */
+    public boolean burstsThisTick() {
+        return !isFinished() && isBulkStep() && progressTicks >= TICKS_PER_STEP - 1;
     }
 
     public long totalCrafts() {

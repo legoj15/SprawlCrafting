@@ -157,16 +157,40 @@ is decided by the node's `gradle.properties` plus `//? if >=1.21.11` branches in
   `CraftJob.TICKS_PER_STEP` (10 ticks, 0.5 s), each with its own progress update and step sound. A
   bigger step (a batched compressed-block chain, e.g. 6,561 crafts) waits `TICKS_PER_STEP` once,
   then runs one burst per tick until it is done. A burst stops at
-  `CraftJob.MAX_CRAFTS_PER_TICK` (64, one stack of a single-output recipe) or
-  `CraftJob.BURST_BUDGET_NANOS` (2 ms of server time), whichever comes first, and always does at
-  least one craft; it takes ~5-16 s instead of ~55 minutes at one craft per
-  half second. Every craft in a burst is still validated and applied on its own
+  `CraftJob.MAX_CRAFTS_PER_TICK` (64, one stack of a single-output recipe) or its time budget
+  (below), whichever comes first, and always does at least one craft; it takes ~5-16 s instead of
+  ~55 minutes at one craft per half second. Every craft in a burst is still validated and applied on its own
   (`CraftExecutor.craftOnce`), so per-craft ingredient checks and graceful cancellation are
   unchanged. **Measured** (1.21.1 NeoForge game-test server, mock player, 9-ingredient
   `iron_block` recipe with the ingots behind 27 filler stacks, i.e. the worst slot-scan layout): a
   64-craft burst took 15.4 ms cold, then 2.5-6.1 ms warm (~40-95 µs per craft). Uncapped, one
   player's burst could take a third of a 50 ms tick, hence the time budget: 2 ms is 4% of a tick,
-  so a cheap recipe still runs the full 64 and a costly one ~20-50. Full-grid steps run the full
+  so a cheap recipe still runs the full 64 and a costly one ~20-50.
+  **The time budget is shared across players.** `CraftJob.BURST_BUDGET_NANOS` (2 ms) caps one
+  player's burst; `CraftJob.SERVER_TICK_BURST_BUDGET_NANOS` (10 ms, a fifth of a tick) is what ALL
+  players' bursts together may spend in one server tick, so N players bursting at once cost about
+  10 ms rather than N x 2 ms. `BurstBudget` (held by `CraftQueueManager`) splits it evenly: the first
+  bulk burst of a server tick opens the window and counts the jobs that burst this tick
+  (`CraftJob.burstsThisTick()`: a bulk step whose half-second wait is up, so a job paused for a
+  crafting table or waiting out a step boundary does not shrink the others' slice), and every
+  burst of that tick is granted `min(2 ms, 10 ms / jobs)` (up to five bulk jobs keep the full 2 ms; 20
+  get 0.5 ms each), whatever their position in the player loop. An even slice rather than a shared
+  first-come-first-served pool, because the loop order is fixed by the player list and the first few
+  players would otherwise take the whole budget every tick; the same slice for everyone also means
+  nothing has to rotate. Each burst is charged the time it used, clamped to its grant: the clock
+  is checked after a craft, so a burst runs up to one craft past its grant, and charging that
+  overshoot would shrink every later player's slice in the fixed loop order (the last pinned to
+  one craft per tick); time a burst leaves unused (64-craft cap, step boundary) stays in the
+  window for a burst the count missed, and the window never grants more than 10 ms in total.
+  The clock is checked after a craft, never before, so every job makes at least one craft per
+  eligible tick even with the budget spent (no starvation); the bound is therefore soft (the budget plus at most one
+  craft of overshoot per burst), and past roughly 100-200 simultaneous bulk jobs the one-craft floor,
+  not the 10 ms, sets the cost. Paced steps do one craft and never draw on it. The window is keyed on
+  the SERVER tick (`MinecraftServer.getTickCount()`; `getTickCounter()` on 1.12.2), never
+  `player.tickCount`, which is per-entity and restarts at 0 on respawn (the wedge `DeferredCraftSync`
+  hit); any change of key, including a clock that goes backwards, opens a fresh window. The three
+  trees (`src/`, `legacy-1.16.5/common`, `forge-1.12.2`) each carry the same class and constants.
+  Full-grid steps run the full
   crafting-table scan once per half second (the scan is the expensive part); the burst ticks between
   scans re-validate only the table that scan found (`CraftingTableReach.isStillInReach`: chunk
   loaded, block still a table, still within reach) and pause the job the moment that fails, so a
@@ -210,7 +234,7 @@ than a full exponential search — see "Known limitations".
    (recipe × count). Held items are used before any sub-craft is planned.
 3. **Execution (server, `CraftQueueManager` / `CraftExecutor`).** Each step starts 10 ticks
    after the previous one; a step of ≤ 16 crafts then runs one craft per 10 ticks, a bigger one in
-   bursts (≤ 64 crafts per tick); every craft re-checks and
+   bursts (≤ 64 crafts per tick, within a 10 ms per-tick time budget shared by all players); every craft re-checks and
    consumes its ingredients from the live inventory and inserts its output as real items.
    Shortfall → cancel + notify.
 4. **Progress toast (client).** While a job runs with the inventory closed, a vanilla toast
