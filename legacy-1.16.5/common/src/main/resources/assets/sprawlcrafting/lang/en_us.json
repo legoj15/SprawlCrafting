@@ -25,6 +25,7 @@
   "sprawlcrafting.gather.header": "Missing materials",
   "sprawlcrafting.gather.title": "To craft %s, you still need:",
   "sprawlcrafting.gather.line": "%s× %s",
+  "sprawlcrafting.gather.line_more_than": "More than %s %s",
   "sprawlcrafting.gather.need": "Still need: %s",
   "sprawlcrafting.gather.more_than": "more than %s",
   "sprawlcrafting.gather.more": "…and %s more",

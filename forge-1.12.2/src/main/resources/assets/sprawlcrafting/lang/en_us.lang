@@ -43,8 +43,10 @@ sprawlcrafting.gather.title=Materials needed
 # JEI tooltip prints it above the item lines, so its 1.12.2 wording differs by design.
 sprawlcrafting.gather.header=Raw materials still needed:
 sprawlcrafting.gather.line=  %s× %s
-sprawlcrafting.gather.more=…and %s more
 # A count the solver saturated at Long.MAX_VALUE (the true figure is at least the shown number).
+# line_more_than replaces gather.line for such a count: "more than 9.22e18× Iron" reads as a multiplier.
+sprawlcrafting.gather.line_more_than=  More than %s %s
+sprawlcrafting.gather.more=…and %s more
 sprawlcrafting.gather.more_than=more than %s
 sprawlcrafting.gather.approximate=List may be incomplete, recipe tree too complex
 # gather.alt is appended INLINE after an item name - the leading space is load-bearing (1.12.2-only).

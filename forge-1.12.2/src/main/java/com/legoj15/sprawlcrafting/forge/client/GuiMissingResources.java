@@ -25,14 +25,26 @@ import org.lwjgl.input.Mouse;
  */
 public class GuiMissingResources extends GuiScreen {
 
-    private static final int PANEL_WIDTH = 256;
+    /** Narrowest the panel gets; it widens past this when a row's name and need text would not fit. */
+    private static final int MIN_PANEL_WIDTH = 256;
+    /** Screen margin kept clear on each side when the panel is widened to fit its rows. */
+    private static final int SIDE_MARGIN = 10;
     private static final int ROW_HEIGHT = 20;
+    /** Item name starts this far in from the panel's left edge (after the 16-px icon). */
+    private static final int NAME_INSET = 32;
+    /** The "how many" text ends this far in from the panel's right edge. */
+    private static final int NEED_INSET = 12;
+    /** Minimum space between the end of an item name and the start of its need text. */
+    private static final int NAME_NEED_GAP = 8;
+    private static final String ELLIPSIS = "...";
     private static final int DONE_BUTTON = 0;
 
     private final ShortfallView data;
     private final GuiScreen parent;
 
     private int scrollOffset;
+    /** Computed in {@link #initGui}: {@link #MIN_PANEL_WIDTH} widened to fit the longest row. */
+    private int panelWidth = MIN_PANEL_WIDTH;
     private int panelLeft;
     private int panelTop;
     private int panelRight;
@@ -48,9 +60,8 @@ public class GuiMissingResources extends GuiScreen {
     /**
      * A gather count as text in the shared {@link CountFormat} scheme ({@code 1,234}, {@code 12.3K},
      * {@code 9.22e18}); a count the solver saturated at {@link Long#MAX_VALUE} reads "more than ...".
-     * Shared with the JEI gather tooltip ({@code MissingResourcesError}).
      */
-    public static String countText(long count) {
+    private static String countText(long count) {
         return CountFormat.isSaturated(count)
                 ? I18n.format("sprawlcrafting.gather.more_than", CountFormat.format(Long.MAX_VALUE))
                 : CountFormat.format(count);
@@ -65,11 +76,59 @@ public class GuiMissingResources extends GuiScreen {
         return CountFormat.isSaturated(count) ? countText(count) : "× " + countText(count);
     }
 
+    /**
+     * One JEI gather-tooltip line ({@code MissingResourcesError}): {@code 1,234× Name}, but for a
+     * saturated count {@code More than 9.22e18 Name} (its own lang key, for the same reason the
+     * list screen drops the "×": "more than 9.22e18× Name" reads as a garbled multiplier).
+     */
+    public static String lineText(long count, String name) {
+        return CountFormat.isSaturated(count)
+                ? I18n.format("sprawlcrafting.gather.line_more_than", CountFormat.format(Long.MAX_VALUE), name)
+                : I18n.format("sprawlcrafting.gather.line", CountFormat.format(count), name);
+    }
+
+    /** The item name of a list row, with the "(or N alt.)" suffix when several items satisfy it. */
+    private static String nameText(ItemDemand demand, ItemStack icon) {
+        String name = icon.getDisplayName();
+        if (demand.items().size() > 1) {
+            name = name + TextFormatting.DARK_GRAY
+                    + I18n.format("sprawlcrafting.gather.alt", demand.items().size() - 1);
+        }
+        return name;
+    }
+
+    /** {@code text} cut with a trailing ellipsis so it is at most {@code maxWidth} pixels wide. */
+    private String fit(String text, int maxWidth) {
+        if (this.fontRenderer.getStringWidth(text) <= maxWidth) {
+            return text;
+        }
+        int room = Math.max(0, maxWidth - this.fontRenderer.getStringWidth(ELLIPSIS));
+        return this.fontRenderer.trimStringToWidth(text, room) + ELLIPSIS;
+    }
+
+    /**
+     * The panel width that fits the widest row (name + gap + need text) without clipping: never under
+     * {@link #MIN_PANEL_WIDTH}, and past it only as far as the window's side margins allow. A row still
+     * too long for a small window has its name cut short in {@link #drawScreen}.
+     */
+    private int fitPanelWidth() {
+        int widestRow = 0;
+        for (ItemDemand demand : data.demands()) {
+            int name = this.fontRenderer.getStringWidth(nameText(demand, demand.representative().toStack()));
+            int need = this.fontRenderer.getStringWidth(needText(demand.count()));
+            widestRow = Math.max(widestRow, name + NAME_NEED_GAP + need);
+        }
+        int wanted = NAME_INSET + widestRow + NEED_INSET;
+        int available = Math.max(MIN_PANEL_WIDTH, this.width - 2 * SIDE_MARGIN);
+        return Math.max(MIN_PANEL_WIDTH, Math.min(wanted, available));
+    }
+
     @Override
     public void initGui() {
         this.buttonList.clear();
-        panelLeft = (this.width - PANEL_WIDTH) / 2;
-        panelRight = panelLeft + PANEL_WIDTH;
+        panelWidth = fitPanelWidth();
+        panelLeft = (this.width - panelWidth) / 2;
+        panelRight = panelLeft + panelWidth;
         panelTop = Math.max(16, this.height / 2 - 100);
         panelBottom = Math.min(this.height - 16, this.height / 2 + 100);
         listTop = panelTop + (data.approximate() ? 38 : 28);
@@ -125,16 +184,17 @@ public class GuiMissingResources extends GuiScreen {
                 int y = listTop + row * ROW_HEIGHT;
                 ItemStack icon = demand.representative().toStack();
                 renderIcon(icon, panelLeft + 10, y);
-                String name = icon.getDisplayName();
-                if (demand.items().size() > 1) {
-                    name = name + TextFormatting.DARK_GRAY
-                            + I18n.format("sprawlcrafting.gather.alt", demand.items().size() - 1);
-                }
-                this.drawString(this.fontRenderer, name, panelLeft + 32, y + 4, 0xFFFFFF);
                 String need = TextFormatting.GOLD + needText(demand.count());
-                this.drawString(this.fontRenderer, need,
-                        panelRight - 12 - this.fontRenderer.getStringWidth(need), y + 4, 0xFFFFFF);
-                if (mouseX >= panelLeft + 10 && mouseX <= panelLeft + 26 && mouseY >= y && mouseY <= y + 16) {
+                int needLeft = panelRight - NEED_INSET - this.fontRenderer.getStringWidth(need);
+                int nameLeft = panelLeft + NAME_INSET;
+                String fullName = nameText(demand, icon);
+                String name = fit(fullName, needLeft - NAME_NEED_GAP - nameLeft);
+                this.drawString(this.fontRenderer, name, nameLeft, y + 4, 0xFFFFFF);
+                this.drawString(this.fontRenderer, need, needLeft, y + 4, 0xFFFFFF);
+                boolean overIcon = mouseX >= panelLeft + 10 && mouseX <= panelLeft + 26;
+                // A cut-short name is read in full by hovering it: the same item tooltip as the icon's.
+                boolean overCutName = !name.equals(fullName) && mouseX >= nameLeft && mouseX < needLeft;
+                if ((overIcon || overCutName) && mouseY >= y && mouseY <= y + 16) {
                     hovered = icon;
                 }
             }
@@ -219,7 +279,7 @@ public class GuiMissingResources extends GuiScreen {
     }
 
     public int panelWidth() {
-        return PANEL_WIDTH;
+        return panelWidth;
     }
 
     public int panelHeight() {

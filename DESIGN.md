@@ -313,7 +313,9 @@ compression mods saturate at `Long.MAX_VALUE`. Counts are therefore `long` from 
   `9e18+`, so it never reads as an exact figure. It never uses `String.format` /
   `NumberFormat`, so output is identical in every JVM locale and a server-built string reads the
   same on every client. A saturated count reads "more than 9.22e18" via the
-  `sprawlcrafting.gather.more_than` lang key (in every tree's lang file). The gather screen
+  `sprawlcrafting.gather.more_than` lang key (in every tree's lang file); the tooltip's item
+  lines use `sprawlcrafting.gather.line_more_than` ("More than 9.22e18 Iron Ingot") instead of
+  `gather.line` ("3× Iron Ingot"), since "more than 9.22e18× Iron Ingot" reads as a multiplier. The gather screen
   (slot overlay + hover tooltip), the JEI gather tooltip (REI's shows no counts), the plan
   preview, the "Crafting X - N component steps" chat line and the progress toast all use it.
 - **26.x wire (`ShortfallPayload`):** its layout (VarInt counts, no saturated flag) is frozen —

@@ -90,9 +90,8 @@ public class MissingResourcesError implements IRecipeTransferError {
                         + I18n.format("sprawlcrafting.gather.alt", demand.items().size() - 1);
             }
             out.add(TextFormatting.WHITE
-                    + I18n.format("sprawlcrafting.gather.line",
-                            com.legoj15.sprawlcrafting.forge.client.GuiMissingResources.countText(demand.count()),
-                            TextFormatting.GRAY + name));
+                    + com.legoj15.sprawlcrafting.forge.client.GuiMissingResources.lineText(
+                            demand.count(), TextFormatting.GRAY + name));
             shown++;
         }
         if (shortfall.approximate()) {
