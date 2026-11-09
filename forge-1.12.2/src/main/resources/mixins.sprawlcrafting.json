@@ -9,6 +9,8 @@
 	"client": [
 		"GuiButtonRecipeMixin",
 		"GuiRecipeBookMixin",
+		"GuiRecipeOverlayButtonAccessor",
+		"GuiRecipeOverlayButtonMixin",
 		"RecipeListMixin"
 	],
 	"server": []

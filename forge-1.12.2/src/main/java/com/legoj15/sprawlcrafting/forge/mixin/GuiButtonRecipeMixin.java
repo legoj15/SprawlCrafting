@@ -1,5 +1,8 @@
 package com.legoj15.sprawlcrafting.forge.mixin;
 
+import java.util.ArrayList;
+import java.util.List;
+
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -8,15 +11,14 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 import com.legoj15.sprawlcrafting.forge.client.ClientPlanCache;
+import com.legoj15.sprawlcrafting.forge.client.RecipeBookHighlight;
 import com.legoj15.sprawlcrafting.forge.craft.CraftPlanner;
 import com.legoj15.sprawlcrafting.forge.craft.GridContext;
 
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.Gui;
 import net.minecraft.client.gui.GuiButton;
 import net.minecraft.client.gui.recipebook.GuiButtonRecipe;
 import net.minecraft.client.gui.recipebook.RecipeList;
-import net.minecraft.client.renderer.GlStateManager;
 import net.minecraft.item.crafting.IRecipe;
 
 /**
@@ -41,8 +43,6 @@ import net.minecraft.item.crafting.IRecipe;
 @Mixin(GuiButtonRecipe.class)
 public class GuiButtonRecipeMixin {
 
-    private static final int OUTLINE_COLOR = 0xFFE6D24D;
-
     /** Frame selection: treat a deferred recipe as craftable so vanilla draws the grey frame. */
     @Redirect(
             method = "drawButton",
@@ -61,7 +61,7 @@ public class GuiButtonRecipeMixin {
             return;
         }
         if (isDisplayedRecipeDeferred()) {
-            drawOutline(self.x, self.y, self.width, self.height);
+            RecipeBookHighlight.drawOutline(self.x, self.y, self.width, self.height);
         }
     }
 
@@ -103,33 +103,56 @@ public class GuiButtonRecipeMixin {
         }
     }
 
-    /** True if the recipe this button currently shows is craftable only via intermediates. */
-    private boolean isDisplayedRecipeDeferred() {
+    /**
+     * Empty-list guard. {@link RecipeListMixin} lets the craftable-only filter keep a list whose
+     * only makeable recipes are deferred; if one stops being deferred between the book's refresh
+     * and a draw (a station chest emptying, say) the ordered list is empty and vanilla
+     * {@code drawButton} divides by zero ({@code % list.size()}). Fall back to the list's
+     * unlocked, fitting recipes (then all of them) so the button shows something until the next
+     * refresh instead of crashing the client.
+     */
+    @Inject(method = "getOrderedRecipes", at = @At("RETURN"), cancellable = true, require = 0)
+    private void sprawlcrafting$neverEmpty(CallbackInfoReturnable<List<IRecipe>> cir) {
         try {
-            Minecraft mc = Minecraft.getMinecraft();
-            if (mc.player == null) {
-                return false;
+            List<IRecipe> ordered = cir.getReturnValue();
+            if (ordered != null && !ordered.isEmpty()) {
+                return;
             }
-            IRecipe recipe = ((GuiButtonRecipe) (Object) this).getRecipe();
-            if (recipe == null || recipe.getRegistryName() == null) {
-                return false;
+            RecipeList list = ((GuiButtonRecipe) (Object) this).getList();
+            List<IRecipe> fallback = new ArrayList<>(list.getRecipes(false));
+            if (fallback.isEmpty()) {
+                fallback.addAll(list.getRecipes());
             }
-            GridContext grid = GridContext.current(mc.player);
-            return ClientPlanCache.get(mc.player, grid).classify(recipe) == CraftPlanner.Craftability.DEFERRED;
+            if (!fallback.isEmpty()) {
+                cir.setReturnValue(fallback);
+            }
         } catch (Throwable ignored) {
-            // Never let recipe classification break the recipe-book render.
-            return false;
+            // Vanilla result stands.
         }
     }
 
-    private static void drawOutline(int x, int y, int width, int height) {
-        GlStateManager.disableLighting();
-        Gui.drawRect(x, y, x + width, y + 1, OUTLINE_COLOR);
-        Gui.drawRect(x, y + height - 1, x + width, y + height, OUTLINE_COLOR);
-        Gui.drawRect(x, y, x + 1, y + height, OUTLINE_COLOR);
-        Gui.drawRect(x + width - 1, y, x + width, y + height, OUTLINE_COLOR);
-        // Gui.drawRect leaves the GL colour set to OUTLINE_COLOR; vanilla draws the NEXT button's
-        // frame texture assuming white, so restore it or the next frame renders yellow-tinted.
-        GlStateManager.color(1.0F, 1.0F, 1.0F, 1.0F);
+    /**
+     * Index guard for {@code getRecipe} and {@code getToolTipText}: both index the ordered list with
+     * the {@code currentIndex} the last draw computed. If the list shrank since (a status change
+     * processed in the tick before a click), wrap the index instead of throwing.
+     */
+    @Redirect(
+            method = {"getRecipe", "getToolTipText"},
+            at = @At(value = "INVOKE", target = "Ljava/util/List;get(I)Ljava/lang/Object;",
+                    remap = false),
+            require = 0)
+    private Object sprawlcrafting$wrapIndex(List<?> list, int index) {
+        int size = list.size();
+        return size == 0 ? list.get(index) : list.get(Math.floorMod(index, size));
+    }
+
+    /** True if the recipe this button currently shows is craftable only via intermediates. */
+    private boolean isDisplayedRecipeDeferred() {
+        try {
+            return RecipeBookHighlight.isDeferred(((GuiButtonRecipe) (Object) this).getRecipe());
+        } catch (Throwable ignored) {
+            // getRecipe() indexes the ordered list; never let it break the recipe-book render.
+            return false;
+        }
     }
 }
