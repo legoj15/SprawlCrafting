@@ -335,7 +335,7 @@ public final class CraftExecutor {
         }
         if (recipe instanceof net.minecraft.world.item.crafting.ShapedRecipe shaped) {
             int recipeWidth = shaped.getWidth();
-            if (recipeWidth > width || shaped.getHeight() > height) {
+            if (recipeWidth <= 0 || recipeWidth > width || shaped.getHeight() > height) {
                 return null;
             }
             //? if >=1.21.11 {
@@ -344,6 +344,9 @@ public final class CraftExecutor {
             //?} else {
             List<Ingredient> pattern = shaped.getIngredients();
             //?}
+            if (pattern.size() > recipeWidth * shaped.getHeight()) {
+                return null;
+            }
             for (int i = 0; i < pattern.size(); i++) {
                 Ingredient ingredient = pattern.get(i);
                 if (ingredient != null && !ingredient.isEmpty()) {
@@ -430,7 +433,8 @@ public final class CraftExecutor {
      * One inventory slot per ingredient ({@code -1} for an empty cell), chosen without mutating
      * anything, or the first ingredient nothing could satisfy. A stack {@link #usableAsIngredient}
      * rejects is chosen only when no acceptable stack matches and {@code ledger} (null: never)
-     * still admits its item; those picks are tallied for {@link Assignment#chargeTo}.
+     * still admits its item. Those picks, and plain picks of an item the ledger still has count
+     * for (never more than it has), are tallied for {@link Assignment#chargeTo}.
      */
     private static Assignment assign(Inventory inventory, List<Ingredient> ingredients, ProducedLedger<Item> ledger) {
         int[] slots = new int[ingredients.size()];
@@ -449,8 +453,14 @@ public final class CraftExecutor {
             reserved[slot]++;
             slots[n] = slot;
             ItemStack stack = inventory.getItem(slot);
-            if (!usableAsIngredient(stack)) {
-                ledgerTakes.merge(stack.getItem(), 1, Integer::sum);
+            if (ledger != null) {
+                int claimed = ledgerTakes.getOrDefault(stack.getItem(), 0);
+                // A refused stack was admitted against this tally already. A plain one is tallied
+                // too while the ledger has count left for its item, so a stale count cannot outlive
+                // the copies it described and later admit the player's own altered stack.
+                if (!usableAsIngredient(stack) || ledger.canTake(stack.getItem(), claimed)) {
+                    ledgerTakes.put(stack.getItem(), claimed + 1);
+                }
             }
         }
         return new Assignment(slots, ledgerTakes, null);

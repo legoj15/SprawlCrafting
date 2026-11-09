@@ -366,7 +366,9 @@ compression mods saturate at `Long.MAX_VALUE`. Counts are therefore `long` from 
   rather than hanging the server thread.
 - **Planned by item identity.** Components / NBT are ignored at plan time; execution
   re-checks with `Ingredient.test` and cancels gracefully on divergence. Damaged, enchanted,
-  and renamed stacks are excluded from both planning and consumption (recipe-book parity).
+  and renamed stacks are excluded from both planning and consumption (recipe-book parity),
+  except that execution may consume such a stack up to the count the running job itself crafted
+  of that item (`ProducedLedger`), because some mods alter an item right after it is inserted.
 - **Per-item crafting remainders.** Recipes overriding `getRemainingItems` (and NeoForge's
   stack-sensitive remainders on modded items) are approximated at the item level.
 - **NeoForge empty-tag placeholder.** Ingredients with empty tags fail at execution

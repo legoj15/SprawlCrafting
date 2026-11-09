@@ -300,8 +300,9 @@ public final class CraftExecutor {
      * One source per ingredient ({@code -1} for a gap: null or {@link Ingredient#EMPTY}) over the
      * pool {@link #buildSources} describes, chosen without mutating anything, or the first
      * ingredient nothing could satisfy. A stack {@link #usableAsIngredient} rejects is chosen only
-     * when no acceptable stack matches and {@code ledger} (null: never) still admits its identity;
-     * those picks are tallied for {@link Assignment#chargeTo}. Package-visible: the final-step
+     * when no acceptable stack matches and {@code ledger} (null: never) still admits its identity.
+     * Those picks, and plain picks of an identity the ledger still has count for (never more than
+     * it has), are tallied for {@link Assignment#chargeTo}. Package-visible: the final-step
      * hand-off ({@link ServerGridPlacer}) lays out the same choice.
      */
     static Assignment assign(EntityPlayer player, List<Ingredient> ingredients, ProducedLedger<ItemKey> ledger) {
@@ -322,10 +323,16 @@ public final class CraftExecutor {
             reserved[idx]++;
             chosen[i] = idx;
             ItemStack stack = sources.get(idx).peek();
-            if (!usableAsIngredient(stack)) {
+            if (ledger != null) {
                 ItemKey key = ledgerKey(stack);
                 Integer taken = ledgerTakes.get(key);
-                ledgerTakes.put(key, taken == null ? 1 : taken + 1);
+                int claimed = taken == null ? 0 : taken;
+                // A refused stack was admitted against this tally already. A plain one is tallied
+                // too while the ledger has count left for its identity, so a stale count cannot
+                // outlive the copies it described and later admit the player's own altered stack.
+                if (!usableAsIngredient(stack) || ledger.canTake(key, claimed)) {
+                    ledgerTakes.put(key, claimed + 1);
+                }
             }
         }
         return new Assignment(sources, chosen, ledgerTakes, null);
@@ -369,11 +376,13 @@ public final class CraftExecutor {
     }
 
     /**
-     * The ledger's identity for a stack: item plus metadata only for subtyped items, because a
-     * damageable item's metadata is its damage, which the alteration may change.
+     * The ledger's identity for a stack: item plus metadata only for subtyped items that are not
+     * damageable, because a damageable item's metadata is its damage, which the alteration may
+     * change.
      */
     static ItemKey ledgerKey(ItemStack stack) {
-        return new ItemKey(stack.getItem(), stack.getHasSubtypes() ? stack.getMetadata() : 0);
+        boolean subtyped = stack.getHasSubtypes() && !stack.getItem().isDamageable();
+        return new ItemKey(stack.getItem(), subtyped ? stack.getMetadata() : 0);
     }
 
     private static int findMatchingSource(List<Source> sources, Ingredient ingredient, int[] reserved,

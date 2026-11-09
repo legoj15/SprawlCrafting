@@ -9,7 +9,8 @@ import java.util.Map;
  * mods alter an item after it lands in the inventory (an inventory-tick hook that enchants every
  * copy), which would make a job refuse the intermediate it just crafted. A stack the filter rejects
  * may still be taken while this ledger has an outstanding count for its identity; each such take is
- * {@linkplain #consumed recorded} against it.
+ * {@linkplain #consumed recorded} against it. Plain takes of an identity with an outstanding count
+ * are recorded too, so a count never outlives the copies it described.
  *
  * <p>Keyed by identity rather than by the exact stack produced because the alteration happens
  * after production: the stack recorded at insertion and the stack found later no longer compare
