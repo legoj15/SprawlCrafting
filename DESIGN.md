@@ -181,7 +181,7 @@ is decided by the node's `gradle.properties` plus `//? if >=1.21.11` branches in
   is checked after a craft, so a burst runs up to one craft past its grant, and charging that
   overshoot would shrink every later player's slice in the fixed loop order (the last pinned to
   one craft per tick); time a burst leaves unused (64-craft cap, step boundary) stays in the
-  window for a burst the count missed, and the window never grants more than 10 ms in total.
+  window for a burst the count missed, and the time charged to the window never exceeds 10 ms.
   The clock is checked after a craft, never before, so every job makes at least one craft per
   eligible tick even with the budget spent (no starvation); the bound is therefore soft (the budget plus at most one
   craft of overshoot per burst), and past roughly 100-200 simultaneous bulk jobs the one-craft floor,

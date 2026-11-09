@@ -306,6 +306,8 @@ if (srgRuntime) {
         archiveClassifier.set("")
         output.set(layout.buildDirectory.file("libs/$jarBaseName-$jarVersion.jar"))
         mappings(rn.mixin.generatedMappings)
+        // Renamer otherwise writes fernflower_abstract_parameter_names.txt into the shipped jar.
+        additionalArgs.add("--disable-abstract-param")
     }
     tasks.named("assemble") { dependsOn(renameJar) }
 }

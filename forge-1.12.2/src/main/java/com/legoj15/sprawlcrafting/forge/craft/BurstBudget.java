@@ -19,8 +19,9 @@ import java.util.function.IntSupplier;
  * overshoot to the shared window would shrink the slice of every player later in the fixed loop order
  * (the last one pinned to the one-craft floor every tick). A burst that ends early (64-craft cap, step
  * boundary) is charged only what it used, and the rest stays in the window for any burst the job count
- * missed (one that starts later in the same tick). The window never hands out more than the budget in
- * total.
+ * missed (one that starts later in the same tick). The time charged to the window never exceeds the
+ * budget; grants are sized from the job count, so their sum stays within it only while that count matches
+ * the bursts that actually run.
  *
  * <p>No starvation: this class only says how long a burst <em>may</em> run. The burst loop in
  * {@code CraftQueueManager} checks the clock after a craft, never before, so a zero grant (budget
