@@ -30,3 +30,12 @@ One line per delegation: agent, lane, outcome, escalations. Used to tune the mod
 
 - Orchestrator: closed #5 #6 #7 #9 #12 (shipped on main); migrated HANDOFF lows to #14-#17; removed forge-1.12.2/todos.md pointer. #2 put on hold by owner (design rule: every source item visible in the open screen).
 - third-party review_final (dgx + glm-5.3) on the ports range 4bcbd34..ed491c2: both "comment", no dupe/loss/wire break; 5 lows, all filed: #10 note (dual case, fuzzed), #18 (slot-alternative backtracking), #11 note (saturated flag after top-up, feasible() batch cap), #19 (reach rescan every tick). glm-5.3 ran a Python port + 3000-case fuzz: high-value lane.
+- Workflow 1 (wf_fbc15d03-335), 5 lanes, each impl -> reviewer (Haiku) -> one escalation:
+  - impl-opus: solver library extraction (com.legoj15:solver 1.0.0, composite build, jar-in-jar per loader, shaded on 1.16.5-forge/1.12.2, jitpack.yml, docs/solver-library.md) e19082b -> reviewer FAIL (high: release gate ran no solver tests; medium: gradlew mode 100644) -> impl-opus fix 4215afd (gate wired + proven by a deliberate break; real-installer boot of nested copy) -> PASS WITH NITS. Orchestrator mistake: my progress commit 9b5e457 swept the agent's staged renames (that sha does not compile).
+  - impl (Sonnet): #15 fernflower txt + update.json/release legacyTrees 4662858 -> PASS WITH NITS (medium: 1.0.3 credited with unshipped 1.16.5/1.20.1) -> impl-opus 35b590c (pre-push release-exists check); orchestrator dropped the unshipped manifest entries.
+  - impl (Sonnet): #16 saturated JEI wording + 1.12.2 gather-screen widening c131926 -> PASS WITH NITS, no escalation.
+  - impl (Sonnet): #17 shared per-tick burst budget 013169f -> FAIL (high: overshoot shrank later players' slices) -> impl-opus fe3d9df (clamped charge, count only bursting jobs, mutant-checked test) -> PASS WITH NITS.
+  - impl-opus: #4 1.12.2 alternates-bubble styling 86fc2cb -> FAIL (high: filter scanned locked recipes -> empty ordered list) -> impl-opus 926d141 -> PASS WITH NITS. Needs in-game check (#8).
+  - All worktree lanes started at a stale base (4bcbd34) and had to ff-merge the session branch first; brief now says so up front.
+  - Follow-ups filed: #20 (1.12.2 confirm click swallowed), #21 (1.12.2 gather title clamp), #22 (shared solver-core/build).
+- Orchestrator: full rebuild of 3da577e green (solver-core, 14 root nodes, legacy-1.16.5, forge-1.12.2); no fernflower txt in any Forge jar.
