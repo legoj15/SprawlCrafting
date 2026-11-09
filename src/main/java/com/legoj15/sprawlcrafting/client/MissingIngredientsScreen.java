@@ -38,8 +38,10 @@ import net.minecraft.client.gui.GuiGraphics;
  */
 public class MissingIngredientsScreen extends Screen {
 
-    private static final int COLS = 9;
+    private static final int MAX_COLS = 9;
     private static final int SLOT = 18;
+    /** Screen margin kept clear on each side when the grid is narrowed to fit a small window. */
+    private static final int SIDE_MARGIN = 10;
     /** Ticks each alternative is shown before cycling to the next (1 second at 20 TPS). */
     private static final int TICKS_PER_CYCLE = 20;
     private static final int TITLE_COLOR = 0xFFFFFFFF;
@@ -51,6 +53,9 @@ public class MissingIngredientsScreen extends Screen {
     private ShortfallView view; // null == still loading (26.x only)
     private final List<Row> rows = new ArrayList<>();
 
+    private int cols = MAX_COLS;
+    /** Horizontal cell width: grows past {@link #SLOT} until the widest count fits beside its neighbours. */
+    private int pitch = SLOT;
     private int gridLeft;
     private int viewportTop;
     private int viewportBottom;
@@ -80,14 +85,28 @@ public class MissingIngredientsScreen extends Screen {
     }
 
     private void layout() {
-        gridLeft = (width - COLS * SLOT) / 2;
+        int widest = 0;
+        for (Row row : rows) {
+            widest = Math.max(widest, font.width(formatCount(row.count())));
+        }
+        pitch = Math.max(SLOT, widest + 2);
+        cols = Mth.clamp((width - 2 * SIDE_MARGIN) / pitch, 1, MAX_COLS);
+        gridLeft = (width - cols * pitch) / 2;
         viewportTop = 40;
         viewportBottom = Math.max(viewportTop + SLOT, height - 40);
         scrollAmount = Mth.clamp(scrollAmount, 0, maxScroll());
     }
 
+    /**
+     * Left edge of the icon for grid {@code index}. The icon sits at the cell's right side because the
+     * count is right-aligned to it and, when wider than the icon, extends leftward into the cell's spare width.
+     */
+    private int iconLeft(int index) {
+        return gridLeft + (index % cols) * pitch + pitch - SLOT + 1;
+    }
+
     private int contentHeight() {
-        return ((rows.size() + COLS - 1) / COLS) * SLOT;
+        return ((rows.size() + cols - 1) / cols) * SLOT;
     }
 
     private double maxScroll() {
@@ -149,13 +168,13 @@ public class MissingIngredientsScreen extends Screen {
 
     /** The demand index under the cursor (accounting for scroll + viewport clip), or -1. */
     private int hoveredIndex(double mouseX, double mouseY) {
-        if (view == null || mouseX < gridLeft || mouseX >= gridLeft + COLS * SLOT
+        if (view == null || mouseX < gridLeft || mouseX >= gridLeft + cols * pitch
                 || mouseY < viewportTop || mouseY >= viewportBottom) {
             return -1;
         }
-        int col = (int) ((mouseX - gridLeft) / SLOT);
+        int col = (int) ((mouseX - gridLeft) / pitch);
         int row = (int) ((mouseY - viewportTop + scrollAmount) / SLOT);
-        int index = row * COLS + col;
+        int index = row * cols + col;
         return index >= 0 && index < rows.size() ? index : -1;
     }
 
@@ -171,9 +190,8 @@ public class MissingIngredientsScreen extends Screen {
         if (index < 0) {
             return null;
         }
-        int x = gridLeft + (index % COLS) * SLOT + 1;
-        int y = viewportTop + (index / COLS) * SLOT - (int) Math.round(scrollAmount) + 1;
-        return new Rect2i(x, y, 16, 16);
+        int y = viewportTop + (index / cols) * SLOT - (int) Math.round(scrollAmount) + 1;
+        return new Rect2i(iconLeft(index), y, 16, 16);
     }
 
     /** Slot-overlay count: at most four characters ({@code 999}, {@code 1.2K}, {@code 9e18}); {@code 9e18+} when saturated. */
@@ -238,18 +256,18 @@ public class MissingIngredientsScreen extends Screen {
             guiGraphics.centeredText(this.font, emptyMessage(), width / 2, viewportTop + 20, MUTED_COLOR);
             return;
         }
-        guiGraphics.enableScissor(gridLeft, viewportTop, gridLeft + COLS * SLOT, viewportBottom);
+        guiGraphics.enableScissor(gridLeft, viewportTop, gridLeft + cols * pitch, viewportBottom);
         int scroll = (int) Math.round(scrollAmount);
         for (int i = 0; i < rows.size(); i++) {
-            int x = gridLeft + (i % COLS) * SLOT;
-            int y = viewportTop + (i / COLS) * SLOT - scroll;
+            int x = iconLeft(i);
+            int y = viewportTop + (i / cols) * SLOT - scroll;
             if (y + SLOT <= viewportTop || y >= viewportBottom) {
                 continue;
             }
             Row row = rows.get(i);
             ItemStack shown = displayed(row);
-            guiGraphics.fakeItem(shown, x + 1, y + 1);
-            guiGraphics.itemDecorations(this.font, shown, x + 1, y + 1, formatCount(row.count()));
+            guiGraphics.fakeItem(shown, x, y + 1);
+            guiGraphics.itemDecorations(this.font, shown, x, y + 1, formatCount(row.count()));
         }
         guiGraphics.disableScissor();
         if (view.approximate()) {
@@ -282,18 +300,18 @@ public class MissingIngredientsScreen extends Screen {
             guiGraphics.drawCenteredString(this.font, emptyMessage(), width / 2, viewportTop + 20, MUTED_COLOR);
             return;
         }
-        guiGraphics.enableScissor(gridLeft, viewportTop, gridLeft + COLS * SLOT, viewportBottom);
+        guiGraphics.enableScissor(gridLeft, viewportTop, gridLeft + cols * pitch, viewportBottom);
         int scroll = (int) Math.round(scrollAmount);
         for (int i = 0; i < rows.size(); i++) {
-            int x = gridLeft + (i % COLS) * SLOT;
-            int y = viewportTop + (i / COLS) * SLOT - scroll;
+            int x = iconLeft(i);
+            int y = viewportTop + (i / cols) * SLOT - scroll;
             if (y + SLOT <= viewportTop || y >= viewportBottom) {
                 continue;
             }
             Row row = rows.get(i);
             ItemStack shown = displayed(row);
-            guiGraphics.renderFakeItem(shown, x + 1, y + 1);
-            guiGraphics.renderItemDecorations(this.font, shown, x + 1, y + 1, formatCount(row.count()));
+            guiGraphics.renderFakeItem(shown, x, y + 1);
+            guiGraphics.renderItemDecorations(this.font, shown, x, y + 1, formatCount(row.count()));
         }
         guiGraphics.disableScissor();
         if (view.approximate()) {
