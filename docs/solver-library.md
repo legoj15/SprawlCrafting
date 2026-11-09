@@ -1,6 +1,6 @@
 # Solver library (`com.legoj15:solver`) — agent notes
 
-The Minecraft-free crafting planner (`RecipeGraphSolver`, `PlannedStep`, `ProducedLedger`, `UndoMap`,
+The Minecraft-free crafting planner (`RecipeGraphSolver`, `PlannedStep`, `ProducedLedger`, `LedgerTally`, `UndoMap`,
 `CountFormat`; package `com.legoj15.solver`) is a plain-Java library built from `solver-core/`. Every
 SprawlCrafting build depends on it and bundles it; a second mod (MegaBlockBot) can do the same.
 
@@ -19,7 +19,7 @@ From the repo root, on a JDK 21 host (`export JAVA_HOME="/c/Program Files/Java/j
 
     ./gradlew -p solver-core build publishToMavenLocal
 
-`build` runs the JUnit 5 suite (52 tests: `RecipeGraphSolverTest` 49, `ProducedLedgerTest` 3). The
+`build` runs the JUnit 5 suite (55 tests: `RecipeGraphSolverTest` 49, `ProducedLedgerTest` 6). The
 solver suite runs ONLY here now; the mod builds no longer compile or run it. It is still on the
 release gate: the root `fullTestSuite` task depends on the included build's `:check`, and
 `release/Invoke-Release.ps1`'s Test stage runs `./gradlew -p solver-core build` first.
