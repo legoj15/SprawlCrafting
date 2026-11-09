@@ -1,7 +1,11 @@
 package com.legoj15.sprawlcrafting.craft;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+
+import com.legoj15.sprawlcrafting.craft.solver.ProducedLedger;
 
 import net.minecraft.entity.player.PlayerInventory;
 import net.minecraft.entity.player.ServerPlayerEntity;
@@ -12,6 +16,7 @@ import net.minecraft.item.ItemStack;
 import net.minecraft.item.crafting.ICraftingRecipe;
 import net.minecraft.item.crafting.IRecipe;
 import net.minecraft.item.crafting.Ingredient;
+import net.minecraft.item.crafting.ShapedRecipe;
 import net.minecraft.util.ResourceLocation;
 import net.minecraft.util.text.ITextComponent;
 import net.minecraft.util.text.StringTextComponent;
@@ -23,7 +28,8 @@ import net.minecraft.util.text.StringTextComponent;
  *
  * <p>Two invariants shared with {@code CraftPlanner}: only the 36 main inventory slots are read and
  * written (never armor or offhand), and damaged/enchanted/renamed stacks are never consumed, matching
- * what the vanilla recipe book refuses to auto-fill.
+ * what the vanilla recipe book refuses to auto-fill, except up to what the job's {@link ProducedLedger}
+ * says it produced itself (some mods enchant an item on its first inventory tick, after insertion).
  */
 public final class CraftExecutor {
 
@@ -84,7 +90,8 @@ public final class CraftExecutor {
         }
     }
 
-    public static CraftResult craftOnce(ServerPlayerEntity player, ResourceLocation recipeId) {
+    public static CraftResult craftOnce(ServerPlayerEntity player, ResourceLocation recipeId,
+                                        ProducedLedger<Item> ledger) {
         IRecipe<?> recipe = RecipeIds.byId(player.getServer().getRecipeManager(), recipeId).orElse(null);
         if (!(recipe instanceof ICraftingRecipe)) {
             return new CraftResult(CraftResult.Kind.RECIPE_GONE, ItemStack.EMPTY, null);
@@ -97,23 +104,18 @@ public final class CraftExecutor {
         // Phase 1: match every ingredient slot to an inventory slot without mutating, so a shortfall
         // discovered at slot N leaves slots 1..N-1 untouched.
         PlayerInventory inventory = player.inventory;
-        List<Integer> chosenSlots = new ArrayList<>();
-        int[] reserved = new int[MAIN_SLOTS];
-        for (Ingredient ingredient : recipe.getIngredients()) {
-            if (ingredient.isEmpty()) {
-                continue;
-            }
-            int slot = findMatchingSlot(inventory, ingredient, reserved);
-            if (slot < 0) {
-                return new CraftResult(CraftResult.Kind.MISSING_INGREDIENT, ItemStack.EMPTY, describe(ingredient));
-            }
-            reserved[slot]++;
-            chosenSlots.add(slot);
+        Assignment assignment = assign(inventory, recipe.getIngredients(), ledger);
+        if (assignment.missing != null) {
+            return new CraftResult(CraftResult.Kind.MISSING_INGREDIENT, ItemStack.EMPTY,
+                    describe(assignment.missing));
         }
 
         // Phase 2: apply — consume, return remainders, insert the result.
         List<ItemStack> remainders = new ArrayList<>();
-        for (int slot : chosenSlots) {
+        for (int slot : assignment.slots) {
+            if (slot < 0) {
+                continue;
+            }
             ItemStack stack = inventory.getItem(slot);
             Item item = stack.getItem();
             stack.shrink(1);
@@ -125,11 +127,13 @@ public final class CraftExecutor {
             }
         }
         inventory.setChanged();
+        assignment.chargeTo(ledger);
         for (ItemStack remainder : remainders) {
             insertIntoMainInventory(player, remainder);
         }
         ItemStack crafted = result.copy();
         insertIntoMainInventory(player, result.copy());
+        ledger.produced(crafted.getItem(), crafted.getCount());
         return new CraftResult(CraftResult.Kind.SUCCESS, crafted, null);
     }
 
@@ -139,8 +143,13 @@ public final class CraftExecutor {
      * which relocates anything in the grid back to the inventory, lays out the recipe, and silently
      * no-ops when the grid can't be cleared. Like vanilla it only fills unlocked recipes. Success is
      * confirmed by checking the result slot shows this recipe's output; otherwise the caller auto-crafts.
+     *
+     * <p>Vanilla's placement counts only undamaged, unenchanted, unnamed stacks, so when the recipe
+     * needs an intermediate the job crafted that has since been altered (see {@link ProducedLedger}),
+     * the grid is laid out here instead, from the same assignment {@link #craftOnce} would consume.
      */
-    public static FillOutcome tryFillFinalGrid(ServerPlayerEntity player, ResourceLocation recipeId) {
+    public static FillOutcome tryFillFinalGrid(ServerPlayerEntity player, ResourceLocation recipeId,
+                                               ProducedLedger<Item> ledger) {
         IRecipe<?> recipe = RecipeIds.byId(player.getServer().getRecipeManager(), recipeId).orElse(null);
         if (!(recipe instanceof ICraftingRecipe)) {
             return new FillOutcome(FillOutcome.Kind.RECIPE_GONE, ItemStack.EMPTY);
@@ -157,7 +166,13 @@ public final class CraftExecutor {
         if (!(menu instanceof RecipeBookContainer)) {
             return new FillOutcome(FillOutcome.Kind.FALLBACK, ItemStack.EMPTY);
         }
-        ((RecipeBookContainer<?>) menu).handlePlacement(false, recipe, player);
+        RecipeBookContainer<?> recipeBookMenu = (RecipeBookContainer<?>) menu;
+        List<Ingredient> cells = gridLayout(recipe, recipeBookMenu.getGridWidth(), recipeBookMenu.getGridHeight());
+        if (cells != null && assign(player.inventory, cells, null).missing != null
+                && assign(player.inventory, cells, ledger).missing == null) {
+            return placeFromLedger(player, menu, cells, expected, ledger);
+        }
+        recipeBookMenu.handlePlacement(false, recipe, player);
 
         ItemStack result = menu.getSlot(RESULT_SLOT).getItem();
         if (result.isEmpty() || !ItemStack.isSame(result, expected)) {
@@ -165,9 +180,95 @@ public final class CraftExecutor {
         }
         // We mutated the menu outside any client click, from the end-of-tick hook (after this tick's
         // broadcastChanges already ran). Push every slot now so the grid renders complete immediately.
+        syncWholeMenu(player, menu);
+        return new FillOutcome(FillOutcome.Kind.FILLED, result.copy());
+    }
+
+    private static void syncWholeMenu(ServerPlayerEntity player, Container menu) {
         menu.broadcastChanges();
         player.refreshContainer(menu, menu.getItems());
+    }
+
+    /**
+     * Lays one craft into the open grid from {@link #assign}'s choice of slots, ledger-admitted stacks
+     * included, after returning whatever the grid held. Puts everything back and reports FALLBACK
+     * unless the result slot then shows {@code expected}.
+     */
+    private static FillOutcome placeFromLedger(ServerPlayerEntity player, Container menu, List<Ingredient> cells,
+                                               ItemStack expected, ProducedLedger<Item> ledger) {
+        if (!returnGridToInventory(player, menu, cells.size())) {
+            return new FillOutcome(FillOutcome.Kind.FALLBACK, ItemStack.EMPTY);
+        }
+        PlayerInventory inventory = player.inventory;
+        Assignment assignment = assign(inventory, cells, ledger);
+        if (assignment.missing != null) {
+            return new FillOutcome(FillOutcome.Kind.FALLBACK, ItemStack.EMPTY);
+        }
+        int[] slots = assignment.slots;
+        for (int cell = 0; cell < slots.length; cell++) {
+            if (slots[cell] < 0) {
+                continue;
+            }
+            ItemStack stack = inventory.getItem(slots[cell]);
+            ItemStack one = copyWithCount(stack, 1);
+            stack.shrink(1);
+            if (stack.isEmpty()) {
+                inventory.setItem(slots[cell], ItemStack.EMPTY);
+            }
+            menu.getSlot(RESULT_SLOT + 1 + cell).set(one);
+        }
+        inventory.setChanged();
+        ItemStack result = menu.getSlot(RESULT_SLOT).getItem();
+        if (result.isEmpty() || !ItemStack.isSame(result, expected)) {
+            returnGridToInventory(player, menu, cells.size());
+            syncWholeMenu(player, menu);
+            return new FillOutcome(FillOutcome.Kind.FALLBACK, ItemStack.EMPTY);
+        }
+        assignment.chargeTo(ledger);
+        syncWholeMenu(player, menu);
         return new FillOutcome(FillOutcome.Kind.FILLED, result.copy());
+    }
+
+    /**
+     * The recipe's ingredient for each cell of a {@code width}×{@code height} grid, row-major, null for
+     * an empty cell: a shaped recipe anchored top-left, anything else in order. Null when the recipe
+     * does not fit. A modded shape that is not a {@link ShapedRecipe} may land wrong;
+     * {@link #placeFromLedger} catches that by checking the result.
+     */
+    private static List<Ingredient> gridLayout(IRecipe<?> recipe, int width, int height) {
+        if (width < 2 || height < 2) {
+            return null;
+        }
+        List<Ingredient> cells = new ArrayList<>();
+        for (int i = 0; i < width * height; i++) {
+            cells.add(null);
+        }
+        List<Ingredient> ingredients = recipe.getIngredients();
+        if (recipe instanceof ShapedRecipe) {
+            ShapedRecipe shaped = (ShapedRecipe) recipe;
+            int recipeWidth = shaped.getWidth();
+            if (recipeWidth > width || shaped.getHeight() > height) {
+                return null;
+            }
+            for (int i = 0; i < ingredients.size(); i++) {
+                Ingredient ingredient = ingredients.get(i);
+                if (!ingredient.isEmpty()) {
+                    cells.set((i / recipeWidth) * width + i % recipeWidth, ingredient);
+                }
+            }
+            return cells;
+        }
+        int cell = 0;
+        for (Ingredient ingredient : ingredients) {
+            if (ingredient.isEmpty()) {
+                continue;
+            }
+            if (cell >= cells.size()) {
+                return null;
+            }
+            cells.set(cell++, ingredient);
+        }
+        return cells;
     }
 
     /**
@@ -189,8 +290,16 @@ public final class CraftExecutor {
         if (width < 2 || height < 2) {
             return; // furnace-style menu: no crafting grid
         }
-        // Grid input cells are menu slots 1..gridSlots (result is slot 0) in both crafting menus.
-        int gridSlots = width * height;
+        returnGridToInventory(player, menu, width * height);
+    }
+
+    /**
+     * Moves the grid's contents into the main inventory, or leaves them all in place when they would
+     * not all fit. Grid input cells are menu slots 1..gridSlots (result is slot 0) in both crafting menus.
+     *
+     * @return true when the grid is empty afterwards
+     */
+    private static boolean returnGridToInventory(ServerPlayerEntity player, Container menu, int gridSlots) {
         List<ItemStack> contents = new ArrayList<>();
         for (int i = 1; i <= gridSlots; i++) {
             ItemStack stack = menu.getSlot(i).getItem();
@@ -198,8 +307,11 @@ public final class CraftExecutor {
                 contents.add(stack.copy());
             }
         }
-        if (contents.isEmpty() || !fitsInMainInventory(player.inventory, contents)) {
-            return;
+        if (contents.isEmpty()) {
+            return true;
+        }
+        if (!fitsInMainInventory(player.inventory, contents)) {
+            return false;
         }
         for (int i = 1; i <= gridSlots; i++) {
             menu.getSlot(i).set(ItemStack.EMPTY);
@@ -208,6 +320,7 @@ public final class CraftExecutor {
             insertIntoMainInventory(player, stack);
         }
         menu.broadcastChanges();
+        return true;
     }
 
     private static boolean sameItemSameTag(ItemStack a, ItemStack b) {
@@ -258,11 +371,72 @@ public final class CraftExecutor {
         return !stack.isDamaged() && !stack.isEnchanted() && !stack.hasCustomHoverName();
     }
 
-    private static int findMatchingSlot(PlayerInventory inventory, Ingredient ingredient, int[] reserved) {
+    /**
+     * One inventory slot per ingredient ({@code -1} for an empty cell), chosen without mutating anything,
+     * or the first ingredient nothing could satisfy. A stack {@link #usableAsIngredient} rejects is chosen
+     * only when no acceptable stack matches and {@code ledger} (null: never) still admits its item; those
+     * picks are tallied for {@link Assignment#chargeTo}.
+     */
+    private static Assignment assign(PlayerInventory inventory, List<Ingredient> ingredients,
+                                     ProducedLedger<Item> ledger) {
+        int[] slots = new int[ingredients.size()];
+        int[] reserved = new int[MAIN_SLOTS];
+        Map<Item, Integer> ledgerTakes = new HashMap<>();
+        for (int n = 0; n < slots.length; n++) {
+            Ingredient ingredient = ingredients.get(n);
+            if (ingredient == null || ingredient.isEmpty()) {
+                slots[n] = -1;
+                continue;
+            }
+            int slot = findMatchingSlot(inventory, ingredient, reserved, ledger, ledgerTakes);
+            if (slot < 0) {
+                return new Assignment(slots, ledgerTakes, ingredient);
+            }
+            reserved[slot]++;
+            slots[n] = slot;
+            ItemStack stack = inventory.getItem(slot);
+            if (!usableAsIngredient(stack)) {
+                ledgerTakes.merge(stack.getItem(), 1, Integer::sum);
+            }
+        }
+        return new Assignment(slots, ledgerTakes, null);
+    }
+
+    private static final class Assignment {
+        final int[] slots;
+        final Map<Item, Integer> ledgerTakes;
+        final Ingredient missing;
+
+        Assignment(int[] slots, Map<Item, Integer> ledgerTakes, Ingredient missing) {
+            this.slots = slots;
+            this.ledgerTakes = ledgerTakes;
+            this.missing = missing;
+        }
+
+        void chargeTo(ProducedLedger<Item> ledger) {
+            for (Map.Entry<Item, Integer> take : ledgerTakes.entrySet()) {
+                ledger.consumed(take.getKey(), take.getValue());
+            }
+        }
+    }
+
+    private static int findMatchingSlot(PlayerInventory inventory, Ingredient ingredient, int[] reserved,
+                                        ProducedLedger<Item> ledger, Map<Item, Integer> ledgerTakes) {
         for (int i = 0; i < MAIN_SLOTS; i++) {
             ItemStack stack = inventory.getItem(i);
             if (!stack.isEmpty() && stack.getCount() - reserved[i] > 0
                     && usableAsIngredient(stack) && ingredient.test(stack)) {
+                return i;
+            }
+        }
+        if (ledger == null) {
+            return -1;
+        }
+        for (int i = 0; i < MAIN_SLOTS; i++) {
+            ItemStack stack = inventory.getItem(i);
+            if (!stack.isEmpty() && stack.getCount() - reserved[i] > 0 && !usableAsIngredient(stack)
+                    && ledger.canTake(stack.getItem(), ledgerTakes.getOrDefault(stack.getItem(), 0))
+                    && ingredient.test(stack)) {
                 return i;
             }
         }

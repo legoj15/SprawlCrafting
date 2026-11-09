@@ -98,7 +98,8 @@ public final class CraftQueueManager {
             // it. Any case that can't cleanly hand off falls through to the normal auto-craft below.
             if (job.isFinalStep() && job.isLastCraftOfStep() && canHandOff(player, job.currentStep())) {
                 // instanceof chains rather than a pattern-matching switch: the 1.20.1 node targets Java 17.
-                CraftExecutor.FillOutcome fill = CraftExecutor.tryFillFinalGrid(player, job.currentStep().recipeId());
+                CraftExecutor.FillOutcome fill = CraftExecutor.tryFillFinalGrid(player, job.currentStep().recipeId(),
+                        job.produced());
                 if (fill instanceof CraftExecutor.FillOutcome.Filled filled) {
                     job.onCraftPerformed();
                     ACTIVE.remove(player.getUUID());
@@ -116,7 +117,7 @@ public final class CraftQueueManager {
                 }
                 // FillOutcome.Fallback: couldn't hand off (recipe locked, grid uncleanable, …) — auto-craft below.
             }
-            CraftExecutor.CraftResult craft = CraftExecutor.craftOnce(player, job.currentStep().recipeId());
+            CraftExecutor.CraftResult craft = CraftExecutor.craftOnce(player, job.currentStep().recipeId(), job.produced());
             if (craft instanceof CraftExecutor.CraftResult.Success success) {
                 lastCrafted = success.crafted();
                 boolean stepDone = job.onCraftPerformed();

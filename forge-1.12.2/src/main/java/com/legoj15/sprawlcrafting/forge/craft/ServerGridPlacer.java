@@ -4,6 +4,8 @@ import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 
+import com.legoj15.sprawlcrafting.craft.solver.ProducedLedger;
+
 import it.unimi.dsi.fastutil.ints.IntArrayList;
 import it.unimi.dsi.fastutil.ints.IntList;
 import net.minecraft.client.util.RecipeItemHelper;
@@ -132,8 +134,13 @@ public final class ServerGridPlacer {
      * matches the recipe afterwards — reverting and reporting {@link HandOffResult#FALLBACK} on
      * any doubt, so the engine's auto-craft (the only place the item is granted) still runs and
      * nothing is ever lost.
+     *
+     * <p>The vanilla counting skips damaged, enchanted, and renamed stacks, so when the craft
+     * needs an intermediate the job made that has since been altered (see {@link ProducedLedger}),
+     * {@link #placeFromLedger} lays out the executor's own assignment instead.
      */
-    public static HandOffResult placeFinalCraft(EntityPlayerMP player, IRecipe recipe) {
+    public static HandOffResult placeFinalCraft(EntityPlayerMP player, IRecipe recipe,
+                                                ProducedLedger<ItemKey> ledger) {
         if (player.isSpectator()) {
             return HandOffResult.FALLBACK;
         }
@@ -149,7 +156,7 @@ public final class ServerGridPlacer {
         accountStationChest(player, helper);
         IntList packed = new IntArrayList();
         if (!helper.canCraft(recipe, packed, 1)) {
-            return HandOffResult.FALLBACK;
+            return placeFromLedger(player, container, grid, recipe, ledger);
         }
         returnGridToInventory(player, grid);
         distribute(player, grid, recipe, 1, packed);
@@ -163,6 +170,82 @@ public final class ServerGridPlacer {
         }
         finishSync(player, container);
         return HandOffResult.FILLED;
+    }
+
+    /**
+     * The hand-off for a craft the vanilla counting refused only because it needs filter-rejected
+     * stacks the ledger admits: lays {@link CraftExecutor#assign}'s choice into the grid cell by
+     * cell, then verifies and reverts exactly like {@link #placeFinalCraft}. Any other refusal
+     * (genuinely missing materials, NBT-sensitive ingredients the vanilla path handles) stays a
+     * FALLBACK, untouched.
+     */
+    private static HandOffResult placeFromLedger(EntityPlayerMP player, Container container, Grid grid,
+                                                 IRecipe recipe, ProducedLedger<ItemKey> ledger) {
+        List<Ingredient> cells = gridLayout(recipe, grid.width(), grid.height());
+        if (cells == null || CraftExecutor.assign(player, cells, null).complete()
+                || !CraftExecutor.assign(player, cells, ledger).complete()) {
+            return HandOffResult.FALLBACK;
+        }
+        returnGridToInventory(player, grid);
+        CraftExecutor.Assignment assignment = CraftExecutor.assign(player, cells, ledger);
+        if (!assignment.complete()) {
+            finishSync(player, container);
+            return HandOffResult.FALLBACK;
+        }
+        for (int cell = 0; cell < cells.size(); cell++) {
+            ItemStack one = assignment.take(cell);
+            if (!one.isEmpty()) {
+                grid.cell(cell).putStack(one);
+            }
+        }
+        container.onCraftMatrixChanged(grid.matrix);
+        if (!recipe.matches(grid.matrix, player.world)) {
+            returnGridToInventory(player, grid);
+            finishSync(player, container);
+            return HandOffResult.FALLBACK;
+        }
+        assignment.chargeTo(ledger);
+        finishSync(player, container);
+        return HandOffResult.FILLED;
+    }
+
+    /**
+     * The recipe's ingredient for each matrix cell of a {@code width}x{@code height} grid,
+     * row-major, null for an empty cell: an {@link IShapedRecipe} anchored top-left (as
+     * {@link #distribute} lays it), anything else in order. Null when the recipe does not fit.
+     */
+    private static List<Ingredient> gridLayout(IRecipe recipe, int width, int height) {
+        List<Ingredient> cells = new ArrayList<Ingredient>();
+        for (int i = 0; i < width * height; i++) {
+            cells.add(null);
+        }
+        List<Ingredient> ingredients = recipe.getIngredients();
+        if (recipe instanceof IShapedRecipe) {
+            int recipeWidth = ((IShapedRecipe) recipe).getRecipeWidth();
+            int recipeHeight = ((IShapedRecipe) recipe).getRecipeHeight();
+            if (recipeWidth <= 0 || recipeWidth > width || recipeHeight > height
+                    || ingredients.size() > recipeWidth * recipeHeight) {
+                return null;
+            }
+            for (int i = 0; i < ingredients.size(); i++) {
+                Ingredient ingredient = ingredients.get(i);
+                if (ingredient != Ingredient.EMPTY) {
+                    cells.set((i / recipeWidth) * width + i % recipeWidth, ingredient);
+                }
+            }
+            return cells;
+        }
+        int cell = 0;
+        for (Ingredient ingredient : ingredients) {
+            if (ingredient == Ingredient.EMPTY) {
+                continue;
+            }
+            if (cell >= cells.size()) {
+                return null;
+            }
+            cells.set(cell++, ingredient);
+        }
+        return cells;
     }
 
     /**
