@@ -1,7 +1,10 @@
 # JitPack publishes ONLY the solver library (solver-core/, com.legoj15:solver), not the mod builds.
-# JitPack serves it under its own com.github.* coordinates (check the tag's build log on jitpack.io);
-# see docs/solver-library.md.
+# UNVERIFIED: no tag has been built on jitpack.io yet, so the coordinates JitPack serves it under
+# (JitPack normally rewrites the group to com.github.<user>...) are unconfirmed; read the tag's build
+# log on jitpack.io before pointing a consumer at it. See docs/solver-library.md.
 jdk:
   - openjdk21
 install:
+  # The wrapper is committed executable (git mode 100755); the chmod guards checkouts that drop it.
+  - chmod +x ./gradlew
   - ./gradlew -p solver-core publishToMavenLocal

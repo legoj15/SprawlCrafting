@@ -20,12 +20,14 @@ From the repo root, on a JDK 21 host (`export JAVA_HOME="/c/Program Files/Java/j
     ./gradlew -p solver-core build publishToMavenLocal
 
 `build` runs the JUnit 5 suite (52 tests: `RecipeGraphSolverTest` 49, `ProducedLedgerTest` 3). The
-solver suite runs ONLY here now; the mod builds no longer compile or run it.
+solver suite runs ONLY here now; the mod builds no longer compile or run it. It is still on the
+release gate: the root `fullTestSuite` task depends on the included build's `:check`, and
+`release/Invoke-Release.ps1`'s Test stage runs `./gradlew -p solver-core build` first.
 
 JitPack: `jitpack.yml` at the repo root publishes just this library (`-p solver-core publishToMavenLocal`
-on JDK 21). JitPack serves it from `https://jitpack.io` under its own `com.github.legoj15...`
-coordinates (not yet verified on a real tag; read the tag's build log on jitpack.io for the exact
-group/artifact before pointing a consumer at it).
+on JDK 21). UNVERIFIED: no tag has been built on jitpack.io yet. JitPack normally serves artifacts
+under its own `com.github.<user>...` group, so the exact coordinates are unknown until a tag's build
+log on jitpack.io shows them; check that before pointing a consumer at it.
 
 ## How the SprawlCrafting builds consume it
 
@@ -58,7 +60,22 @@ Verified 2026-11-09 with a temporary probe that loaded `CountFormat` at mod init
 1.21.1-neoforge and 1.20.1-forge (module `com.legoj15.solver`, game module layer), 1.21.1-forge and
 26.3-forge (boot layer), 26.3-neoforge (app classloader), 1.21.1-fabric / 26.3-fabric / 1.16.5 Fabric
 (Knot), 1.16.5 Forge (app classloader). A consumer mod's dev setup needs the same per-loader wiring.
-Production loading of the NESTED copy (FML's jar-in-jar path) has not been boot-tested yet.
+
+`CommonClass.init` (every modern loader's entrypoint) now resolves `RecipeGraphSolver` and logs
+`SprawlCrafting init on <loader> (<env>); solver library com.legoj15.solver.RecipeGraphSolver <version> loaded`
+at mod init, so ANY boot (dev
+smoke, the production release matrix) fails with `NoClassDefFoundError` if the library is missing from
+that runtime instead of only failing later at the first craft.
+
+Production loading of the NESTED copy, verified 2026-11-09 on real dedicated servers installed from the
+official installers (`--installServer`, headless, built jar alone in `mods/`, nothing else on the
+classpath): NeoForge 21.1.233, Forge 1.21.1-52.1.21, Forge 1.20.1-47.4.29 (JDK 21), NeoForge 26.3.0.99
+and Forge 26.3-66.1.5 (JDK 25) each reached `Done (` and logged the init line above with version
+`1.0.0` (FML: `Found library file "com.legoj15.solver-1.0.0.jar" [... locator: jarinjar]`). The same
+NeoForge 21.1 and Forge 1.21.1 servers also booted with a SECOND jar (`FMLModType: LIBRARY`) nesting its
+own copy of the library under the same identifier and range, the bot-mod situation: both copies were
+scanned, one was loaded, no split-package error. Fabric was not production-tested (Knot loads nested
+jars the same way in dev and production).
 
 ### Windows trap: a lingering daemon locks the library jar
 
@@ -69,7 +86,12 @@ next build fails with "Unable to delete file". forge-1.12.2 runs Gradle 9.5.1 wh
 
 Shading is only acceptable where no other mod nests the library: on Forge/NeoForge with JarJar, FML
 loads a nested plain jar as a JPMS module, and two mods that SHADE the same package crash the game as
-a split package. Two mods that NEST it are deduplicated by FML (highest version inside every range).
+a split package. Two mods that NEST it should be deduplicated: JarJarSelector groups nested jars by
+their metadata identifier (group + artifact), intersects every declaring mod's range and keeps one jar
+(`VERSION_RESOLUTION_FAILED` if the ranges do not intersect). Boot-tested with two nesting jars of the
+same version on NeoForge 21.1 and Forge 1.21.1 (above); mixed versions and non-intersecting ranges
+were not tested. Fabric dedupes by mod id (Loom's generated id `com_legoj15_solver` comes from the
+coordinates); not boot-tested with two mods.
 
 ## A consumer mod (e.g. the bot) depending on it
 
@@ -82,9 +104,10 @@ a composite build. Then, per loader:
 - Forge FG7: apply `net.minecraftforge.jarjar`, `jarJar.register()`, then `implementation(...)` +
   `jarJar.configure("jarJar"("com.legoj15:solver:1.0.0")!!) { setRange("[1.0.0,2.0.0)") }`.
 - Never shade it on a JarJar-era loader (see above). Use the same group/artifact (`com.legoj15:solver`)
-  in jar-in-jar metadata as SprawlCrafting does, or FML cannot deduplicate the two copies; a JitPack
-  build's metadata would carry `com.github.legoj15` instead, so prefer the composite or Maven Local
-  coordinates for anything that ships alongside SprawlCrafting.
+  in jar-in-jar metadata as SprawlCrafting does, or the selector sees two different libraries and
+  loads both (a split package again). A JitPack build would likely carry a `com.github...` group
+  (unverified, see above), so prefer the composite or Maven Local coordinates for anything that ships
+  alongside SprawlCrafting.
 
 ## Version-bump rule
 

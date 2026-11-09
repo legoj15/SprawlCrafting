@@ -20,9 +20,9 @@ import java.util.function.UnaryOperator;
  * already in the inventory or produced by an earlier step. Pure Java — no Minecraft types —
  * so the whole algorithm is unit-testable; {@code CraftPlanner} adapts game types onto it.
  *
- * <p>Authored in Java 8 (plain classes/interfaces, no records or sealed types) because this is
- * the single source of truth compiled into every loader build — including the legacy-Forge
- * 1.12.2 target, whose runtime is Java 8. The public surface (accessor method names, the
+ * <p>Authored in Java 8 (plain classes/interfaces, no records or sealed types) because this
+ * library ({@code com.legoj15:solver}) is the single planner every loader build bundles —
+ * including the legacy-Forge 1.12.2 target, whose runtime is Java 8. The public surface (accessor method names, the
  * {@code Result.Success}/{@code Result.Failure} subtypes) is unchanged from the former record
  * form, so the modern callers and the test suite need no edits.
  *

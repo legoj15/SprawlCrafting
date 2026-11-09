@@ -6,8 +6,8 @@ import java.math.RoundingMode;
 
 /**
  * The one number format every tree uses for item counts in the gather list, its tooltips, the plan
- * preview and the progress toast. Lives here (Minecraft-free, Java 8) because solver-core is the only
- * source compiled into every build.
+ * preview and the progress toast. Lives here (Minecraft-free, Java 8) because this library is the one
+ * piece every build depends on and bundles.
  *
  * <p>Scheme ({@link #format}): plain digits grouped with commas below 10,000 ({@code 9}, {@code 1,234});
  * then three significant digits with a short-scale suffix, trailing zeros dropped ({@code 12.3K},

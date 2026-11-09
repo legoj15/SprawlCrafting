@@ -108,21 +108,35 @@ Test-ScChangelogTags -ChangelogSplit $clSplit -KnownVersions (@($mcSet) + $manif
 # ── 0. Pre-release verification (gates the whole release) ─────────────────────
 # The full suite must pass before ANY publish. Two trees on two JDKs (modern needs 21; the legacy
 # 1.12.2 Forge build needs 25 — they can't share one Gradle host), so this stage orchestrates both:
-#   1. legacy Forge tree (JDK 25 via legacyForge.javaHome): unit tests + reobf jar — built FIRST so the
-#      boot matrix's 1.12.2-forge leg finds the jar it stages;
-#   2. modern tree (ambient JAVA_HOME = JDK 21): ./gradlew fullTestSuite = every node's unit tests (via
-#      buildAndCollect) + the production boot/connect matrix (auto-skips if the testing/ harness absent).
+#   0. solver library (ambient JAVA_HOME = JDK 21): ./gradlew -p solver-core build = the planner's JUnit
+#      suite on its Java 8 toolchain. Every shipped jar bundles this library and its tests run ONLY
+#      there, so it goes first: a planner regression aborts in seconds, before the slow trees build;
+#   1. legacy Forge tree (JDK 25 via legacyForge.javaHome): reobf jar (its `test` task has no sources
+#      of its own since the solver suite moved to solver-core) — built FIRST so the boot matrix's
+#      1.12.2-forge leg finds the jar it stages;
+#   2. modern tree (ambient JAVA_HOME = JDK 21): ./gradlew fullTestSuite = solver-core :check again
+#      (up to date after step 0) + every node's unit tests (via buildAndCollect) + the production
+#      boot/connect matrix (auto-skips if the testing/ harness absent).
 # A non-zero exit anywhere aborts before the manifest is even rewritten. -SkipTests bypasses (ships
 # UNVERIFIED jars). Resuming with -Only <publish stages> omits Test, so a half-published release is not
 # re-gated on the slow suite.
 if ((Want 'Test') -and -not $SkipTests) {
     Write-ScStep 'Pre-release verification (full test suite)'
     if (-not $Execute) {
+        Write-ScDry 'would run the solver library suite: ./gradlew -p solver-core build (JUnit on a Java 8 toolchain)'
         Write-ScDry 'would verify the legacy Forge tree (JDK 25): forge-1.12.2/gradlew.bat test reobfJar'
-        Write-ScDry 'would run the modern tree: ./gradlew fullTestSuite (unit tests via buildAndCollect + boot/connect matrix; matrix auto-skips if testing/ absent)'
-        Write-ScDry 'a non-zero exit from either would ABORT the release before any publish.'
+        Write-ScDry 'would run the modern tree: ./gradlew fullTestSuite (solver-core check + unit tests via buildAndCollect + boot/connect matrix; matrix auto-skips if testing/ absent)'
+        Write-ScDry 'a non-zero exit from any of them would ABORT the release before any publish.'
     } else {
-        # 1. Legacy Forge tree FIRST — its reobf jar feeds the matrix's 1.12.2-forge leg.
+        # 0. Solver library suite FIRST — every shipped jar bundles it, and it is the fastest gate.
+        Write-ScStep 'Verify solver library (./gradlew -p solver-core build)'
+        Push-Location $root
+        try {
+            & (Join-Path $root 'gradlew.bat') '-p' 'solver-core' 'build' '--console=plain'
+            if ($LASTEXITCODE -ne 0) { throw "solver-core build/tests FAILED (exit $LASTEXITCODE) — release aborted before any publish. Fix the solver, or pass -SkipTests to bypass (ships unverified jars)." }
+        } finally { Pop-Location }
+        Write-ScOk 'Solver library verified (JUnit suite).'
+        # 1. Legacy Forge tree — its reobf jar feeds the matrix's 1.12.2-forge leg.
         foreach ($ln in @($nodes | Where-Object { $_.IsLegacy })) {
             $lnDir = Join-Path $root $ln.BuildDir
             Write-ScStep "Verify legacy $($ln.McVersion) ($($ln.BuildDir)/gradlew test $($ln.BuildTask), JDK 25)"
@@ -139,11 +153,11 @@ if ((Want 'Test') -and -not $SkipTests) {
                 Pop-Location
                 $env:JAVA_HOME = $savedJavaHome
             }
-            Write-ScOk "Legacy $($ln.McVersion) verified (unit tests + reobf jar)."
+            Write-ScOk "Legacy $($ln.McVersion) verified (reobf jar built)."
         }
         # 2. Modern tree: per-node unit tests (via buildAndCollect) + the boot/connect matrix.
         Write-ScStep 'Verify modern tree (./gradlew fullTestSuite)'
-        Write-ScInfo 'unit tests (via buildAndCollect) + boot/connect matrix. The matrix opens real MC windows (Prism must be CLOSED, Server1 reachable) and is slow (~30 min).'
+        Write-ScInfo 'solver-core check + unit tests (via buildAndCollect) + boot/connect matrix. The matrix opens real MC windows (Prism must be CLOSED, Server1 reachable) and is slow (~30 min).'
         Push-Location $root
         try {
             & (Join-Path $root 'gradlew.bat') fullTestSuite '--console=plain'

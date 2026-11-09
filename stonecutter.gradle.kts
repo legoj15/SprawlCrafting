@@ -239,16 +239,17 @@ tasks.register<Exec>("runReleaseMatrix") {
 }
 
 // ─── Full pre-release verification (modern tree) ─────────────────────────────
-// One command for the modern tree: every node's unit tests (run by buildAndCollect's per-node build)
-// + the production boot+connect matrix. buildAndCollect is listed here (not left to the script) so the
-// OUTER Gradle builds the fresh jars — the matrix then runs with -SkipBuild and never starts a nested
-// buildAndCollect that would deadlock on this build's project lock.
-// NOTE: the legacy 1.12.2 Forge jar + its solver tests live in the SEPARATE forge-1.12.2 build (host
-// JDK 25); Gradle can't span both JDKs in one invocation, so the release script's Test stage builds +
-// tests that tree FIRST, then runs this. Standalone, build the Forge jar yourself first if you want
-// the 1.12.2-forge matrix leg to find it.
+// One command for the modern tree: the solver library's JUnit suite (solver-core is an included build;
+// its tests run ONLY there, on a Java 8 toolchain, since the node builds no longer compile them), every
+// node's own unit tests (run by buildAndCollect's per-node build) + the production boot+connect matrix.
+// buildAndCollect is listed here (not left to the script) so the OUTER Gradle builds the fresh jars —
+// the matrix then runs with -SkipBuild and never starts a nested buildAndCollect that would deadlock on
+// this build's project lock.
+// NOTE: the legacy 1.12.2 Forge jar lives in the SEPARATE forge-1.12.2 build (host JDK 25); Gradle can't
+// span both JDKs in one invocation, so the release script's Test stage builds that tree FIRST, then runs
+// this. Standalone, build the Forge jar yourself first if you want the 1.12.2-forge matrix leg to find it.
 tasks.register("fullTestSuite") {
     group = "verification"
-    description = "Modern-tree unit tests (via buildAndCollect) + production boot/connect matrix (auto-skips if the testing/ harness is absent)."
-    dependsOn("buildAndCollect", "runReleaseMatrix")
+    description = "Solver library tests + modern-tree unit tests (via buildAndCollect) + production boot/connect matrix (auto-skips if the testing/ harness is absent)."
+    dependsOn(gradle.includedBuild("solver-core").task(":check"), "buildAndCollect", "runReleaseMatrix")
 }
