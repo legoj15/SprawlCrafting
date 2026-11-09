@@ -1,5 +1,8 @@
 package com.legoj15.sprawlcrafting.forge.mixin;
 
+import java.util.ArrayList;
+import java.util.List;
+
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -98,6 +101,49 @@ public class GuiButtonRecipeMixin {
         } catch (Throwable ignored) {
             // Tooltip decoration must never break the recipe book.
         }
+    }
+
+    /**
+     * Empty-list guard. {@link RecipeListMixin} lets the craftable-only filter keep a list whose
+     * only makeable recipes are deferred; if one stops being deferred between the book's refresh
+     * and a draw (a station chest emptying, say) the ordered list is empty and vanilla
+     * {@code drawButton} divides by zero ({@code % list.size()}). Fall back to the list's
+     * unlocked, fitting recipes (then all of them) so the button shows something until the next
+     * refresh instead of crashing the client.
+     */
+    @Inject(method = "getOrderedRecipes", at = @At("RETURN"), cancellable = true, require = 0)
+    private void sprawlcrafting$neverEmpty(CallbackInfoReturnable<List<IRecipe>> cir) {
+        try {
+            List<IRecipe> ordered = cir.getReturnValue();
+            if (ordered != null && !ordered.isEmpty()) {
+                return;
+            }
+            RecipeList list = ((GuiButtonRecipe) (Object) this).getList();
+            List<IRecipe> fallback = new ArrayList<>(list.getRecipes(false));
+            if (fallback.isEmpty()) {
+                fallback.addAll(list.getRecipes());
+            }
+            if (!fallback.isEmpty()) {
+                cir.setReturnValue(fallback);
+            }
+        } catch (Throwable ignored) {
+            // Vanilla result stands.
+        }
+    }
+
+    /**
+     * Index guard for {@code getRecipe} and {@code getToolTipText}: both index the ordered list with
+     * the {@code currentIndex} the last draw computed. If the list shrank since (a status change
+     * processed in the tick before a click), wrap the index instead of throwing.
+     */
+    @Redirect(
+            method = {"getRecipe", "getToolTipText"},
+            at = @At(value = "INVOKE", target = "Ljava/util/List;get(I)Ljava/lang/Object;",
+                    remap = false),
+            require = 0)
+    private Object sprawlcrafting$wrapIndex(List<?> list, int index) {
+        int size = list.size();
+        return size == 0 ? list.get(index) : list.get(Math.floorMod(index, size));
     }
 
     /** True if the recipe this button currently shows is craftable only via intermediates. */

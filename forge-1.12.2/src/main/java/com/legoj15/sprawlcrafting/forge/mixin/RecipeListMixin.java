@@ -27,17 +27,22 @@ import net.minecraft.item.crafting.IRecipe;
  *       craftable one, so the bubble draws them with the neutral grey frame (its per-button
  *       craftable flag comes from which view a recipe was in, so no final field is touched) and
  *       still lists them under the filter. Without this the page button of a deferred-only list
- *       kept by the filter had an EMPTY ordered list and divided by zero in {@code drawButton}.</li>
+ *       kept by the filter had an EMPTY ordered list and divided by zero in {@code drawButton}.
+ *       The filter predicate therefore only counts recipes these views can show (unlocked and
+ *       fitting, {@code getRecipes(false)}): a locked deferred recipe must not keep a list whose
+ *       ordered view would be empty. A status change between the book's refresh and the next draw
+ *       can still empty that view; {@link GuiButtonRecipeMixin} guards the button against it.</li>
  *   <li>{@code getRecipes(boolean)} with {@code true}: the filtered count that decides the
  *       stacked-frame look and the "more recipes" tooltip, kept in step with the bubble.</li>
  * </ul>
  * A deferred recipe still has to be unlocked and fit the grid, exactly like a vanilla craftable one.
  *
- * <p>TRAP: no {@code @Shadow} fields here (or in any 1.12.2 mixin). RFG's reobf renames only
- * members owned by Minecraft classes, and this build does not feed the Mixin AP's own SRG output
- * back into reobf, so a shadowed field keeps its MCP name in the production jar and fails to
- * resolve against the SRG-named target (a hard error, {@code require} does not cover it). Calls
- * through the target's public methods are renamed normally, so the bucket is read through those.
+ * <p>TRAP: no {@code @Shadow} fields here (or in any 1.12.2 mixin). Observed with javap on the reobf
+ * jar: a shadowed field keeps its MCP name ({@code recipes}, {@code craftable}, ...) because this
+ * build passes the Mixin AP no {@code -AoutSrgFile}, so reobf never learns the shadow's SRG name.
+ * Expected (not observed in a run) to fail to resolve against the SRG-named class in production.
+ * Calls through the target's public methods are renamed normally, so the bucket is read through
+ * those; private fields are read with an {@code @Accessor}, which the refmap does translate.
  * Classification is solver-cached per recipe ({@link RecipeBookHighlight}), and every injector
  * degrades to the vanilla result on failure.
  */
@@ -51,7 +56,9 @@ public class RecipeListMixin {
         }
         try {
             CraftPlanner.Session session = RecipeBookHighlight.session();
-            for (IRecipe recipe : ((RecipeList) (Object) this).getRecipes()) {
+            // getRecipes(false), not getRecipes(): only unlocked, fitting recipes appear in the
+            // ordered views, so a locked deferred recipe must not keep the list under the filter.
+            for (IRecipe recipe : ((RecipeList) (Object) this).getRecipes(false)) {
                 if (RecipeBookHighlight.isDeferred(session, recipe)) {
                     cir.setReturnValue(Boolean.TRUE);
                     return;
