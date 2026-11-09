@@ -2,8 +2,11 @@ package com.legoj15.sprawlcrafting.craft;
 
 import java.util.List;
 
+import com.legoj15.sprawlcrafting.craft.solver.ProducedLedger;
+
 import net.minecraft.util.ResourceLocation;
 import net.minecraft.util.math.BlockPos;
+import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 
 /**
@@ -58,6 +61,7 @@ public final class CraftJob {
     private final ItemStack targetResult;
     private final List<CraftStep> steps;
     private final long totalCrafts;
+    private final ProducedLedger<Item> produced = new ProducedLedger<>();
 
     private int stepIndex;
     private int craftsDoneInStep;
@@ -95,6 +99,11 @@ public final class CraftJob {
     /** The final output, for chat/HUD display. Do not mutate. */
     public ItemStack targetResult() {
         return targetResult;
+    }
+
+    /** What this job crafted and has not used back up; lets the executor take its own altered intermediates. */
+    public ProducedLedger<Item> produced() {
+        return produced;
     }
 
     public List<CraftStep> steps() {
@@ -141,7 +150,7 @@ public final class CraftJob {
 
     /** Number of individual craft executions completed so far. */
     public long craftsDone() {
-        return craftsBeforeStep + craftsDoneInStep;
+        return saturatingAdd(craftsBeforeStep, craftsDoneInStep);
     }
 
     /**

@@ -103,7 +103,8 @@ public final class CraftQueueManager {
             // through to the auto-craft below, which remains the only place the item is granted.
             IRecipe handOff = handOffCandidate(player, job);
             if (handOff != null
-                    && ServerGridPlacer.placeFinalCraft(player, handOff) == ServerGridPlacer.HandOffResult.FILLED) {
+                    && ServerGridPlacer.placeFinalCraft(player, handOff, job.produced())
+                            == ServerGridPlacer.HandOffResult.FILLED) {
                 ACTIVE.remove(player.getUniqueID());
                 job.onCraftPerformed();
                 sync(player, job, CraftProgressMessage.State.READY_IN_GRID, job.targetResult());
@@ -111,7 +112,7 @@ public final class CraftQueueManager {
                         job.targetResult().getDisplayName()));
                 return;
             }
-            CraftExecutor.CraftResult result = CraftExecutor.craftOnce(player, job.currentStep().recipeId());
+            CraftExecutor.CraftResult result = CraftExecutor.craftOnce(player, job.currentStep().recipeId(), job.produced());
             if (result instanceof CraftExecutor.CraftResult.Success) {
                 lastCrafted = ((CraftExecutor.CraftResult.Success) result).crafted();
                 boolean stepDone = job.onCraftPerformed();

@@ -1,7 +1,11 @@
 package com.legoj15.sprawlcrafting.forge.craft;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+
+import com.legoj15.sprawlcrafting.craft.solver.ProducedLedger;
 
 import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.entity.player.EntityPlayerMP;
@@ -35,7 +39,9 @@ import net.minecraftforge.common.crafting.IShapedRecipe;
  *       main slots, never the chest: consume-from-chest, deposit-to-player is safe and matches
  *       intuition.</li>
  *   <li>Damaged, enchanted, or renamed stacks are never consumed, matching what the vanilla
- *       recipe book refuses to auto-fill.</li>
+ *       recipe book refuses to auto-fill, except up to what the job's {@link ProducedLedger}
+ *       says it produced itself (some mods enchant an item on its first inventory tick, after
+ *       the job inserted it).</li>
  * </ul>
  *
  * <p>The final craft of a job is normally handed off into an open crafting grid by
@@ -84,38 +90,24 @@ public final class CraftExecutor {
         }
     }
 
-    public static CraftResult craftOnce(EntityPlayerMP player, ResourceLocation recipeId) {
+    public static CraftResult craftOnce(EntityPlayerMP player, ResourceLocation recipeId,
+                                        ProducedLedger<ItemKey> ledger) {
         IRecipe recipe = CraftingManager.getRecipe(recipeId);
         if (recipe == null) {
             return new CraftResult.RecipeGone();
         }
 
-        // The pool this craft may draw from: the 36 main slots, then any connected station
-        // inventory exposed by the open container. Rebuilt each craft so it tracks the live chest
-        // (and collapses to player-only the moment the station GUI closes).
-        InventoryPlayer inventory = player.inventory;
-        List<Source> sources = buildSources(player, inventory);
-
         // Phase 1: match every ingredient slot to a source without mutating, so a shortfall
         // discovered at slot N leaves earlier matches — and the chest — untouched. chosen keeps
         // one entry per ingredient slot (-1 for a gap in the shape) so the simulation below can
         // reconstruct the grid positions.
-        List<Ingredient> ingredients = recipe.getIngredients();
-        int[] chosen = new int[ingredients.size()];
-        int[] reserved = new int[sources.size()];
-        for (int i = 0; i < ingredients.size(); i++) {
-            Ingredient ingredient = ingredients.get(i);
-            if (ingredient == Ingredient.EMPTY) {
-                chosen[i] = -1;
-                continue;
-            }
-            int idx = findMatchingSource(sources, ingredient, reserved);
-            if (idx < 0) {
-                return new CraftResult.MissingIngredient(describe(ingredient));
-            }
-            reserved[idx]++;
-            chosen[i] = idx;
+        InventoryPlayer inventory = player.inventory;
+        Assignment assignment = assign(player, recipe.getIngredients(), ledger);
+        if (assignment.missing != null) {
+            return new CraftResult.MissingIngredient(describe(assignment.missing));
         }
+        List<Source> sources = assignment.sources;
+        int[] chosen = assignment.chosen;
 
         // What this craft actually produces, asked of the recipe with the exact stacks about to
         // be consumed: getRecipeOutput() alone is NBT-less for input-dependent outputs and, per
@@ -145,11 +137,13 @@ public final class CraftExecutor {
             source.consumeOne();
             touchedExternal |= source.isExternal();
         }
+        assignment.chargeTo(ledger);
         for (ItemStack remainder : remainders) {
             insertIntoMainInventory(player, remainder);
         }
         ItemStack crafted = result.copy();
         insertIntoMainInventory(player, result);
+        ledger.produced(ledgerKey(crafted), crafted.getCount());
         inventory.markDirty();
         if (touchedExternal) {
             // Push the depleted chest back to any open station GUI viewing it (the same sync
@@ -302,12 +296,106 @@ public final class CraftExecutor {
         return sources;
     }
 
-    /** First source holding a usable, count-available stack accepted by {@code ingredient}. */
-    private static int findMatchingSource(List<Source> sources, Ingredient ingredient, int[] reserved) {
+    /**
+     * One source per ingredient ({@code -1} for a gap: null or {@link Ingredient#EMPTY}) over the
+     * pool {@link #buildSources} describes, chosen without mutating anything, or the first
+     * ingredient nothing could satisfy. A stack {@link #usableAsIngredient} rejects is chosen only
+     * when no acceptable stack matches and {@code ledger} (null: never) still admits its identity;
+     * those picks are tallied for {@link Assignment#chargeTo}. Package-visible: the final-step
+     * hand-off ({@link ServerGridPlacer}) lays out the same choice.
+     */
+    static Assignment assign(EntityPlayer player, List<Ingredient> ingredients, ProducedLedger<ItemKey> ledger) {
+        List<Source> sources = buildSources(player, player.inventory);
+        int[] chosen = new int[ingredients.size()];
+        int[] reserved = new int[sources.size()];
+        Map<ItemKey, Integer> ledgerTakes = new HashMap<ItemKey, Integer>();
+        for (int i = 0; i < chosen.length; i++) {
+            Ingredient ingredient = ingredients.get(i);
+            if (ingredient == null || ingredient == Ingredient.EMPTY) {
+                chosen[i] = -1;
+                continue;
+            }
+            int idx = findMatchingSource(sources, ingredient, reserved, ledger, ledgerTakes);
+            if (idx < 0) {
+                return new Assignment(sources, chosen, ledgerTakes, ingredient);
+            }
+            reserved[idx]++;
+            chosen[i] = idx;
+            ItemStack stack = sources.get(idx).peek();
+            if (!usableAsIngredient(stack)) {
+                ItemKey key = ledgerKey(stack);
+                Integer taken = ledgerTakes.get(key);
+                ledgerTakes.put(key, taken == null ? 1 : taken + 1);
+            }
+        }
+        return new Assignment(sources, chosen, ledgerTakes, null);
+    }
+
+    static final class Assignment {
+        private final List<Source> sources;
+        private final int[] chosen;
+        private final Map<ItemKey, Integer> ledgerTakes;
+        private final Ingredient missing;
+
+        private Assignment(List<Source> sources, int[] chosen, Map<ItemKey, Integer> ledgerTakes,
+                           Ingredient missing) {
+            this.sources = sources;
+            this.chosen = chosen;
+            this.ledgerTakes = ledgerTakes;
+            this.missing = missing;
+        }
+
+        boolean complete() {
+            return missing == null;
+        }
+
+        /** Removes and returns one item for ingredient {@code index}; EMPTY for a gap. */
+        ItemStack take(int index) {
+            if (chosen[index] < 0) {
+                return ItemStack.EMPTY;
+            }
+            Source source = sources.get(chosen[index]);
+            ItemStack one = source.peek().copy();
+            one.setCount(1);
+            source.consumeOne();
+            return one;
+        }
+
+        void chargeTo(ProducedLedger<ItemKey> ledger) {
+            for (Map.Entry<ItemKey, Integer> take : ledgerTakes.entrySet()) {
+                ledger.consumed(take.getKey(), take.getValue());
+            }
+        }
+    }
+
+    /**
+     * The ledger's identity for a stack: item plus metadata only for subtyped items, because a
+     * damageable item's metadata is its damage, which the alteration may change.
+     */
+    static ItemKey ledgerKey(ItemStack stack) {
+        return new ItemKey(stack.getItem(), stack.getHasSubtypes() ? stack.getMetadata() : 0);
+    }
+
+    private static int findMatchingSource(List<Source> sources, Ingredient ingredient, int[] reserved,
+                                          ProducedLedger<ItemKey> ledger, Map<ItemKey, Integer> ledgerTakes) {
         for (int i = 0; i < sources.size(); i++) {
             ItemStack stack = sources.get(i).peek();
             if (!stack.isEmpty() && stack.getCount() - reserved[i] > 0
                     && usableAsIngredient(stack) && ingredient.apply(stack)) {
+                return i;
+            }
+        }
+        if (ledger == null) {
+            return -1;
+        }
+        for (int i = 0; i < sources.size(); i++) {
+            ItemStack stack = sources.get(i).peek();
+            if (stack.isEmpty() || stack.getCount() - reserved[i] <= 0 || usableAsIngredient(stack)) {
+                continue;
+            }
+            ItemKey key = ledgerKey(stack);
+            Integer taken = ledgerTakes.get(key);
+            if (ledger.canTake(key, taken == null ? 0 : taken) && ingredient.apply(stack)) {
                 return i;
             }
         }
