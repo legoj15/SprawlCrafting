@@ -23,7 +23,7 @@ separate 1.12.2 Forge port.
 | 1.12.2 | Forge | separate RFG build | 25 host / Java 8 output |
 | 1.16.5 | Forge, Fabric | separate FG7 + Loom build (`legacy-1.16.5/`) | 21 host / Java 8 output |
 
-The modern loaders (1.21.1 / 26.x) share one source set via **Stonecutter**: `src/` is
+The modern loaders (1.20.1 and up) share one source set via **Stonecutter**: `src/` is
 preprocessed per node into `versions/<node>/`, one node per (Minecraft version, loader). Cross-version API
 differences are handled inline with Stonecutter comment directives (e.g.
 `//? if >=1.21.11 { … }`). The **1.12.2 Forge** target is a separate, self-contained Gradle
@@ -33,8 +33,8 @@ Minecraft-free planner (below).
 
 ## The Forge 1.21.1 node (`1.21.1-forge`)
 
-MinecraftForge (not NeoForge) on 1.21.1, at feature parity with `1.21.1-neoforge`. The 26.x Forge
-nodes (next section) reuse everything here except where noted:
+MinecraftForge (not NeoForge) on 1.21.1, at feature parity with `1.21.1-neoforge`. The 1.20.1 and
+26.x Forge nodes (below) reuse everything here except where noted:
 
 - **Build:** `build.forge.gradle.kts` on ForgeGradle 7 (`net.minecraftforge.gradle`, plus
   `net.minecraftforge.jarjar`; both declared `apply false` in the controller and share the root
@@ -58,6 +58,10 @@ nodes (next section) reuse everything here except where noted:
   so a raw `ClientboundCustomPayloadPacket(payload)` cannot be sent: all server-to-client sends go
   through `IPlatformHelper.sendToPlayer` (Fabric/NeoForge keep the plain vanilla packet there).
   `canReceive`/`canSendToServer` read the remote's registered channel list from `NetworkContext`.
+  The payload channel registers every payload's type id as its own child channel
+  (`PayloadChannel.Builder.add` -> `NetworkInstance.addChild`) and the peer advertises all of them in
+  `forge:channel_registration`, so the check answers per payload: a peer built without
+  `shortfall_v2` is sent the original `shortfall` payload.
 - **Not on this node:** REI (no Forge 1.21.1 build) and Mod Menu (Fabric-only); excluded by leaving
   `rei_version` / `modmenu_version` unset. JEI works unchanged (`@JeiPlugin` is annotation-scanned).
 
@@ -65,7 +69,7 @@ nodes (next section) reuse everything here except where noted:
 
 MinecraftForge 47 on 1.20.1, at parity with `1.20.1-fabric` (minus REI and Mod Menu, as above). It is
 the dev test bed for Forge-1.20.1-only mods. Same `build.forge.gradle.kts`; everything that differs is
-behind its `srgRuntime` flag (`<1.20.6`), so the 1.21.1 node's build is untouched.
+behind its `srgRuntime` flag (`<1.20.6`), so the other Forge nodes' builds are untouched.
 
 - **SRG at runtime.** Dev runs are Mojmap; production Forge 47 runs SRG (`m_`/`f_`). The script applies
   `net.minecraftforge.renamer` (1.1.8, `apply false` in the controller), runs the Mixin 0.8.5 AP and
@@ -97,7 +101,7 @@ behind its `srgRuntime` flag (`<1.20.6`), so the 1.21.1 node's build is untouche
   `player.connection.connection` instead of `getConnection()`.
 - **Metadata.** `forge_version_range=[47.1.0,48)` (`displayTest` in mods.toml exists from 47.1.0, checked
   in fmlcore 47.1.0); the JEI dependency range is per node (`jei_version_range`, `[15,)` here).
-- **Dev self-check.** `platform/forge/ForgeMixinSelfCheck` (both Forge nodes) force-loads every
+- **Dev self-check.** `platform/forge/ForgeMixinSelfCheck` (every Forge node) force-loads every
   recipe-book mixin target at client start when `SC_MIXIN_SELFTEST=1`. `smoke.ps1 -Task
   :<node>:runClient` sets it and requires "mixin self-check passed"; `smoke.ps1 -Task :<node>:runServer`
   boots a dedicated server to `Done (`.
@@ -125,9 +129,9 @@ is decided by the node's `gradle.properties` plus `//? if >=1.21.11` branches in
   (`event.server()`, not `getServer()`). `ModList` is a static facade (`ModList.isLoaded`).
 - **Networking:** the `ChannelBuilder.named(..).payloadChannel()` flow builder is unchanged from 1.21.1
   (still `optional()`, accept-all version test, `canReceive`/`canSendToServer` via
-  `NetworkContext.getRemoteChannels()`); `ForgeNetwork` additionally registers the seven 26.x
-  server-driven recipe-book payloads behind a `//? if >=1.21.11` directive, mirroring
-  `NeoForgeMod.onRegisterPayloads`.
+  `NetworkContext.getRemoteChannels()`); `ForgeNetwork` additionally registers the 26.x
+  server-driven recipe-book payloads (both shortfall versions included) behind a `//? if >=1.21.11`
+  directive, mirroring `NeoForgeMod.onRegisterPayloads`.
 - **Metadata:** `loaderVersion` is the Forge major (`[64,)` / `[65,)` / `[66,)`; the javafml provider
   ships with the Forge version). `displayTest = "IGNORE_ALL_VERSION"` is still honoured.
 - **Mixin:** Forge bundles Mixin 0.8.7, whose newest compatibility level is `JAVA_21`, so loading our

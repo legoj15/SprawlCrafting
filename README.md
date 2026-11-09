@@ -6,7 +6,7 @@ Factorio-style crafting for the vanilla inventory and crafting table. Request a 
 
 Works with the vanilla recipe book and with JEI/REI.
 
-**Minecraft 1.12.2 (Forge), 1.21.1, 26.1.2, 26.2, and 26.3 · Fabric and NeoForge, plus Forge on 1.21.1, 26.1.2, 26.2, and 26.3.**
+**Minecraft 1.12.2 (Forge), 1.20.1 (Fabric, Forge), and 1.21.1, 26.1.2, 26.2, 26.3 (Fabric, NeoForge, Forge).**
 
 ## How it works
 
@@ -35,7 +35,7 @@ Right-click a **red** recipe (or left-click the **orange** gather button in JEI/
 
 ## Compatibility
 
-- **Minecraft:** 1.12.2, 1.21.1, 26.1.2, 26.2, or 26.3
+- **Minecraft:** 1.12.2, 1.20.1, 1.21.1, 26.1.2, 26.2, or 26.3
 - **Loaders:** Forge (1.12.2, 1.20.1, 1.21.1, 26.1.2, 26.2, 26.3), Fabric or NeoForge
 - **Fabric** also requires **Fabric API** (like most mods)
 - **1.12.2** also requires **MixinBooter** on the client - it loads SprawlCrafting's recipe-book and JEI mixins, and without it the game stops at an error screen telling you to install it. (A dedicated server doesn't need it.)
@@ -83,7 +83,7 @@ Build or run a single node with its node-prefixed task:
 ./gradlew :26.1.2-neoforge:runClient  # dev client, NeoForge 26.1.2
 ```
 
-Swap the prefix for any of the nine nodes.
+Swap the prefix for any node listed in `settings.gradle.kts`.
 
 ### 1.12.2 (Forge)
 

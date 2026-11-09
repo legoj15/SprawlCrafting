@@ -18,6 +18,7 @@ import com.legoj15.sprawlcrafting.network.RequestCraftPreviewPayload;
 import com.legoj15.sprawlcrafting.network.RequestShortfallByDisplayPayload;
 import com.legoj15.sprawlcrafting.network.RequestShortfallByRecipePayload;
 import com.legoj15.sprawlcrafting.network.ShortfallPayload;
+import com.legoj15.sprawlcrafting.network.ShortfallV2Payload;
 import com.legoj15.sprawlcrafting.network.StartDeferredCraftByDisplayPayload;*/
 //?}
 
@@ -130,7 +131,12 @@ final class ForgeNetwork {
                 .addMain(ShortfallPayload.TYPE, widen(ShortfallPayload.STREAM_CODEC),
                         (payload, context) -> MissingIngredients.accept(
                                 payload.token(), payload.targetItem(), payload.targetCount(),
-                                payload.approximate(), false, payload.demands()))*/
+                                payload.approximate(), false, payload.demands()))
+                // V2 (long counts + saturated); the legacy receiver above stays for servers that only send it.
+                .addMain(ShortfallV2Payload.TYPE, widen(ShortfallV2Payload.STREAM_CODEC),
+                        (payload, context) -> MissingIngredients.accept(
+                                payload.token(), payload.targetItem(), payload.targetCount(),
+                                payload.approximate(), payload.saturated(), payload.demands()))*/
                 //?}
                 .build();
     }

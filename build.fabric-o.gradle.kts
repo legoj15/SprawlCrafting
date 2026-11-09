@@ -7,9 +7,8 @@ plugins {
 // Per-node values, resolved from versions/<node>/gradle.properties (inheriting root gradle.properties).
 val minecraftVersion = property("minecraft_version") as String
 val fabricLoaderVersion = property("fabric_loader_version") as String
-// The fabricloader floor written into fabric.mod.json. Defaults to the dev-runtime pin; a node sets
-// fabric_loader_min when its dev runtime needs a newer loader than players do (1.20.1: JEI 15.74 forces
-// 0.19.4 in dev, while fabric-api 0.92.12 itself only needs 0.16.10).
+// The fabricloader floor written into fabric.mod.json. Defaults to the dev-runtime pin; a node may set
+// fabric_loader_min when its dev runtime needs a newer loader than players do.
 val fabricLoaderMin = (project.findProperty("fabric_loader_min") as String?) ?: fabricLoaderVersion
 val fabricApiVersion = property("fabric_version") as String
 val jeiVersion = property("jei_version") as String
