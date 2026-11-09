@@ -8,15 +8,14 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 import com.legoj15.sprawlcrafting.forge.client.ClientPlanCache;
+import com.legoj15.sprawlcrafting.forge.client.RecipeBookHighlight;
 import com.legoj15.sprawlcrafting.forge.craft.CraftPlanner;
 import com.legoj15.sprawlcrafting.forge.craft.GridContext;
 
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.Gui;
 import net.minecraft.client.gui.GuiButton;
 import net.minecraft.client.gui.recipebook.GuiButtonRecipe;
 import net.minecraft.client.gui.recipebook.RecipeList;
-import net.minecraft.client.renderer.GlStateManager;
 import net.minecraft.item.crafting.IRecipe;
 
 /**
@@ -41,8 +40,6 @@ import net.minecraft.item.crafting.IRecipe;
 @Mixin(GuiButtonRecipe.class)
 public class GuiButtonRecipeMixin {
 
-    private static final int OUTLINE_COLOR = 0xFFE6D24D;
-
     /** Frame selection: treat a deferred recipe as craftable so vanilla draws the grey frame. */
     @Redirect(
             method = "drawButton",
@@ -61,7 +58,7 @@ public class GuiButtonRecipeMixin {
             return;
         }
         if (isDisplayedRecipeDeferred()) {
-            drawOutline(self.x, self.y, self.width, self.height);
+            RecipeBookHighlight.drawOutline(self.x, self.y, self.width, self.height);
         }
     }
 
@@ -106,30 +103,10 @@ public class GuiButtonRecipeMixin {
     /** True if the recipe this button currently shows is craftable only via intermediates. */
     private boolean isDisplayedRecipeDeferred() {
         try {
-            Minecraft mc = Minecraft.getMinecraft();
-            if (mc.player == null) {
-                return false;
-            }
-            IRecipe recipe = ((GuiButtonRecipe) (Object) this).getRecipe();
-            if (recipe == null || recipe.getRegistryName() == null) {
-                return false;
-            }
-            GridContext grid = GridContext.current(mc.player);
-            return ClientPlanCache.get(mc.player, grid).classify(recipe) == CraftPlanner.Craftability.DEFERRED;
+            return RecipeBookHighlight.isDeferred(((GuiButtonRecipe) (Object) this).getRecipe());
         } catch (Throwable ignored) {
-            // Never let recipe classification break the recipe-book render.
+            // getRecipe() indexes the ordered list; never let it break the recipe-book render.
             return false;
         }
-    }
-
-    private static void drawOutline(int x, int y, int width, int height) {
-        GlStateManager.disableLighting();
-        Gui.drawRect(x, y, x + width, y + 1, OUTLINE_COLOR);
-        Gui.drawRect(x, y + height - 1, x + width, y + height, OUTLINE_COLOR);
-        Gui.drawRect(x, y, x + 1, y + height, OUTLINE_COLOR);
-        Gui.drawRect(x + width - 1, y, x + width, y + height, OUTLINE_COLOR);
-        // Gui.drawRect leaves the GL colour set to OUTLINE_COLOR; vanilla draws the NEXT button's
-        // frame texture assuming white, so restore it or the next frame renders yellow-tinted.
-        GlStateManager.color(1.0F, 1.0F, 1.0F, 1.0F);
     }
 }
