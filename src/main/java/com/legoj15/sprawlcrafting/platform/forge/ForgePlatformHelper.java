@@ -74,7 +74,12 @@ public class ForgePlatformHelper implements IPlatformHelper {
 
     @Override
     public boolean isModLoaded(String modId) {
+        // Forge 26.x made ModList a static facade (no get()).
+        //? if >=1.21.11 {
+        /*return ModList.isLoaded(modId);*/
+        //?} else {
         return ModList.get().isLoaded(modId);
+        //?}
     }
 
     @Override

@@ -7,7 +7,9 @@ import com.legoj15.sprawlcrafting.craft.DeferredCraftSync;
 
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraftforge.api.distmarker.Dist;
+//? if <1.21.11 {
 import net.minecraftforge.common.MinecraftForge;
+//?}
 import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.event.entity.player.PlayerEvent;
 import net.minecraftforge.event.server.ServerStoppingEvent;
@@ -36,9 +38,16 @@ public class ForgeMod {
         // Channels must exist before the registry locks, i.e. during construction.
         ForgeNetwork.register();
 
+        // Forge 26.x (EventBus 7) has no MinecraftForge.EVENT_BUS: every event class carries its own static BUS.
+        //? if >=1.21.11 {
+        /*TickEvent.ServerTickEvent.Post.BUS.addListener(ForgeMod::onServerTickPost);
+        PlayerEvent.PlayerLoggedOutEvent.BUS.addListener(ForgeMod::onPlayerLoggedOut);
+        ServerStoppingEvent.BUS.addListener(ForgeMod::onServerStopping);*/
+        //?} else {
         MinecraftForge.EVENT_BUS.addListener(ForgeMod::onServerTickPost);
         MinecraftForge.EVENT_BUS.addListener(ForgeMod::onPlayerLoggedOut);
         MinecraftForge.EVENT_BUS.addListener(ForgeMod::onServerStopping);
+        //?}
 
         if (FMLEnvironment.dist == Dist.CLIENT) {
             ForgeClient.init(context);
@@ -57,7 +66,11 @@ public class ForgeMod {
             return;
         }*/
     //?}
+        //? if >=1.21.11 {
+        /*for (ServerPlayer player : event.server().getPlayerList().getPlayers()) {*/
+        //?} else {
         for (ServerPlayer player : event.getServer().getPlayerList().getPlayers()) {
+        //?}
             CraftQueueManager.tick(player);
             DeferredCraftSync.maybeSync(player); // no-op on 1.21.1
         }

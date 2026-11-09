@@ -32,13 +32,13 @@ stonecutter {
         match("1.21.1", "fabric", "neoforge", "forge")
         // Phase 2b complete: NeoForge-26 surfaced the API cliffs; the code port now compiles, so the
         // 26.1.2-fabric node (modern plain Loom, build.fabric-m.gradle.kts) brings Fabric to parity.
-        match("26.1.2", "neoforge", "fabric")
+        match("26.1.2", "neoforge", "fabric", "forge")
         // 26.2 and 26.3 reuse the 26.x build path (modern Loom / MDG, the >=1.21.11 source branch).
         // Their API breaks are handled by the >=26.2 / >=26.3 forward-port tiers in the per-node build
         // scripts plus a few `//? if >=26.3` source branches. Mixin targets were javap-checked against each
         // node's PINNED MC build only; see versions/26.2-neoforge/gradle.properties for the range caveat.
-        match("26.2", "neoforge", "fabric")
-        match("26.3", "neoforge", "fabric")
+        match("26.2", "neoforge", "fabric", "forge")
+        match("26.3", "neoforge", "fabric", "forge")
 
         vcsVersion = "1.21.1-fabric"
     }
