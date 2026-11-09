@@ -23,7 +23,14 @@ import net.minecraftforge.fml.loading.FMLEnvironment;
 @Mod(Constants.MOD_ID)
 public class ForgeMod {
 
+    //? if >=1.20.5 {
     public ForgeMod(FMLJavaModLoadingContext context) {
+    //?} else {
+    /*// The no-arg constructor + FMLJavaModLoadingContext.get() works on every Forge 47 build in the
+    // shipped range (constructor injection of the context is a later Forge addition).
+    public ForgeMod() {
+        FMLJavaModLoadingContext context = FMLJavaModLoadingContext.get();*/
+    //?}
         CommonClass.init();
 
         // Channels must exist before the registry locks, i.e. during construction.
@@ -41,7 +48,15 @@ public class ForgeMod {
     // End-of-server-tick player loop, deliberately mirroring the Fabric/NeoForge wiring so jobs
     // tick identically on every loader (PlayerTickEvent skips players whose entity tick is
     // suppressed, e.g. spectators in unloaded chunks — this does not).
+    //? if >=1.20.5 {
     private static void onServerTickPost(TickEvent.ServerTickEvent.Post event) {
+    //?} else {
+    /*// Forge 47 has no Pre/Post subclasses: one event per phase, END = post.
+    private static void onServerTickPost(TickEvent.ServerTickEvent event) {
+        if (event.phase != TickEvent.Phase.END) {
+            return;
+        }*/
+    //?}
         for (ServerPlayer player : event.getServer().getPlayerList().getPlayers()) {
             CraftQueueManager.tick(player);
             DeferredCraftSync.maybeSync(player); // no-op on 1.21.1

@@ -15,6 +15,7 @@ separate 1.12.2 Forge port.
 
 | Minecraft | Loaders | Build | JDK |
 |---|---|---|---|
+| 1.20.1 | Fabric, Forge | Stonecutter node | 21 host / Java 17 output |
 | 1.21.1 | Fabric, NeoForge, Forge | Stonecutter node | 21 |
 | 26.1.2 | Fabric, NeoForge | Stonecutter node | 25 |
 | 26.2 | Fabric, NeoForge | Stonecutter node | 25 |
@@ -23,7 +24,7 @@ separate 1.12.2 Forge port.
 | 1.16.5 | Forge, Fabric | separate FG7 + Loom build (`legacy-1.16.5/`) | 21 host / Java 8 output |
 
 The modern loaders (1.21.1 / 26.x) share one source set via **Stonecutter**: `src/` is
-preprocessed per node into `versions/<node>/`, nine nodes total. Cross-version API
+preprocessed per node into `versions/<node>/`, one node per (Minecraft version, loader). Cross-version API
 differences are handled inline with Stonecutter comment directives (e.g.
 `//? if >=1.21.11 { … }`). The **1.12.2 Forge** target is a separate, self-contained Gradle
 build (RetroFuturaGradle) because the legacy and modern toolchains can't coexist; see
@@ -59,6 +60,47 @@ Forge node (26.x) needs:
   `canReceive`/`canSendToServer` read the remote's registered channel list from `NetworkContext`.
 - **Not on this node:** REI (no Forge 1.21.1 build) and Mod Menu (Fabric-only); excluded by leaving
   `rei_version` / `modmenu_version` unset. JEI works unchanged (`@JeiPlugin` is annotation-scanned).
+
+## The Forge 1.20.1 node (`1.20.1-forge`)
+
+MinecraftForge 47 on 1.20.1, at parity with `1.20.1-fabric` (minus REI and Mod Menu, as above). It is
+the dev test bed for Forge-1.20.1-only mods. Same `build.forge.gradle.kts`; everything that differs is
+behind its `srgRuntime` flag (`<1.20.6`), so the 1.21.1 node's build is untouched.
+
+- **SRG at runtime.** Dev runs are Mojmap; production Forge 47 runs SRG (`m_`/`f_`). The script applies
+  `net.minecraftforge.renamer` (1.1.8, `apply false` in the controller), runs the Mixin 0.8.5 AP and
+  the MixinExtras AP (`@WrapOperation` entries; Mixin's AP does not know them) to write an SRG
+  `sprawlcrafting.refmap.json`, and chains `jar` (`-slim`) -> `jarJar` (+ MixinExtras, `-dev`, Mojmap)
+  -> `renameJarJar` (SRG, the shipped `sprawlcrafting-<ver>+mc1.20.1-forge.jar`). Renamer also renames
+  the mixin classes' `@Shadow` members from the AP's generated mappings. Renamer adds a harmless
+  `fernflower_abstract_parameter_names.txt` to the jar. The "Reference map could not be read" warning
+  in dev runs is expected (dev uses the annotation names directly).
+- **Mavenizer trap (first run per machine).** FG7's Mavenizer recompiles Forge with the first JDK 17 it
+  finds (env `JAVA_HOME_17_X64`, then Gradle-provisioned JDKs, then install paths). JDK 17.0.1's javac
+  rejects valid 1.20.1 records ("invalid accessor method in record"), so configuration fails; set
+  `JAVA_HOME_17_X64` to a newer 17 (17.0.21 verified) for that one run. The output is cached in
+  `~/.gradle/caches/minecraftforge`.
+- **Dependencies.** JEI's Forge jars are SRG-published: `renamer.dependency(...)` renames them for
+  compile and the dev runtime (with `accessTransformers` for JEI's AT). JEI 15.74 hard-depends on
+  `mezz_config`, which it ships jar-in-jar; Renamer does not touch nested jars, so the dev runtime adds a
+  renamed `mezz_config` (`mezz_config_version`), which Forge's JarJar selector prefers over the nested
+  copy. Forge 47.4.29 does not bundle MixinExtras (installer library list), so it is jar-in-jar'd as on
+  1.21.1.
+- **Networking.** Forge 47 has no payload channels: one `SimpleChannel` `sprawlcrafting:main` (the same
+  name as legacy 1.16.5), discriminators 0 start craft (C2S), 1 screen state (C2S), 2 progress (S2C),
+  frozen (append only). Both version predicates accept every value, `ABSENT` and `ACCEPTVANILLA`
+  included, so it is optional both ways. Presence is per channel on this line, so
+  `canReceive`/`canSendToServer` are `isRemotePresent(connection)` and ignore the payload id.
+- **Loader API branches** (`//? if >=1.20.5` in `platform/forge`): no-arg `@Mod` constructor with
+  `FMLJavaModLoadingContext.get()`; `ModLoadingContext.get().registerExtensionPoint` for the config
+  screen; tick events are single classes with `phase == END` instead of `.Post`;
+  `player.connection.connection` instead of `getConnection()`.
+- **Metadata.** `forge_version_range=[47.1.0,48)` (`displayTest` in mods.toml exists from 47.1.0, checked
+  in fmlcore 47.1.0); the JEI dependency range is per node (`jei_version_range`, `[15,)` here).
+- **Dev self-check.** `platform/forge/ForgeMixinSelfCheck` (both Forge nodes) force-loads every
+  recipe-book mixin target at client start when `SC_MIXIN_SELFTEST=1`. `smoke.ps1 -Task
+  :<node>:runClient` sets it and requires "mixin self-check passed"; `smoke.ps1 -Task :<node>:runServer`
+  boots a dedicated server to `Done (`.
 
 ## Core model
 
