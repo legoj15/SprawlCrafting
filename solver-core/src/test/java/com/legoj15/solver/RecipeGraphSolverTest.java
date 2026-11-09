@@ -702,4 +702,54 @@ class RecipeGraphSolverTest {
         assertEquals(1, demands.values().stream().mapToInt(Integer::intValue).sum(),
                 "exactly one coal-or-charcoal to gather, got " + demands);
     }
+
+    private static String[] nine(String item) {
+        String[] slots = new String[9];
+        Arrays.fill(slots, item);
+        return slots;
+    }
+
+    @Test
+    void shortfallExpandsTwoCycleMemberThroughItsRecipeFromRaws() {
+        // Issue #11 (Infinity Matter Dominator Sword: Reborn): crystal <-> crystal_block is a storage
+        // 2-cycle, but crystal ALSO has a recipe from raws. The uncraft sorts first (by id), which
+        // used to make the walk stop at crystal and crystal_block; it must reach diamond and gold.
+        recipes.add(TestRecipe.of("crystal_from_block", "crystal", 9, "crystal_block"));
+        recipes.add(TestRecipe.of("crystal_recipe", "crystal", 1,
+                "diamond", "diamond", "diamond", "diamond", "gold", "gold", "gold", "gold"));
+        recipes.add(TestRecipe.of("crystal_block_recipe", "crystal_block", 1, nine("crystal")));
+        TestRecipe sword = TestRecipe.of("sword", "sword", 1, "crystal", "crystal", "crystal_block");
+        // 2 crystal + 9 for the block = 11 crystal = 44 diamond + 44 gold.
+        RecipeGraphSolver.ShortfallResult<String> r = solver().shortfall(sword, inv());
+        assertEquals(inv("diamond", 44, "gold", 44), r.demands());
+        assertFalse(r.approximate());
+        assertInstanceOf(Result.Success.class, solver().solve(sword, inv("diamond", 44, "gold", 44)));
+    }
+
+    @Test
+    void shortfallExpandsThreeCycleMemberThroughItsRecipeFromRaws() {
+        // block <-> ingot <-> nugget, with ingot also made from a raw (sorted last). Every member's
+        // demand must bottom out at the raw: 9 (block) + 1 (nugget, 8 spare) + 1 (ingot) = 11.
+        recipes.add(TestRecipe.of("ingot_from_block", "ingot", 9, "block"));
+        recipes.add(TestRecipe.of("ingot_from_nuggets", "ingot", 1, nine("nugget")));
+        recipes.add(TestRecipe.of("ingot_from_raw", "ingot", 1, "raw_ore"));
+        recipes.add(TestRecipe.of("nugget_from_ingot", "nugget", 9, "ingot"));
+        recipes.add(TestRecipe.of("block_from_ingots", "block", 1, nine("ingot")));
+        TestRecipe thing = TestRecipe.of("thing", "thing", 1, "block", "nugget", "ingot");
+        RecipeGraphSolver.ShortfallResult<String> r = solver().shortfall(thing, inv());
+        assertEquals(inv("raw_ore", 11), r.demands());
+        assertFalse(r.approximate());
+    }
+
+    @Test
+    void shortfallOfThreeCycleWithoutRawRouteListsTheRequestedMember() {
+        // Same 3-cycle with no way out: nothing is gatherable below the cycle, so each demand is
+        // listed as the item asked for (1 block, 1 nugget), never inflated to 9 ingots / 81 nuggets.
+        recipes.add(TestRecipe.of("ingot_from_block", "ingot", 9, "block"));
+        recipes.add(TestRecipe.of("ingot_from_nuggets", "ingot", 1, nine("nugget")));
+        recipes.add(TestRecipe.of("nugget_from_ingot", "nugget", 9, "ingot"));
+        recipes.add(TestRecipe.of("block_from_ingots", "block", 1, nine("ingot")));
+        TestRecipe thing = TestRecipe.of("thing", "thing", 1, "block", "nugget");
+        assertEquals(inv("block", 1, "nugget", 1), solver().shortfall(thing, inv()).demands());
+    }
 }
