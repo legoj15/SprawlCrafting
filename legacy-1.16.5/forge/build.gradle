@@ -118,5 +118,8 @@ renamer.classes(tasks.named('jar', Jar)) {
     archiveClassifier = ''
     output = layout.buildDirectory.file("libs/sprawlcrafting-${rootVersion}+mc${minecraft_version}-forge.jar")
     mappings renamer.mixin.generatedMappings
+    // The Renamer tool otherwise writes a fernflower_abstract_parameter_names.txt (a decompiler aid)
+    // into the shipped jar; --disable-abstract-param stops it collecting that file.
+    additionalArgs.add('--disable-abstract-param')
 }
 tasks.named('assemble') { dependsOn 'renameJar' }

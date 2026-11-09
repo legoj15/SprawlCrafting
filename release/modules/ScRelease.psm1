@@ -8,8 +8,9 @@
 #   * SprawlCrafting ships TWO loaders per MC version (fabric + neoforge), so every store upload is
 #     PER-NODE and tags its own loader — BuildCraft was NeoForge-only with one universal jar per MC.
 #   * Every node gets the SAME full changelog (general lines + its own {mc}-tagged lines). There is no
-#     "primary vs backport" framing: every release node is an equal (the modern eight share one Stonecutter
-#     source; the legacy 1.12.2 Forge node is a separate build sharing the solver-core, injected via config).
+#     "primary vs backport" framing: every release node is an equal (the modern nodes share one Stonecutter
+#     source, auto-discovered from versions/; the legacy 1.12.2 Forge node and the 1.16.5 Forge+Fabric tree
+#     are separate builds sharing the solver-core, injected via the `legacyForge` / `legacyTrees` config).
 #   * The in-game update manifest is the STANDARD Forge/NeoForge update.json (homepage + per-MC
 #     {version:changelog} + promos), rendered as PLAIN text — not BuildCraft's in-game §-formatted file.
 #
@@ -172,6 +173,10 @@ function Get-ScNodes {
             Java          = if ($p.ContainsKey('java_version')) { $p['java_version'] } elseif ($rootProps.ContainsKey('java_version')) { $rootProps['java_version'] } else { $null }
             IsFeatured    = ($p['minecraft_version'] -eq $featuredMc)
             IsLegacy      = $false                      # a standard Stonecutter node (modern jar name + buildAndCollect)
+            # A node integrates with JEI exactly when its props pin jei_version (the 26.x Forge nodes have
+            # none: no JEI is published for them), so the optional JEI dependency is only advertised then.
+            HasJei        = $p.ContainsKey('jei_version')
+            NeedsMixinBooter = $false                   # only the 1.12.2 Forge jar hard-requires MixinBooter
         }
     }
     # The legacy 1.12.2 Forge build lives OUTSIDE versions/ (its own self-contained Gradle build), so the
@@ -197,12 +202,61 @@ function Get-ScNodes {
                 Java          = Get-ScProp $lf 'java' '8'
                 IsFeatured    = ($lfMc -eq $featuredMc)
                 IsLegacy      = $true
+                HasJei        = $true
+                NeedsMixinBooter = $true                # the 1.12.2 client hard-stops without MixinBooter
                 BuildDir      = $lfDir
                 BuildTask     = Get-ScProp $lf 'buildTask' 'reobfJar'
+                VerifyTasks   = @('test', (Get-ScProp $lf 'buildTask' 'reobfJar'))
+                BuildTasks    = @(Get-ScProp $lf 'buildTask' 'reobfJar')
                 JavaHome      = Get-ScProp $lf 'javaHome' ''
+                JarRel        = 'build/libs/sprawlcrafting-{version}.jar'   # no '+mc<mc>-<loader>' tag on this build
             }
         } else {
             Write-ScWarn "legacyForge.enabled but '$lfDir/gradle.properties' not found — skipping the 1.12.2 node."
+        }
+    }
+    # Further legacy trees (currently legacy-1.16.5/: Forge + Fabric built from one shared source by a
+    # separate Gradle build). Each tree is one `legacyTrees` entry in the config and yields one synthetic
+    # node PER LOADER, because every store upload is per (MC version, loader). The tree's Gradle tasks are
+    # tree-level (VerifyTasks/BuildTasks, run once per tree by the orchestrator); only the jar path and the
+    # loader identity differ per node. The jar pattern takes {version}, {mc} and {loader} tokens and
+    # defaults to the modern '+mc<mc>-<loader>' name under <loader>/build/libs/.
+    foreach ($lt in @(Get-ScProp $Config 'legacyTrees' @())) {
+        if (-not [bool](Get-ScProp $lt 'enabled' $true)) { continue }
+        $ltDir = Get-ScProp $lt 'dir'
+        $ltMc  = Get-ScProp $lt 'mcVersion'
+        if (-not $ltDir -or -not $ltMc) { throw "legacyTrees entry needs both 'dir' and 'mcVersion'." }
+        if (-not (Test-Path (Join-Path $RepoRoot (Join-Path $ltDir 'gradle.properties')))) {
+            Write-ScWarn "legacyTrees entry '$ltDir' enabled but '$ltDir/gradle.properties' not found — skipping the $ltMc nodes."
+            continue
+        }
+        $ltBuild  = @(Get-ScProp $lt 'buildTasks' @('build'))
+        $ltVerify = @(Get-ScProp $lt 'verifyTasks' $ltBuild)
+        foreach ($ll in @(Get-ScProp $lt 'loaders' @())) {
+            $llLoader = Get-ScProp $ll 'loader'
+            if (-not $llLoader) { throw "legacyTrees '$ltDir' has a loader entry without a 'loader' name." }
+            $llCf = Get-ScProp $ll 'cfLoaderName' ((Get-Culture).TextInfo.ToTitleCase($llLoader))
+            $nodeId = "$ltMc-$llLoader"
+            if ($nodes | Where-Object { $_.Node -eq $nodeId }) { throw "Duplicate release node '$nodeId' (legacyTrees '$ltDir' collides with an existing node)." }
+            $nodes += [pscustomobject]@{
+                Node          = $nodeId
+                McVersion     = $ltMc
+                Loader        = $llLoader
+                MrLoader      = $llLoader
+                CfLoaderName  = $llCf
+                LoaderDisplay = $llCf
+                Java          = Get-ScProp $lt 'java' '8'
+                IsFeatured    = ($ltMc -eq $featuredMc)
+                IsLegacy      = $true
+                HasJei        = [bool](Get-ScProp $ll 'jei' $false)
+                NeedsMixinBooter = [bool](Get-ScProp $ll 'mixinBooter' $false)
+                BuildDir      = $ltDir
+                BuildTask     = ($ltBuild -join ' ')
+                VerifyTasks   = $ltVerify
+                BuildTasks    = $ltBuild
+                JavaHome      = Get-ScProp $lt 'javaHome' ''
+                JarRel        = (Get-ScProp $ll 'jar' '{loader}/build/libs/sprawlcrafting-{version}+mc{mc}-{loader}.jar').Replace('{loader}', $llLoader)
+            }
         }
     }
     if ($featuredMc -and -not ($nodes | Where-Object IsFeatured)) {
@@ -226,13 +280,17 @@ function Get-ScJarPath {
     return $candidates[0]
 }
 
-function Get-ScLegacyForgeJarPath {
-    # The reobf jar produced by the self-contained 1.12.2 Forge build: <dir>/build/libs/sprawlcrafting-<ver>.jar
-    # (RFG: archivesName=mod_id, version=mod_version; NO '+mc<mc>-<loader>' classifier, unlike the modern jars).
-    # We name the classifier-less jar EXACTLY so the sibling '-dev'/'-sources' jars are never picked up. This
-    # assumes the forge mod_version is kept in lockstep with the root version (Step-ScVersion bumps both).
-    param([Parameter(Mandatory)][string]$RepoRoot, [Parameter(Mandatory)][string]$BuildDir, [Parameter(Mandatory)][string]$Version)
-    $path = Join-Path $RepoRoot (Join-Path $BuildDir "build/libs/sprawlcrafting-$Version.jar")
+function Get-ScLegacyJarPath {
+    # The production jar of a legacy node (a self-contained Gradle build outside versions/): <dir>/<JarRel>,
+    # with {version} and {mc} substituted. 1.12.2 (RFG: archivesName=mod_id, version=mod_version) is
+    # <dir>/build/libs/sprawlcrafting-<ver>.jar with NO '+mc<mc>-<loader>' tag; the 1.16.5 tree names its jars
+    # <loader>/build/libs/sprawlcrafting-<ver>+mc1.16.5-<loader>.jar. We name the jar EXACTLY so the sibling
+    # '-dev'/'-sources' jars are never picked up. Assumes the legacy build's version is kept in lockstep with
+    # the root version (both read it from root gradle.properties; Step-ScVersion bumps that one line).
+    param([Parameter(Mandatory)][string]$RepoRoot, [Parameter(Mandatory)][string]$BuildDir, [Parameter(Mandatory)][string]$JarRel,
+          [Parameter(Mandatory)][string]$Version, [Parameter(Mandatory)][string]$McVersion)
+    $rel  = $JarRel.Replace('{version}', $Version).Replace('{mc}', $McVersion)
+    $path = Join-Path $RepoRoot (Join-Path $BuildDir $rel)
     if (Test-Path $path) { return (Resolve-Path $path).Path }
     return $path
 }
@@ -245,7 +303,7 @@ function Test-ScJars {
     $missing = @()
     foreach ($n in $Nodes) {
         if (Get-ScProp $n 'IsLegacy' $false) {
-            $jar = Get-ScLegacyForgeJarPath -RepoRoot $RepoRoot -BuildDir $n.BuildDir -Version $Version
+            $jar = Get-ScLegacyJarPath -RepoRoot $RepoRoot -BuildDir $n.BuildDir -JarRel $n.JarRel -Version $Version -McVersion $n.McVersion
         } else {
             $jar = Get-ScJarPath -RepoRoot $RepoRoot -Version $Version -McVersion $n.McVersion -Loader $n.MrLoader
         }

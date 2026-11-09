@@ -29,6 +29,8 @@
     "26.1.2": ["26.1.2"],
     "26.2": ["26.2"],
     "26.3": ["26.3"],
+    "1.20.1": ["1.20.1"],
+    "1.16.5": ["1.16.5"],
     "1.12.2": ["1.12.2"]
   },
   "legacyForge": {
@@ -40,5 +42,20 @@
     "java": "8",
     "buildTask": "reobfJar",
     "javaHome": "C:\\Program Files\\Java\\jdk-25.0.2+10"
-  }
+  },
+  "legacyTrees": [
+    {
+      "enabled": true,
+      "dir": "legacy-1.16.5",
+      "mcVersion": "1.16.5",
+      "java": "8",
+      "javaHome": "C:\\Program Files\\Java\\jdk-21.0.2",
+      "verifyTasks": [":forge:build", ":fabric:build"],
+      "buildTasks": [":forge:build", ":fabric:build"],
+      "loaders": [
+        { "loader": "forge",  "cfLoaderName": "Forge",  "jei": true  },
+        { "loader": "fabric", "cfLoaderName": "Fabric", "jei": false }
+      ]
+    }
+  ]
 }
