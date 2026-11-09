@@ -8,11 +8,19 @@ import java.util.function.IntSupplier;
  * of N times {@link CraftJob#BURST_BUDGET_NANOS}.
  *
  * <p>Fairness comes from the slice, not from who runs first. The tick's budget is divided evenly among
- * the jobs in a bulk step when the tick's first burst asks (capped at the per-job limit, so a lone
+ * the jobs about to burst when the tick's first burst asks (capped at the per-job limit, so a lone
  * player is unchanged), and every burst is granted that same slice whatever its position in the
  * player loop. A first-come-first-served pool would let the first few players in the loop eat the whole
  * budget every tick and leave the rest at the one-craft floor forever; the loop order is fixed by the
  * player list and the loaders' tick hooks, so it cannot simply be rotated.
+ *
+ * <p>A burst is charged the time it used <em>up to its grant</em>, never its overshoot. The burst loop
+ * checks the clock after each craft, so every burst runs up to one craft past its grant; charging that
+ * overshoot to the shared window would shrink the slice of every player later in the fixed loop order
+ * (the last one pinned to the one-craft floor every tick). A burst that ends early (64-craft cap, step
+ * boundary) is charged only what it used, and the rest stays in the window for any burst the job count
+ * missed (one that starts later in the same tick). The window never hands out more than the budget in
+ * total.
  *
  * <p>No starvation: this class only says how long a burst <em>may</em> run. The burst loop in
  * {@code CraftQueueManager} checks the clock after a craft, never before, so a zero grant (budget
@@ -37,6 +45,7 @@ public final class BurstBudget {
     private long windowTick;
     private long remainingNanos;
     private long sliceNanos;
+    private long lastGrantNanos;
 
     /**
      * @param tickBudgetNanos total burst time all players may spend in one server tick
@@ -49,7 +58,8 @@ public final class BurstBudget {
 
     /**
      * How long the burst starting now may run. Opens the window for {@code serverTick} on the first
-     * call of that tick (asking {@code burstingJobs} once for the number of jobs sharing it).
+     * call of that tick (asking {@code burstingJobs} once for the number of jobs sharing it). Pair every
+     * grant with one {@link #charge} once the burst is done.
      *
      * @return nanoseconds, never negative; 0 when the tick's budget is already spent, in which case the
      *         caller still performs its first craft
@@ -61,16 +71,23 @@ public final class BurstBudget {
             remainingNanos = tickBudgetNanos;
             sliceNanos = Math.min(jobCapNanos, tickBudgetNanos / Math.max(1, burstingJobs.getAsInt()));
         }
-        return Math.max(0L, Math.min(sliceNanos, remainingNanos));
+        lastGrantNanos = Math.max(0L, Math.min(sliceNanos, remainingNanos));
+        return lastGrantNanos;
     }
 
-    /** Takes the time a granted burst actually used (including any overshoot) out of the open window. */
+    /**
+     * Takes the time the burst just granted used out of the open window, clamped to its grant: the
+     * overshoot past the grant (at most one craft) is never charged, so it cannot shrink the bursts after
+     * it. Call once per {@link #grant}; a second call charges nothing.
+     */
     public void charge(long usedNanos) {
-        remainingNanos -= Math.max(0L, usedNanos);
+        remainingNanos -= Math.min(Math.max(0L, usedNanos), lastGrantNanos);
+        lastGrantNanos = 0L;
     }
 
     /** Forgets the open window; the next grant opens a fresh one (server shutdown). */
     public void reset() {
         windowOpen = false;
+        lastGrantNanos = 0L;
     }
 }

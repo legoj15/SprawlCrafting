@@ -106,11 +106,11 @@ public final class CraftQueueManager {
         }
     }
 
-    /** Active jobs currently in a bulk step: the players that may burst this tick and so split its budget. */
+    /** Active jobs that burst this tick and so split its budget (see {@link CraftJob#burstsThisTick()}). */
     private static int bulkJobCount() {
         int count = 0;
         for (CraftJob job : ACTIVE.values()) {
-            if (!job.isFinished() && job.isBulkStep()) {
+            if (job.burstsThisTick()) {
                 count++;
             }
         }

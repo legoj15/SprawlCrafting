@@ -157,6 +157,18 @@ public final class CraftJob {
         return currentStep().crafts() > BULK_THRESHOLD;
     }
 
+    /**
+     * Whether this job bursts this server tick, so it shares the tick's burst budget (see
+     * {@link BurstBudget}): a bulk step whose half-second wait is up. The budget is split when the
+     * tick's first burst asks, before the players later in the loop have run their own {@link #tick()},
+     * so a wait one tick short of done already counts. A job paused for a crafting table, or waiting out
+     * the half second after a step boundary, has that wait reset and is not counted until it is nearly
+     * up, so it does not shrink the slice of the jobs that do burst.
+     */
+    public boolean burstsThisTick() {
+        return !isFinished() && isBulkStep() && progressTicks >= TICKS_PER_STEP - 1;
+    }
+
     public long totalCrafts() {
         return totalCrafts;
     }

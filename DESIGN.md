@@ -170,14 +170,20 @@ is decided by the node's `gradle.properties` plus `//? if >=1.21.11` branches in
   player's burst; `CraftJob.SERVER_TICK_BURST_BUDGET_NANOS` (10 ms, a fifth of a tick) is what ALL
   players' bursts together may spend in one server tick, so N players bursting at once cost about
   10 ms rather than N x 2 ms. `BurstBudget` (held by `CraftQueueManager`) splits it evenly: the first
-  bulk burst of a server tick opens the window and counts the jobs then in a bulk step, and every
+  bulk burst of a server tick opens the window and counts the jobs that burst this tick
+  (`CraftJob.burstsThisTick()`: a bulk step whose half-second wait is up, so a job paused for a
+  crafting table or waiting out a step boundary does not shrink the others' slice), and every
   burst of that tick is granted `min(2 ms, 10 ms / jobs)` (up to five bulk jobs keep the full 2 ms; 20
   get 0.5 ms each), whatever their position in the player loop. An even slice rather than a shared
   first-come-first-served pool, because the loop order is fixed by the player list and the first few
   players would otherwise take the whole budget every tick; the same slice for everyone also means
-  nothing has to rotate. Each burst reports the time it actually used back into the window. The clock
-  is checked after a craft, never before, so every job makes at least one craft per eligible tick even
-  with the budget spent (no starvation); the bound is therefore soft (the budget plus at most one
+  nothing has to rotate. Each burst is charged the time it used, clamped to its grant: the clock
+  is checked after a craft, so a burst runs up to one craft past its grant, and charging that
+  overshoot would shrink every later player's slice in the fixed loop order (the last pinned to
+  one craft per tick); time a burst leaves unused (64-craft cap, step boundary) stays in the
+  window for a burst the count missed, and the window never grants more than 10 ms in total.
+  The clock is checked after a craft, never before, so every job makes at least one craft per
+  eligible tick even with the budget spent (no starvation); the bound is therefore soft (the budget plus at most one
   craft of overshoot per burst), and past roughly 100-200 simultaneous bulk jobs the one-craft floor,
   not the 10 ms, sets the cost. Paced steps do one craft and never draw on it. The window is keyed on
   the SERVER tick (`MinecraftServer.getTickCount()`; `getTickCounter()` on 1.12.2), never
