@@ -13,11 +13,13 @@
       4. uploads one CurseForge file per node (loader + MC version),
       5. resets changelog.md and (for a prerelease) bumps `version` to the next prerelease.
 
-    SprawlCrafting ships NINE jars: fabric + neoforge x 1.21.1 / 26.1.2 / 26.2 / 26.3 (the modern Stonecutter
-    tree), plus a single Forge jar for the legacy 1.12.2 line (its own self-contained build under
-    forge-1.12.2/, injected as a synthetic release node via release.json's `legacyForge` block). Each
-    store upload is per-node and tags its own loader. The update manifest is keyed by MC version
-    (loader-agnostic), so both loaders of one MC version share a block (1.12.2 has the one Forge jar).
+    SprawlCrafting ships one jar per (MC version, loader): every versions/<node> of the modern Stonecutter
+    tree (auto-discovered: fabric/forge/neoforge across 1.20.1 / 1.21.1 / 26.1.2 / 26.2 / 26.3), a single
+    Forge jar for the legacy 1.12.2 line (its own self-contained build under forge-1.12.2/, injected as a
+    synthetic release node via release.json's `legacyForge` block), and the Forge + Fabric jars of the legacy
+    1.16.5 tree (legacy-1.16.5/, injected via release.json's `legacyTrees` array). Each store upload is
+    per-node and tags its own loader. The update manifest is keyed by MC version (loader-agnostic), so all
+    loaders of one MC version share a block.
 
     Changelog lines of the form "- {MC.VER} text" are routed only to that MC version's manifest block
     and store upload (tag stripped); GitHub always gets changelog.md verbatim. A tag naming an unknown
@@ -37,7 +39,7 @@
 .PARAMETER SkipTests    Bypass the pre-release test suite (stage 0). Publishes UNVERIFIED jars — warns loudly. To run
                         ONLY the suite (verify without publishing anything), use -Only Test instead.
 .PARAMETER NextVersion  Override the post-flight version bump (required when releasing a final, suffix-less version).
-.PARAMETER Build        Build first: `./gradlew buildAndCollect` (eight modern jars -> testing/dist/) plus the 1.12.2 Forge build (forge-1.12.2/build/libs/, host JDK 25 via legacyForge.javaHome).
+.PARAMETER Build        Build first: `./gradlew buildAndCollect` (every modern jar -> testing/dist/) plus each legacy build: the 1.12.2 Forge build (forge-1.12.2/build/libs/, host JDK 25 via legacyForge.javaHome) and the 1.16.5 tree (legacy-1.16.5/{forge,fabric}/build/libs/, host JDK 21 via the legacyTrees entry's javaHome).
 .PARAMETER ModrinthStaging  Target staging-api.modrinth.com for the Modrinth leg (see release/README.md caveat).
 
 .EXAMPLE  ./release/Invoke-Release.ps1                 # full dry run of the current version
@@ -105,18 +107,36 @@ if (Test-Path $manifestPath) {
 }
 Test-ScChangelogTags -ChangelogSplit $clSplit -KnownVersions (@($mcSet) + $manifestBlocks | Select-Object -Unique)
 
+# ── Version not already released (fail-fast BEFORE anything is committed or pushed) ──
+# Invoke-ScGithubRelease refuses an existing tag, but it runs AFTER the Manifest stage has committed
+# update.json and the GitHub stage has pushed it to main, so a run at an already-shipped version would
+# announce that version live in the manifest and then abort. Check up front instead. Only when the GitHub
+# stage will run: a resume with -Only Modrinth/CurseForge legitimately runs after the release exists.
+if (Want 'GitHub') {
+    $relExists = Test-ScGithubReleaseExists -Config $cfg -Tag $split.Full
+    if ($relExists) {
+        $msg = "GitHub release '$($split.Full)' already exists. Bump version in the root gradle.properties (or resume with -Only <later stages>)."
+        if ($Execute) { throw $msg }
+        Write-ScWarn "$msg -Execute would stop here."
+    } elseif ($null -eq $relExists) {
+        if ($Execute) { throw 'gh (GitHub CLI) not found; it is needed to check for and create the GitHub release.' }
+        Write-ScWarn 'gh not found; could not check whether this version is already released.'
+    }
+}
+
 # ── 0. Pre-release verification (gates the whole release) ─────────────────────
-# The full suite must pass before ANY publish. Two trees on two JDKs (modern needs 21; the legacy
-# 1.12.2 Forge build needs 25 — they can't share one Gradle host), so this stage orchestrates both:
+# The full suite must pass before ANY publish. The trees run on different JDKs (modern and legacy-1.16.5
+# need 21; the legacy 1.12.2 Forge build needs 25 — they can't share one Gradle host), so this stage
+# orchestrates all of them:
 #   0. solver library (ambient JAVA_HOME = JDK 21): ./gradlew -p solver-core build = the planner's JUnit
 #      suite on its Java 8 toolchain. Every shipped jar bundles this library and its tests run ONLY
 #      there, so it goes first: a planner regression aborts in seconds, before the slow trees build;
-#   1. legacy Forge tree (JDK 25 via legacyForge.javaHome): reobf jar (its `test` task has no sources
-#      of its own since the solver suite moved to solver-core) — built FIRST so the boot matrix's
-#      1.12.2-forge leg finds the jar it stages;
-#   2. modern tree (ambient JAVA_HOME = JDK 21): ./gradlew fullTestSuite = solver-core :check again
-#      (up to date after step 0) + every node's unit tests (via buildAndCollect) + the production
-#      boot/connect matrix (auto-skips if the testing/ harness absent).
+#   1. every legacy tree (own JavaHome from release.json: legacyForge = 1.12.2 on JDK 25, legacyTrees =
+#      1.16.5 on JDK 21): its VerifyTasks (the production jars) — built FIRST so the boot matrix's
+#      1.12.2-forge leg finds the jar it stages. A tree with several loader nodes (1.16.5) is verified ONCE;
+#   2. modern tree (ambient JAVA_HOME = JDK 21): ./gradlew fullTestSuite = solver-core :check again (up to
+#      date after step 0) + every node's unit tests (via buildAndCollect) + the production boot/connect
+#      matrix (auto-skips if the testing/ harness absent).
 # A non-zero exit anywhere aborts before the manifest is even rewritten. -SkipTests bypasses (ships
 # UNVERIFIED jars). Resuming with -Only <publish stages> omits Test, so a half-published release is not
 # re-gated on the slow suite.
@@ -124,9 +144,11 @@ if ((Want 'Test') -and -not $SkipTests) {
     Write-ScStep 'Pre-release verification (full test suite)'
     if (-not $Execute) {
         Write-ScDry 'would run the solver library suite: ./gradlew -p solver-core build (JUnit on a Java 8 toolchain)'
-        Write-ScDry 'would verify the legacy Forge tree (JDK 25): forge-1.12.2/gradlew.bat test reobfJar'
-        Write-ScDry 'would run the modern tree: ./gradlew fullTestSuite (solver-core check + unit tests via buildAndCollect + boot/connect matrix; matrix auto-skips if testing/ absent)'
-        Write-ScDry 'a non-zero exit from any of them would ABORT the release before any publish.'
+        foreach ($ln in @($nodes | Where-Object { $_.IsLegacy } | Group-Object BuildDir | ForEach-Object { $_.Group[0] })) {
+            Write-ScDry "would verify the legacy $($ln.McVersion) tree: $($ln.BuildDir)/gradlew.bat $($ln.VerifyTasks -join ' ')  [JAVA_HOME=$(if($ln.JavaHome){$ln.JavaHome}else{'(current)'})]"
+        }
+        Write-ScDry 'would run the modern tree: ./gradlew fullTestSuite (unit tests via buildAndCollect + boot/connect matrix; matrix auto-skips if testing/ absent)'
+        Write-ScDry 'a non-zero exit from either would ABORT the release before any publish.'
     } else {
         # 0. Solver library suite FIRST — every shipped jar bundles it, and it is the fastest gate.
         Write-ScStep 'Verify solver library (./gradlew -p solver-core build)'
@@ -136,24 +158,25 @@ if ((Want 'Test') -and -not $SkipTests) {
             if ($LASTEXITCODE -ne 0) { throw "solver-core build/tests FAILED (exit $LASTEXITCODE) — release aborted before any publish. Fix the solver, or pass -SkipTests to bypass (ships unverified jars)." }
         } finally { Pop-Location }
         Write-ScOk 'Solver library verified (JUnit suite).'
-        # 1. Legacy Forge tree — its reobf jar feeds the matrix's 1.12.2-forge leg.
-        foreach ($ln in @($nodes | Where-Object { $_.IsLegacy })) {
+        # 1. Legacy trees FIRST — the 1.12.2 reobf jar feeds the matrix's 1.12.2-forge leg. One run per tree
+        #    (the 1.16.5 tree's forge + fabric nodes share a build), on that tree's configured JDK.
+        foreach ($ln in @($nodes | Where-Object { $_.IsLegacy } | Group-Object BuildDir | ForEach-Object { $_.Group[0] })) {
             $lnDir = Join-Path $root $ln.BuildDir
-            Write-ScStep "Verify legacy $($ln.McVersion) ($($ln.BuildDir)/gradlew test $($ln.BuildTask), JDK 25)"
+            Write-ScStep "Verify legacy $($ln.McVersion) ($($ln.BuildDir)/gradlew $($ln.VerifyTasks -join ' '))"
             if (-not $ln.JavaHome) {
-                Write-ScWarn "legacyForge.javaHome not set — using the current JAVA_HOME. RFG needs a JDK 25 host; set legacyForge.javaHome in release.json if this fails."
+                Write-ScWarn "No javaHome configured for legacy $($ln.McVersion) — using the current JAVA_HOME. Set javaHome in its release.json entry if this fails (1.12.2 needs JDK 25, 1.16.5 needs JDK 21)."
             }
             $savedJavaHome = $env:JAVA_HOME
             Push-Location $lnDir
             try {
                 if ($ln.JavaHome) { $env:JAVA_HOME = $ln.JavaHome }
-                & (Join-Path $lnDir 'gradlew.bat') 'test' $ln.BuildTask '--console=plain'
+                & (Join-Path $lnDir 'gradlew.bat') @($ln.VerifyTasks) '--console=plain'
                 if ($LASTEXITCODE -ne 0) { throw "legacy $($ln.McVersion) verification FAILED (exit $LASTEXITCODE) — release aborted before any publish. Fix the tests, or pass -SkipTests to bypass (ships unverified jars)." }
             } finally {
                 Pop-Location
                 $env:JAVA_HOME = $savedJavaHome
             }
-            Write-ScOk "Legacy $($ln.McVersion) verified (reobf jar built)."
+            Write-ScOk "Legacy $($ln.McVersion) verified (unit tests + production jars)."
         }
         # 2. Modern tree: per-node unit tests (via buildAndCollect) + the boot/connect matrix.
         Write-ScStep 'Verify modern tree (./gradlew fullTestSuite)'
@@ -183,31 +206,32 @@ if ($Build) {
         Write-ScOk 'buildAndCollect succeeded.'
     }
 
-    # The legacy 1.12.2 jar is produced by its OWN self-contained Gradle build (separate wrapper, RFG,
-    # host JDK 25) — root buildAndCollect never produces it. Build each legacy node with a second gradlew
-    # invocation, switching JAVA_HOME to the configured JDK (the modern build needs JDK 21, the forge build
-    # needs JDK 25 — they can't share one host JDK in a single run).
-    foreach ($ln in @($nodes | Where-Object { $_.IsLegacy })) {
+    # The legacy jars (1.12.2, and the 1.16.5 forge + fabric pair) are produced by their OWN self-contained
+    # Gradle builds (separate wrappers) — root buildAndCollect never produces them. Build each legacy TREE
+    # with its own gradlew invocation (once per tree, however many loader nodes it feeds), switching
+    # JAVA_HOME to the tree's configured JDK (modern + 1.16.5 need JDK 21, the 1.12.2 forge build needs 25 —
+    # they can't share one host JDK in a single run).
+    foreach ($ln in @($nodes | Where-Object { $_.IsLegacy } | Group-Object BuildDir | ForEach-Object { $_.Group[0] })) {
         $lnDir = Join-Path $root $ln.BuildDir
-        Write-ScStep "Build legacy $($ln.McVersion) jar ($($ln.BuildDir)/gradlew $($ln.BuildTask))"
+        Write-ScStep "Build legacy $($ln.McVersion) jar(s) ($($ln.BuildDir)/gradlew $($ln.BuildTasks -join ' '))"
         if (-not $Execute) {
-            Write-ScDry "would run: $($ln.BuildDir)/gradlew.bat $($ln.BuildTask)  [JAVA_HOME=$(if($ln.JavaHome){$ln.JavaHome}else{'(current)'})]"
+            Write-ScDry "would run: $($ln.BuildDir)/gradlew.bat $($ln.BuildTasks -join ' ')  [JAVA_HOME=$(if($ln.JavaHome){$ln.JavaHome}else{'(current)'})]"
             continue
         }
         if (-not $ln.JavaHome) {
-            Write-ScWarn "legacyForge.javaHome not set — building $($ln.McVersion) with the current JAVA_HOME. RFG requires a JDK 25 host; set legacyForge.javaHome in release.json if this fails."
+            Write-ScWarn "No javaHome configured for legacy $($ln.McVersion) — building with the current JAVA_HOME. Set javaHome in its release.json entry if this fails (1.12.2 needs JDK 25, 1.16.5 needs JDK 21)."
         }
         $savedJavaHome = $env:JAVA_HOME
         Push-Location $lnDir
         try {
             if ($ln.JavaHome) { $env:JAVA_HOME = $ln.JavaHome }
-            & (Join-Path $lnDir 'gradlew.bat') $ln.BuildTask
+            & (Join-Path $lnDir 'gradlew.bat') @($ln.BuildTasks)
             if ($LASTEXITCODE -ne 0) { throw "legacy $($ln.McVersion) build failed (exit $LASTEXITCODE)." }
         } finally {
             Pop-Location
             $env:JAVA_HOME = $savedJavaHome
         }
-        Write-ScOk "Built legacy $($ln.McVersion) jar."
+        Write-ScOk "Built legacy $($ln.McVersion) jar(s)."
     }
 }
 
@@ -266,7 +290,7 @@ if (Want 'Modrinth') {
             $gvs = Get-ScProp $cfg.storeGameVersionsByMc $n.McVersion @($n.McVersion)
             Invoke-ScModrinthUpload -Config $cfg -Title (Get-ScStoreTitle $split $n.McVersion $n.LoaderDisplay) `
                 -VersionNumber "$ver+mc$($n.McVersion)-$($n.MrLoader)" -Changelog $cl -VersionType $chan.Modrinth `
-                -GameVersions @($gvs) -Loader $n.MrLoader -Jar $jarMap[$n.Node] -IncludeJei -IncludeMixinBooter:$n.IsLegacy -Featured:$n.IsFeatured `
+                -GameVersions @($gvs) -Loader $n.MrLoader -Jar $jarMap[$n.Node] -IncludeJei:$n.HasJei -IncludeMixinBooter:$n.NeedsMixinBooter -Featured:$n.IsFeatured `
                 -ApiBase $apiBase -Execute:($Execute -and $mrEnabled)
         }
     }
@@ -290,7 +314,7 @@ if (Want 'CurseForge') {
             Invoke-ScCurseForgeUpload -Config $cfg -Title (Get-ScStoreTitle $split $n.McVersion $n.LoaderDisplay) `
                 -Changelog $cl -ReleaseType $chan.CurseForge -McVersion $n.McVersion -LoaderName $n.CfLoaderName `
                 -Jar $jarMap[$n.Node] -ExtraGameVersions $extra -Environments $cfEnvs -JavaVersion $javaArg `
-                -IncludeJei -IncludeMixinBooter:$n.IsLegacy -Execute:($Execute -and $cfEnabled)
+                -IncludeJei:$n.HasJei -IncludeMixinBooter:$n.NeedsMixinBooter -Execute:($Execute -and $cfEnabled)
         }
     }
 }
@@ -300,8 +324,8 @@ if (Want 'PostFlight') {
     Write-ScStep 'Post-flight: reset changelog + bump version'
     Reset-ScChangelog -RepoRoot $root -ReleasedVersion $ver -Execute:$Execute
     $next = Step-ScVersion -RepoRoot $root -Split $split -NextVersion $NextVersion -Execute:$Execute
-    # The version is single-sourced in root gradle.properties (the 1.12.2 build reads it from there), so the
-    # bump only ever touches this one file alongside the changelog reset.
+    # The version is single-sourced in root gradle.properties (the 1.12.2 and 1.16.5 builds read it from there),
+    # so the bump only ever touches this one file alongside the changelog reset.
     Invoke-ScGitCommit -RepoRoot $root -Paths @('changelog.md','gradle.properties') `
         -Message "Reset changelog and bump $ver -> $next" -Execute:$Execute
     Invoke-ScGitPush -RepoRoot $root -Execute:$Execute

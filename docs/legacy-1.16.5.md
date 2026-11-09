@@ -58,6 +58,11 @@ Forge names. Production is unaffected (Fabric jar + refmap are intermediary; For
   (`org.spongepowered:mixin:0.8.5:processor`) write an SRG refmap, and `renamer.classes(jar)` with
   `mappings renamer.mixin.generatedMappings` renames shadows to `field_`/`func_`. `RenameJar` is not an
   archive task: set `output`, not `archiveVersion`.
+- **Renamer adds a decompiler artifact to the shipped jar.** Unless told otherwise the Renamer tool writes
+  `fernflower_abstract_parameter_names.txt` into the jar it renames. `forge/build.gradle` passes
+  `--disable-abstract-param` through `renameJar`'s `additionalArgs`; after any Renamer bump re-check with
+  `jar tf forge/build/libs/sprawlcrafting-<ver>+mc1.16.5-forge.jar | grep -i fernflower` (must print nothing).
+  The Fabric jar never had it.
 - **Dev runs need `-mixin.config=` args** (the manifest `MixinConfigs` is only read from jars). The
   "Reference map could not be read" warning in dev is expected.
 - **Forge bundles Mixin 0.8.4, no MixinExtras**: use `@Redirect`/`@ModifyConstant`, not `@WrapOperation`.

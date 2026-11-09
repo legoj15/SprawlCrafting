@@ -24,6 +24,12 @@
   "26.3": {
     "1.0.3": "- Added 26.3 support (Fabric and NeoForge)"
   },
+  "1.20.1": {
+    "1.0.3": "- Added 1.20.1 support (Forge and Fabric)"
+  },
+  "1.16.5": {
+    "1.0.3": "- Added 1.16.5 support (Forge and Fabric)"
+  },
   "promos": {
     "1.21.1-latest": "1.0.3",
     "1.21.1-recommended": "1.0.3",
@@ -34,6 +40,10 @@
     "1.12.2-recommended": "1.0.3",
     "1.12.2-latest": "1.0.3",
     "26.3-recommended": "1.0.3",
-    "26.3-latest": "1.0.3"
+    "26.3-latest": "1.0.3",
+    "1.20.1-recommended": "1.0.3",
+    "1.20.1-latest": "1.0.3",
+    "1.16.5-recommended": "1.0.3",
+    "1.16.5-latest": "1.0.3"
   }
 }

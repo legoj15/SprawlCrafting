@@ -7,13 +7,20 @@ idiom (PowerShell module + JSON config; secrets via env vars).
 Everything is derived from a single input — `version` in the root `gradle.properties` — plus the
 per-node `versions/<node>/gradle.properties`. You bump `version`, build the jars, run this.
 
-SprawlCrafting ships **nine jars**: Fabric + NeoForge × 1.21.1 / 26.1.2 / 26.2 / 26.3 (the modern Stonecutter
-tree), plus one **Forge** jar for the legacy **1.12.2** line. The 1.12.2 build lives under `forge-1.12.2/`
-(its own self-contained Gradle build) and is wired in as a synthetic release node via the `legacyForge`
-block in `config/release.json` — it builds with a second `gradlew` invocation (host JDK 25) and its jar
-is named `sprawlcrafting-<ver>.jar` (no `+mc…-loader` tag). Each store upload is **per-node** and tags
-its own loader. The update manifest is keyed by **MC version** (loader-agnostic), so both loaders of one
-MC version share a block (1.12.2 has the single Forge jar).
+SprawlCrafting ships **one jar per (MC version, loader)**: every `versions/<node>`
+of the modern Stonecutter tree (auto-discovered: Fabric / Forge / NeoForge across 1.20.1, 1.21.1, 26.1.2, 26.2
+and 26.3), plus the two legacy builds that live outside it. Legacy builds are wired in as
+synthetic release nodes through `config/release.json`:
+
+- `legacyForge` — the **1.12.2** Forge jar from `forge-1.12.2/` (host JDK 25, jar `sprawlcrafting-<ver>.jar`).
+- `legacyTrees[]` — one entry per extra self-contained tree; today `legacy-1.16.5/` (host JDK 21), which yields a
+  **Forge** and a **Fabric** node from one Gradle build (`:forge:build :fabric:build`, jars
+  `<loader>/build/libs/sprawlcrafting-<ver>+mc1.16.5-<loader>.jar`). Per loader: `jei` says whether the stores
+  list JEI as an optional dependency (Forge only; Fabric 1.16.5 has no JEI). A tree's Gradle tasks run once per
+  tree, not once per loader.
+
+Each store upload is **per-node** and tags its own loader. The update manifest is keyed by **MC version**
+(loader-agnostic), so all loaders of one MC version share a block.
 
 ## Safe by default
 
@@ -26,7 +33,7 @@ no tokens.
 # preview the whole release (no tokens needed)
 ./release/Invoke-Release.ps1
 
-# build all nine jars first (eight modern + the 1.12.2 Forge jar), then preview
+# build every jar first (the modern nodes, the 1.12.2 Forge jar and the 1.16.5 Forge+Fabric pair), then preview
 ./release/Invoke-Release.ps1 -Build
 
 # publish for real
@@ -59,7 +66,7 @@ native checkers (see the 1.12.2 build's `mcmod.info` `updateJSON` and the NeoFor
 | Stage | Action |
 |---|---|
 | **Manifest** | Adds this version's changelog to every MC block of `update.json` (general lines + that block's `{mc}`-tagged lines, Markdown stripped to plain text), seeds blocks/promos for any new MC line, repoints promos per policy, ASCII-escapes + validates, commits (`Announce <ver> in update manifest`). This commit is what gets tagged. |
-| **GitHub** | `gh release create <ver>` — tag = `version`, title expanded (e.g. `1.0.0 Release Candidate 4`), body = `changelog.md` verbatim, **all nine** node jars attached (eight modern + the 1.12.2 Forge jar), `--latest` unless an `ar`/`br` build (then `--prerelease`). |
+| **GitHub** | `gh release create <ver>` — tag = `version`, title expanded (e.g. `1.0.0 Release Candidate 4`), body = `changelog.md` verbatim, **every** node jar attached (modern nodes + the 1.12.2 Forge jar + the 1.16.5 Forge/Fabric jars), `--latest` unless an `ar`/`br` build (then `--prerelease`). |
 | **Modrinth** | One version per node, `version_number = <ver>+mc<mc>-<loader>` (unique), `loaders = [<loader>]`. Title includes the loader. |
 | **CurseForge** | One file per node, tagged with its MC version, loader (`Fabric`/`NeoForge`), the **environment** (`Client`+`Server`), and the **Java tier** (`Java <n>` from the node's `java_version`). |
 | **PostFlight** | Resets `changelog.md` to `###### Changes since <ver>:` (empty body) and, for a prerelease, bumps `version` to the next prerelease (`rc4`→`rc5`); commits + pushes. A **final** release leaves the version alone unless you pass `-NextVersion 1.0.1`. |
@@ -96,7 +103,7 @@ End-of-support lines can be pinned via `endOfSupportLines` in `config/release.js
 
 ## Prerequisites checklist before `-Execute`
 
-- [ ] `./gradlew buildAndCollect` passed → `testing/dist/` has the eight modern jars, **and** the 1.12.2 Forge jar is built at `forge-1.12.2/build/libs/sprawlcrafting-<ver>.jar` (or pass `-Build` to do both — the Forge build needs a JDK 25 host; set `legacyForge.javaHome` if your default JDK isn't 25).
+- [ ] `./gradlew buildAndCollect` passed → `testing/dist/` has the modern jars, **and** the legacy jars are built: `forge-1.12.2/build/libs/sprawlcrafting-<ver>.jar` and `legacy-1.16.5/{forge,fabric}/build/libs/sprawlcrafting-<ver>+mc1.16.5-<loader>.jar` (or pass `-Build` to do all — the 1.12.2 build needs a JDK 25 host, the 1.16.5 tree JDK 21; set `legacyForge.javaHome` / the `legacyTrees` entry's `javaHome` if your default JDK differs).
 - [ ] `./testing/Invoke-ReleaseTests.ps1` gate is green — **including the `1.12.2-forge` leg**, which boots the reobf jar in a real Forge 1.12.2 + MixinBooter client and verifies both mixin configs registered (this is the only automated check of the jar-manifest `MixinConfigs` wiring; see `testing/README.md`).
 - [ ] `changelog.md` finalized for this version.
 - [ ] On `main`, working tree otherwise clean (the script commits `update.json`, then `changelog.md`+`gradle.properties`).
