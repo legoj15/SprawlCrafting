@@ -25,3 +25,8 @@ One line per delegation: agent, lane, outcome, escalations. Used to tune the mod
 - enchant-ledger review (7984e17). glm-flash request-changes; shop26 lane_busy, no stand-in. 1 medium (ledger not drained on plain takes), 2 lows (gridLayout degenerate-recipe guards, 1.12.2 ledgerKey with damageable+subtyped items), 1 doc note. Filed as #12. Not fixed: past the curfew.
 - #12 fix: impl (Sonnet) bdce0e8 fixed all 4 findings, all trees green. review_fast round 1: both lanes flagged the same regression (a plain pick drained the count meant for the job's own altered copy, which cancelled the job). impl round 2 (same agent) ed491c2: a plain pick drains only when no refused copy of that identity is in the pool; all trees green. Round-2 review_fast launched on ed491c2.
 - Round-2 review_fast on ed491c2: shop26 and glm-flash both approved, 1 low each (residual stale-count cases). Round 3 was reached, so the orchestrator adjudicated: they were filed as a follow-up issue, not fixed. The fix loop ends on reviewed sha ed491c2.
+
+## 2026-11-09 — solver library extraction, issue sweep
+
+- Orchestrator: closed #5 #6 #7 #9 #12 (shipped on main); migrated HANDOFF lows to #14-#17; removed forge-1.12.2/todos.md pointer. #2 put on hold by owner (design rule: every source item visible in the open screen).
+- third-party review_final (dgx + glm-5.3) on the ports range 4bcbd34..ed491c2: both "comment", no dupe/loss/wire break; 5 lows, all filed: #10 note (dual case, fuzzed), #18 (slot-alternative backtracking), #11 note (saturated flag after top-up, feasible() batch cap), #19 (reach rescan every tick). glm-5.3 ran a Python port + 3000-case fuzz: high-value lane.
