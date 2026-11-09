@@ -82,7 +82,7 @@ public final class CraftRequests {
         if (outcome instanceof StartOutcome.Started started) {
             feedback = Component.translatable("sprawlcrafting.craft.started",
                     started.job().targetResult().getHoverName(),
-                    com.legoj15.sprawlcrafting.craft.solver.CountFormat.format(started.job().totalCrafts()));
+                    com.legoj15.solver.CountFormat.format(started.job().totalCrafts()));
         } else if (outcome instanceof StartOutcome.Rejected rejected) {
             feedback = describeRejection(holder, rejected.outcome());
         } else {

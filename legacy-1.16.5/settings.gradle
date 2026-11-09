@@ -9,5 +9,13 @@ plugins {
     id 'org.gradle.toolchains.foojay-resolver-convention' version '1.0.0'
 }
 rootProject.name = 'sprawlcrafting-legacy-1.16.5'
+
+// The Minecraft-free planner library (com.legoj15:solver) from this checkout: a composite build, so the
+// dependency on it by coordinates resolves to ../../solver-core with no publish step.
+includeBuild('../solver-core') {
+    dependencySubstitution {
+        substitute module('com.legoj15:solver') using project(':')
+    }
+}
 include 'forge'
 include 'fabric'

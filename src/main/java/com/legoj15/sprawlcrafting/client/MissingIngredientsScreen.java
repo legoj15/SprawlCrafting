@@ -5,7 +5,7 @@ import java.util.List;
 
 import com.legoj15.sprawlcrafting.craft.ItemDemand;
 import com.legoj15.sprawlcrafting.craft.ShortfallView;
-import com.legoj15.sprawlcrafting.craft.solver.CountFormat;
+import com.legoj15.solver.CountFormat;
 
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.gui.screens.Screen;

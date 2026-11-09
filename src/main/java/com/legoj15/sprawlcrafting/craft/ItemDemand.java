@@ -2,7 +2,7 @@ package com.legoj15.sprawlcrafting.craft;
 
 import java.util.List;
 
-import com.legoj15.sprawlcrafting.craft.solver.CountFormat;
+import com.legoj15.solver.CountFormat;
 
 import net.minecraft.resources.ResourceLocation;
 //? if >=1.20.5 {

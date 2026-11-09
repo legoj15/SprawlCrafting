@@ -1,0 +1,7 @@
+# JitPack publishes ONLY the solver library (solver-core/, com.legoj15:solver), not the mod builds.
+# JitPack serves it under its own com.github.* coordinates (check the tag's build log on jitpack.io);
+# see docs/solver-library.md.
+jdk:
+  - openjdk21
+install:
+  - ./gradlew -p solver-core publishToMavenLocal

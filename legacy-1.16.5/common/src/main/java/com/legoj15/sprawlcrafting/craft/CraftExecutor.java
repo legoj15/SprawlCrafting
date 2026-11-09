@@ -7,7 +7,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-import com.legoj15.sprawlcrafting.craft.solver.ProducedLedger;
+import com.legoj15.solver.ProducedLedger;
 
 import net.minecraft.entity.player.PlayerInventory;
 import net.minecraft.entity.player.ServerPlayerEntity;

@@ -17,8 +17,8 @@
 plugins {
     id("java")
     id("net.minecraftforge.gradle")
-    // Jar-in-jar for MixinExtras (the one thing Forge 1.21.1 does not bundle that our mixins need). Applied
-    // on every node, but only registered (jarJar.register below) when the node pins mixinextras_version.
+    // Jar-in-jar: the solver library on every node, plus MixinExtras where the Forge line does not bundle it
+    // (1.20.1 / 1.21.1, the nodes that pin mixinextras_version).
     id("net.minecraftforge.jarjar")
 }
 
@@ -61,8 +61,7 @@ val jeiVersionRange = (project.findProperty("jei_version_range") as String?) ?: 
 val hasRei = project.findProperty("rei_version") != null
 // JEI's compat layer (compat/jei, @JeiPlugin) exists only on nodes that pin a jei_version.
 val hasJei = jeiVersion != null
-// Jar naming (sprawlcrafting-<ver>+mc<mc>-forge.jar), shared by the slim `jar` and the shipped `jarJar`
-// (or by the plain `jar` alone on nodes without jar-in-jar).
+// Jar naming (sprawlcrafting-<ver>+mc<mc>-forge.jar), shared by the slim `jar` and the shipped `jarJar`.
 val jarBaseName = "sprawlcrafting"
 val jarVersion = "$modVersion+mc$minecraftVersion-forge"
 
@@ -80,14 +79,14 @@ java {
 // PayloadCodecTest exclusion below 1.20.5). No-ops on the 1.21.1 node.
 apply(from = rootProject.file("gradle/legacy-node.gradle.kts"))
 
-// ─── Shared solver-core module ───────────────────────────────────────────────────────────────
-// The loader/version-agnostic craft solver (RecipeGraphSolver + PlannedStep + its test suite) lives
-// in its own pure-Java-8 module at solver-core/, so the legacy-Forge 1.12.2 build can compile the
-// EXACT same source (Java 8 has no records/sealed types). It carries no Stonecutter directives and
-// no Minecraft imports, so it just folds into this node's main+test source sets and ships inside the
-// mod jar like any other source — single source of truth, zero duplication.
-sourceSets["main"].java.srcDir(rootProject.file("solver-core/src/main/java"))
-sourceSets["test"].java.srcDir(rootProject.file("solver-core/src/test/java"))
+// ─── Solver library ──────────────────────────────────────────────────────────────────────────
+// The Minecraft-free planner is the separate library com.legoj15:solver (solver-core/, its own build and
+// its own JUnit suite). settings.gradle.kts substitutes it from this checkout (composite build). It is
+// bundled jar-in-jar on EVERY Forge node, NEVER shaded: FML loads the nested copy as a JPMS module, and
+// another mod that nests the same library (the bot mod) must resolve to ONE copy, not two split packages.
+// The range lets FML pick the newest bundled 1.x across mods.
+val solverVersion = property("solver_version") as String
+val solverRange = "[$solverVersion,${solverVersion.substringBefore('.').toInt() + 1}.0.0)"
 
 repositories {
     // ForgeGradle 7's repository helpers: the Minecraft "mavenizer" (builds the patched, mapped
@@ -100,6 +99,16 @@ repositories {
     maven("https://maven.parchmentmc.org")
     mavenCentral()
 }
+
+// Dev-run classpath for the solver library on the SRG (FML 47) line: FML 47 does not load a plain
+// non-mod jar from the JVM classpath (runServer dies with NoClassDefFoundError on the first solver
+// class), so it goes on Forge's minecraft_classpath via the run's extraLibraries below. FG7's 1.20.6+
+// launch puts the whole JVM classpath in the boot module layer, so the other nodes need nothing extra.
+val solverDevLibrary = configurations.create("solverDevLibrary") {
+    isCanBeConsumed = false
+    isTransitive = false
+}
+dependencies { solverDevLibrary("com.legoj15:solver:$solverVersion") }
 
 minecraft {
     // Parchment layers param names + javadocs over Mojmap; FG7 wants "<date>-<mc>" for the version.
@@ -122,6 +131,8 @@ minecraft {
             // enableMixinRefmaps (below) already adds `--mixin.config <config>` to every run.
             if (!srgRuntime) {
                 args("--mixin.config=$modId.mixins.json")
+            } else {
+                extraLibraries.from(solverDevLibrary)
             }
         }
         register("client") {
@@ -140,12 +151,10 @@ minecraft {
 // Registers the `jarJar` configuration + task (must precede the dependency declarations below). The
 // shipped artifact is the jar-in-jar ("all") jar with no classifier; the plain classes-only `jar`
 // becomes the "-slim" intermediate (the root buildAndCollect skips it).
-if (mixinExtrasVersion != null) {
-    jarJar.register {
-        archiveClassifier = null
-        archiveBaseName = jarBaseName
-        archiveVersion = jarVersion
-    }
+jarJar.register {
+    archiveClassifier = null
+    archiveBaseName = jarBaseName
+    archiveVersion = jarVersion
 }
 
 dependencies {
@@ -183,6 +192,11 @@ dependencies {
             }
         }
     }
+
+    // The solver library: compiled against and on the dev runtime (implementation), nested in the
+    // shipped jar with a [current, next-major) range (jarJar). Never shaded (see the header above).
+    implementation("com.legoj15:solver:$solverVersion")
+    jarJar.configure("jarJar"("com.legoj15:solver:$solverVersion")!!) { setRange(solverRange) }
 
     // MixinExtras: compile against the common API, load the Forge loader jar on the dev runtime, and
     // jar-in-jar it into the shipped mod (the JarJar plugin constrains the bundled copy to
@@ -257,8 +271,8 @@ tasks.named("compileJava") {
 }
 
 tasks.jar {
-    // With jar-in-jar the plain classes-only jar is the "-slim" intermediate; without it, this IS the shipped jar.
-    archiveClassifier = if (mixinExtrasVersion != null) "slim" else null
+    // The plain classes-only jar is the "-slim" intermediate; the shipped jar is `jarJar`'s output.
+    archiveClassifier = "slim"
     archiveBaseName = jarBaseName
     archiveVersion = jarVersion
     // Forge's Mixin reads this manifest attribute to find the shared config (the dev runs above pass
@@ -269,9 +283,10 @@ tasks.jar {
 }
 
 // ─── SRG reobfuscation (Forge < 1.20.6 only) ─────────────────────────────────────────────────
-// Chain on these nodes: jar (Mojmap classes + the AP's SRG refmap, "-slim") -> jarJar (+ nested
-// MixinExtras, "-dev"; still Mojmap, not for players) -> renameJarJar (Mojmap -> SRG classes, no classifier:
-// the shipped sprawlcrafting-<ver>+mc<mc>-forge.jar). The root buildAndCollect skips -slim and -dev.
+// Chain on these nodes: jar (Mojmap classes + the AP's SRG refmap, "-slim") -> jarJar (+ nested solver
+// library + MixinExtras, "-dev"; still Mojmap, not for players) -> renameJarJar (Mojmap -> SRG classes,
+// no classifier: the shipped sprawlcrafting-<ver>+mc<mc>-forge.jar). Renamer leaves the nested jars
+// alone, which is right for both: neither references Minecraft. The root buildAndCollect skips -slim and -dev.
 if (srgRuntime) {
     val rn = renamer!!
     // Default mapping for every Renamer task here (the JEI dependency renames above included): the

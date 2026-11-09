@@ -3,7 +3,7 @@ package com.legoj15.sprawlcrafting.forge.client;
 import java.io.IOException;
 import java.util.List;
 
-import com.legoj15.sprawlcrafting.craft.solver.CountFormat;
+import com.legoj15.solver.CountFormat;
 import com.legoj15.sprawlcrafting.forge.craft.ItemDemand;
 import com.legoj15.sprawlcrafting.forge.craft.ShortfallView;
 

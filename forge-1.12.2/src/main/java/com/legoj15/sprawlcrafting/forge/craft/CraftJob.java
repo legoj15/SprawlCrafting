@@ -4,7 +4,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
-import com.legoj15.sprawlcrafting.craft.solver.ProducedLedger;
+import com.legoj15.solver.ProducedLedger;
 
 import net.minecraft.item.ItemStack;
 import net.minecraft.util.ResourceLocation;

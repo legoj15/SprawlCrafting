@@ -15,7 +15,7 @@ import org.apache.logging.log4j.Logger;
  * job driver (via the sided proxy), and shutdown cleanup.
  *
  * <p>All gameplay logic lives in {@code com.legoj15.sprawlcrafting.forge.craft} on top of the
- * shared, pure-Java-8 {@code com.legoj15.sprawlcrafting.craft.solver} core (compiled in from
+ * shared, pure-Java-8 {@code com.legoj15.solver} core (compiled in from
  * ../solver-core).
  */
 @Mod(

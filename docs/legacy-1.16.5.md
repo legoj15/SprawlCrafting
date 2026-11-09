@@ -12,7 +12,7 @@ Java 8 bytecode, same `solver-core` planner. Forge is the priority loader.
 | `common/src/main/resources` | shared mixin config, lang, textures, icon, `pack.mcmeta` (pack_format 6) |
 | `forge/` | ForgeGradle 7 build, `platform/forge/*`, JEI compat (`compat/jei/*`), the JEI button mixin (`mixin/jei/*`, own config `sprawlcrafting.jei.mixins.json`), `META-INF/mods.toml` |
 | `fabric/` | Loom (remap variant) build, `platform/fabric/*`, Mod Menu entrypoint, `fabric.mod.json` |
-| `../solver-core` | pulled in as a `srcDir` by both loaders; its JUnit suite runs on a Java 8 toolchain in both |
+| `../solver-core` | the solver library `com.legoj15:solver`, a composite build (`settings.gradle`); Forge shades its classes (Forge 36 has no jar-in-jar), Fabric nests it (`include`). Its JUnit suite runs in its own build. See `solver-library.md` |
 
 Version comes from the root `gradle.properties` (`version=`), read by `legacy-1.16.5/build.gradle`.
 Pins live in `legacy-1.16.5/gradle.properties`: Forge 36.2.42, Fabric Loader 0.16.14, Fabric API
@@ -24,7 +24,7 @@ jar next to it is named and not for players) and `fabric/build/libs/sprawlcrafti
 ## Running it (Windows, PowerShell tool)
 
 - `legacy-1.16.5\gw.ps1 :forge:build :fabric:build` — wrapper on JDK 21 (FG7/Loom need a modern host
-  JDK; compile, test and dev runs use an auto-provisioned Java 8 toolchain). `gw.sh` is the Git Bash twin.
+  JDK; compile and dev runs use an auto-provisioned Java 8 toolchain). `gw.sh` is the Git Bash twin.
 - `legacy-1.16.5\smoke.ps1 -Task :forge:runServer` (or `:fabric:runServer`) — writes `eula.txt` and an
   offline `server.properties` (port 25599) into `run-server/`, waits for `Done (`, kills the tree.
 - `legacy-1.16.5\smoke.ps1 -Task :forge:runClient -Gradle '-Pjei'` (or `:fabric:runClient`) — waits for

@@ -2,7 +2,7 @@ package com.legoj15.sprawlcrafting.craft;
 
 import java.util.List;
 
-import com.legoj15.sprawlcrafting.craft.solver.ProducedLedger;
+import com.legoj15.solver.ProducedLedger;
 
 import net.minecraft.util.ResourceLocation;
 import net.minecraft.util.math.BlockPos;

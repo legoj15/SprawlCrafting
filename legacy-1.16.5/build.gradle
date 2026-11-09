@@ -5,7 +5,8 @@
 // and its own loader toolchains: ForgeGradle 7 (:forge) and Fabric Loom remap (:fabric), both on this
 // build's Gradle 9.5 wrapper, host JDK 21 (use ./gw.sh or gw.ps1). Shared sources:
 //   common/src/main/java       — all 1.16.5 game logic, client UI, mixins (Forge 1.16.5 naming)
-//   ../solver-core             — the Minecraft-free planner + its JUnit suite (run on Java 8)
+//   ../solver-core             — the Minecraft-free planner library (com.legoj15:solver), a composite
+//                                build (settings.gradle); its JUnit suite runs in its own build
 // See docs/legacy-1.16.5.md for the toolchain notes and traps.
 // =====================================================================================
 plugins {
@@ -21,6 +22,17 @@ ext.modVersion = {
     def v = p.getProperty('version')
     if (!v?.trim()) {
         throw new GradleException("No 'version' in ../gradle.properties — the 1.16.5 build reads the mod version from there.")
+    }
+    return v.trim()
+}()
+
+// The solver library's version, from its own build (solver-core/gradle.properties).
+ext.solverVersion = {
+    def p = new Properties()
+    file('../solver-core/gradle.properties').withInputStream { p.load(it) }
+    def v = p.getProperty('solver_version')
+    if (!v?.trim()) {
+        throw new GradleException("No 'solver_version' in ../solver-core/gradle.properties.")
     }
     return v.trim()
 }()

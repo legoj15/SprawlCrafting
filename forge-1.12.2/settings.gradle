@@ -33,3 +33,11 @@ plugins {
 }
 
 rootProject.name = 'sprawlcrafting-forge-1.12.2'
+
+// The Minecraft-free planner library (com.legoj15:solver) from this checkout: a composite build, so the
+// dependency on it by coordinates resolves to ../solver-core with no publish step.
+includeBuild('../solver-core') {
+    dependencySubstitution {
+        substitute module('com.legoj15:solver') using project(':')
+    }
+}

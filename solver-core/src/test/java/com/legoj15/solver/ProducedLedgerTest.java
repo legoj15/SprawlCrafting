@@ -1,4 +1,4 @@
-package com.legoj15.sprawlcrafting.craft.solver;
+package com.legoj15.solver;
 
 import org.junit.jupiter.api.Test;
 

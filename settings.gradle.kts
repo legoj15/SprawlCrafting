@@ -17,6 +17,15 @@ plugins {
     id("dev.kikugie.stonecutter") version "0.9.6"
 }
 
+// The Minecraft-free planner is its own library build (com.legoj15:solver, solver-core/). Composite
+// build: every node depends on it by coordinates and Gradle substitutes this checkout's source, so dev
+// never needs a publish step. The release jars bundle it nested (see docs/solver-library.md).
+includeBuild("solver-core") {
+    dependencySubstitution {
+        substitute(module("com.legoj15:solver")).using(project(":"))
+    }
+}
+
 stonecutter {
     create(rootProject) {
         // One node per (MC version, loader).

@@ -12,8 +12,8 @@ import java.util.Optional;
 import java.util.WeakHashMap;
 
 import com.google.common.collect.ImmutableList;
-import com.legoj15.sprawlcrafting.craft.solver.PlannedStep;
-import com.legoj15.sprawlcrafting.craft.solver.RecipeGraphSolver;
+import com.legoj15.solver.PlannedStep;
+import com.legoj15.solver.RecipeGraphSolver;
 
 import net.minecraft.util.registry.Registry;
 import net.minecraft.util.ResourceLocation;

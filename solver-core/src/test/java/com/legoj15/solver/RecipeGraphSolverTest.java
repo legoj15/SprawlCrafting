@@ -1,4 +1,4 @@
-package com.legoj15.sprawlcrafting.craft.solver;
+package com.legoj15.solver;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -10,8 +10,8 @@ import java.util.stream.Collectors;
 
 import org.junit.jupiter.api.Test;
 
-import com.legoj15.sprawlcrafting.craft.solver.RecipeGraphSolver.RecipeInfo;
-import com.legoj15.sprawlcrafting.craft.solver.RecipeGraphSolver.Result;
+import com.legoj15.solver.RecipeGraphSolver.RecipeInfo;
+import com.legoj15.solver.RecipeGraphSolver.Result;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;

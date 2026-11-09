@@ -4,7 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import com.legoj15.sprawlcrafting.craft.ItemDemand;
-import com.legoj15.sprawlcrafting.craft.solver.CountFormat;
+import com.legoj15.solver.CountFormat;
 
 import net.minecraft.item.ItemStack;
 import net.minecraft.util.ResourceLocation;

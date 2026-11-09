@@ -7,9 +7,9 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import com.legoj15.sprawlcrafting.craft.solver.PlannedStep;
-import com.legoj15.sprawlcrafting.craft.solver.RecipeGraphSolver;
-import com.legoj15.sprawlcrafting.craft.solver.RecipeGraphSolver.Result;
+import com.legoj15.solver.PlannedStep;
+import com.legoj15.solver.RecipeGraphSolver;
+import com.legoj15.solver.RecipeGraphSolver.Result;
 
 import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.entity.player.InventoryPlayer;

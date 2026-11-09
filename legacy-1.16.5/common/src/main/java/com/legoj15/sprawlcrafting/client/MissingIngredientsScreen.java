@@ -6,7 +6,7 @@ import java.util.List;
 import com.google.common.collect.ImmutableList;
 import com.legoj15.sprawlcrafting.craft.ItemDemand;
 import com.legoj15.sprawlcrafting.craft.ShortfallView;
-import com.legoj15.sprawlcrafting.craft.solver.CountFormat;
+import com.legoj15.solver.CountFormat;
 import com.mojang.blaze3d.matrix.MatrixStack;
 import com.mojang.blaze3d.systems.RenderSystem;
 

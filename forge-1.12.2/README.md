@@ -9,8 +9,8 @@ because 1.12.2 tooling and the modern Fabric/NeoForge tooling cannot share one b
 
 The full Factorio-style deferred-craft engine, ported onto 1.12.2's APIs on top of the shared
 `solver-core`, at feature parity with the modern loaders. The whole engine compiles against the
-deobfuscated 1.12.2 Forge classpath, builds a reobfuscated jar, and the 39-case solver suite passes
-under the Java 8 toolchain. The runtime has been **playtested in a live client and merged to `main`**.
+deobfuscated 1.12.2 Forge classpath and builds a reobfuscated jar; the solver library's own suite
+runs in `../solver-core` on a Java 8 runtime. The runtime has been **playtested in a live client and merged to `main`**.
 
 - **Engine** (`forge.craft`): `CraftPlanner` (adapts `CraftingManager` recipes + the player
   inventory onto the solver), `CraftExecutor` (per-step craft against the live inventory, with
@@ -113,9 +113,10 @@ older Gradle and is no longer updated (last release 2023).
 
 ## Shared solver core
 
-The pure-Java-8 planning core in `../solver-core/src/main/java` is compiled directly into this mod
-via `sourceSets.main.java.srcDir '../solver-core/src/main/java'` in `build.gradle`. No separate
-artifact — one source of truth shared with the modern loaders.
+The pure-Java-8 planner is the library `com.legoj15:solver` in `../solver-core`, shared with every
+other SprawlCrafting build. `settings.gradle` includes it as a composite build (no publish step), and
+`build.gradle` shades its classes into the jar (1.12.2 has no jar-in-jar). See
+`../docs/solver-library.md`.
 
 ## Build
 
@@ -124,7 +125,7 @@ Run the wrapper on **JDK 25** (`JAVA_HOME` must point at a 25.x JDK; the machine
 
 ```sh
 ./gradlew setupDecompWorkspace   # one-time: decompile/deobf the 1.12.2 client (~2 min, large download)
-./gradlew build                  # compile the mod (+ shared solver-core) and reobf the jar
+./gradlew build                  # compile the mod (+ the solver library) and reobf the jar
 ./gradlew runClient              # launch a dev client with the mod
 ```
 
@@ -166,8 +167,8 @@ loads the config (no coremod / TweakClass needed).
 
 `setupDecompWorkspace build` is green: `solver-core`, the engine, networking, the toast client,
 the JEI plugin, and the mixins all compile against the deobfuscated 1.12.2 Forge + JEI classpath;
-the reobf jar is produced with the refmap and `MixinConfigs` in place; and `:test` runs the 39-case
-solver suite under the real Java 8 toolchain.
+the reobf jar is produced with the refmap and `MixinConfigs` in place. (The solver suite used to run
+here; it now runs in `../solver-core`'s own build, still on a Java 8 runtime.)
 
 **Runtime playtested and merged.** The engine, the JEI "+" (colored buttons, red missing-slot
 highlights, orange → gather screen), the recipe-book trigger/filter/tooltips/ghost, the progress

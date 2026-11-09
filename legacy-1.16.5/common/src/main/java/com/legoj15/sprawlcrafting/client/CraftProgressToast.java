@@ -1,6 +1,6 @@
 package com.legoj15.sprawlcrafting.client;
 
-import com.legoj15.sprawlcrafting.craft.solver.CountFormat;
+import com.legoj15.solver.CountFormat;
 import com.legoj15.sprawlcrafting.network.CraftProgressPacket;
 import com.mojang.blaze3d.matrix.MatrixStack;
 

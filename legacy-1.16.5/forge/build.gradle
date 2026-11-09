@@ -24,15 +24,19 @@ sourceSets {
     main {
         java {
             srcDir '../common/src/main/java'
-            srcDir '../../solver-core/src/main/java'
         }
         resources {
             srcDir '../common/src/main/resources'
         }
     }
-    test {
-        java { srcDir '../../solver-core/src/test/java' }
-    }
+}
+
+// The solver library (com.legoj15:solver, a composite build). Forge 36 has no jar-in-jar, so its classes
+// are SHADED into the jar. Fine here: the shading-forbidden case (two mods nesting the same JPMS module)
+// needs JarJar-era Forge; nothing else targets this version with the library.
+configurations {
+    shade
+    implementation.extendsFrom shade
 }
 
 renamer.enableMixinRefmaps {
@@ -76,18 +80,12 @@ dependencies {
         runtimeOnly renamer.dependency("mezz.jei:jei-1.16.5:${jei_version}")
     }
 
-    testImplementation platform('org.junit:junit-bom:5.10.3')
-    testImplementation 'org.junit.jupiter:junit-jupiter'
-    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+    shade "com.legoj15:solver:${rootProject.ext.solverVersion}"
 }
 renamer.mappings(minecraft.dependency.toSrg)
 
 tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8'
-}
-
-tasks.named('test') {
-    useJUnitPlatform()
 }
 
 tasks.named('processResources', ProcessResources) {
@@ -99,6 +97,10 @@ tasks.named('processResources', ProcessResources) {
 tasks.named('jar', Jar) {
     archiveVersion = "${rootVersion}+mc${minecraft_version}-forge"
     archiveClassifier = 'dev'
+    // Shade the solver library's classes (not its manifest) into the jar Renamer turns into the release jar.
+    from(configurations.shade.elements.map { files -> files.collect { zipTree(it) } }) {
+        exclude 'META-INF/**'
+    }
     manifest {
         attributes([
                 'MixinConfigs'          : 'sprawlcrafting.mixins.json,sprawlcrafting.jei.mixins.json',

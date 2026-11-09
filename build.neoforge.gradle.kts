@@ -36,14 +36,14 @@ java {
     toolchain { languageVersion = JavaLanguageVersion.of(javaVersion) }
 }
 
-// ─── Shared solver-core module ───────────────────────────────────────────────────────────────
-// The loader/version-agnostic craft solver (RecipeGraphSolver + PlannedStep + its test suite) lives
-// in its own pure-Java-8 module at solver-core/, so the planned legacy-Forge 1.12.2 build can compile
-// the EXACT same source (Java 8 has no records/sealed types). It carries no Stonecutter directives and
-// no Minecraft imports, so it just folds into this node's main+test source sets and ships inside the
-// mod jar like any other source — single source of truth, zero duplication.
-sourceSets["main"].java.srcDir(rootProject.file("solver-core/src/main/java"))
-sourceSets["test"].java.srcDir(rootProject.file("solver-core/src/test/java"))
+// ─── Solver library ──────────────────────────────────────────────────────────────────────────
+// The Minecraft-free planner is the separate library com.legoj15:solver (solver-core/, its own build and
+// its own JUnit suite). settings.gradle.kts substitutes it from this checkout (composite build). It is
+// bundled jar-in-jar, NEVER shaded: FML loads the nested copy as a JPMS module, and another mod that
+// nests the same library (the bot mod) must resolve to ONE copy, not two split packages. The range lets
+// FML pick the newest bundled 1.x across mods.
+val solverVersion = property("solver_version") as String
+val solverRange = "[$solverVersion,${solverVersion.substringBefore('.').toInt() + 1}.0.0)"
 
 // ModDevGradle only wires Minecraft onto `main` by default. Extend the `test` source set with main's
 // classpath + output so MC-touching unit tests (the payload codecs) AND the in-game game tests under
@@ -142,6 +142,22 @@ dependencies {
         if (viewer == "rei" || viewer == "both") {
             // Transitive (pulls architectury/cloth) so runClient -Pviewer=rei actually loads REI.
             runtimeOnly("me.shedaniel:RoughlyEnoughItems-neoforge:$reiVersion")
+        }
+    }
+
+    // The solver library: compiled against and on the dev runtime (implementation), nested in the
+    // shipped jar with a [current, next-major) range (jarJar). On the 1.x lines FML does not load a
+    // plain non-mod jar from the JVM classpath (runServer dies with NoClassDefFoundError on the first
+    // solver class), so it also goes on MDG's additionalRuntimeClasspath there. 26.x needs no extra
+    // classpath (MDG rejects additionalRuntimeClasspath on it: "no additional classpath anymore").
+    implementation("com.legoj15:solver:$solverVersion")
+    if (minecraftVersion.startsWith("1.")) {
+        "additionalRuntimeClasspath"("com.legoj15:solver:$solverVersion")
+    }
+    jarJar("com.legoj15:solver") {
+        version {
+            strictly(solverRange)
+            prefer(solverVersion)
         }
     }
 

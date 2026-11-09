@@ -37,14 +37,11 @@ java {
     toolchain { languageVersion = JavaLanguageVersion.of(javaVersion) }
 }
 
-// ─── Shared solver-core module ───────────────────────────────────────────────────────────────
-// The loader/version-agnostic craft solver (RecipeGraphSolver + PlannedStep + its test suite) lives
-// in its own pure-Java-8 module at solver-core/, so the planned legacy-Forge 1.12.2 build can compile
-// the EXACT same source (Java 8 has no records/sealed types). It carries no Stonecutter directives and
-// no Minecraft imports, so it just folds into this node's main+test source sets and ships inside the
-// mod jar like any other source — single source of truth, zero duplication.
-sourceSets["main"].java.srcDir(rootProject.file("solver-core/src/main/java"))
-sourceSets["test"].java.srcDir(rootProject.file("solver-core/src/test/java"))
+// ─── Solver library ──────────────────────────────────────────────────────────────────────────
+// The Minecraft-free planner is the separate library com.legoj15:solver (solver-core/, its own build and
+// its own JUnit suite). settings.gradle.kts substitutes it from this checkout (composite build), and the
+// dependency below bundles it jar-in-jar (Loom `include`) so the shipped jar carries it nested.
+val solverVersion = property("solver_version") as String
 
 repositories {
     mavenLocal()
@@ -92,7 +89,11 @@ dependencies {
         compileOnly("com.terraformersmc:modmenu:${property("modmenu_version")}")
     }
 
-    // The craft solver core is pure Java and unit-tested without Minecraft.
+    // The solver library: compiled against, on the dev runtime, and nested in the shipped jar. Loom
+    // generates a fabric.mod.json for the nested plain jar so Fabric Loader loads it as a library mod.
+    include(implementation("com.legoj15:solver:$solverVersion")!!)
+
+    // Unit tests for the MC-touching wire contracts (the solver's own suite runs in solver-core/).
     testImplementation(platform("org.junit:junit-bom:5.10.3"))
     testImplementation("org.junit.jupiter:junit-jupiter")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")

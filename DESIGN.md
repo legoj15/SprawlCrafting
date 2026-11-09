@@ -180,11 +180,13 @@ is decided by the node's `gradle.properties` plus `//? if >=1.21.11` branches in
 
 ## The shared solver (`solver-core/`)
 
-The planning brain is a pure, **Minecraft-free** Java module in `solver-core/`
-(`com.legoj15.sprawlcrafting.craft.solver`: `RecipeGraphSolver` + `PlannedStep`). It's
-compiled directly into every build — the modern Stonecutter nodes and the 1.12.2 jar — as
-one source of truth with no separate artifact, and is covered by a loader-agnostic JUnit
-suite that runs on the Java 8 toolchain.
+The planning brain is a pure, **Minecraft-free** Java library in `solver-core/`
+(`com.legoj15:solver`, package `com.legoj15.solver`: `RecipeGraphSolver` + `PlannedStep`). It is
+its own Gradle build (Java 8 bytecode, published to Maven Local / JitPack), and every build — the
+modern Stonecutter nodes, legacy-1.16.5 and the 1.12.2 jar — depends on it through a composite
+build and bundles it: jar-in-jar on Fabric, NeoForge and JarJar-era Forge, shaded on Forge 1.16.5
+and 1.12.2. Its JUnit suite runs in its own build on a Java 8 runtime. A second mod can depend on
+the same library; see [`docs/solver-library.md`](docs/solver-library.md).
 
 Each loader wraps it with a `CraftPlanner` that adapts Minecraft recipes and a player
 inventory onto the solver:
@@ -336,10 +338,12 @@ compression mods saturate at `Long.MAX_VALUE`. Counts are therefore `long` from 
 - `src/` — modern shared gameplay logic (`craft/` package), recipe-book / JEI / REI mixins,
   toast rendering, networking; preprocessed per node into `versions/<node>/` by Stonecutter
   (`stonecutter.gradle.kts`, `build.<loader>.gradle.kts`); loader code in `platform/{fabric,neoforge,forge}`.
-- `solver-core/` — the Minecraft-free planner + its JUnit suite; compiled into every build.
-- `forge-1.12.2/` — the separate legacy Forge build (RFG); also compiles in `solver-core`.
+- `solver-core/` — the Minecraft-free planner library (`com.legoj15:solver`) + its JUnit suite, its
+  own build; every other build depends on it via a composite build. See
+  [`docs/solver-library.md`](docs/solver-library.md).
+- `forge-1.12.2/` — the separate legacy Forge build (RFG); shades the solver library.
 - `legacy-1.16.5/` — the separate 1.16.5 Forge + Fabric build (shared `common/` source, Java 8);
-  also compiles in `solver-core`. Agent notes: [`docs/legacy-1.16.5.md`](docs/legacy-1.16.5.md).
+  shades (Forge) / nests (Fabric) the solver library. Agent notes: [`docs/legacy-1.16.5.md`](docs/legacy-1.16.5.md).
 - `release/` — the publish pipeline (GitHub / Modrinth / CurseForge / `update.json`).
 - `testing/` — the boot-and-connect verification matrix per node.
 - `branding/` — mod logo and icon art.

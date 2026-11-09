@@ -3,7 +3,7 @@ package com.legoj15.sprawlcrafting.forge.client;
 import java.util.ArrayList;
 import java.util.List;
 
-import com.legoj15.sprawlcrafting.craft.solver.CountFormat;
+import com.legoj15.solver.CountFormat;
 import com.legoj15.sprawlcrafting.forge.craft.CraftJob;
 import com.legoj15.sprawlcrafting.forge.craft.CraftStep;
 

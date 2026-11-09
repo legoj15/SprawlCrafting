@@ -17,11 +17,19 @@ plugins {
     id("net.neoforged.moddev") version "2.0.148" apply false
     // MinecraftForge (NOT NeoForge) for the <mc>-forge nodes (1.21.1 and 26.x). ForgeGradle 7 needs Gradle >= 9.3.
     id("net.minecraftforge.gradle") version "7.0.40" apply false
-    // Jar-in-jar for the 1.21.1 Forge node (bundles MixinExtras, which Forge 1.21.1 does not ship; Forge 26.x does).
+    // Jar-in-jar for every Forge node: the solver library everywhere, plus MixinExtras on 1.20.1/1.21.1 (Forge 26.x ships it).
     id("net.minecraftforge.jarjar") version "0.2.3" apply false
     // SRG reobf for Forge nodes whose runtime still uses SRG names (1.20.1-forge): renames the jar
     // named -> SRG and rewrites the Mixin refmap. Same version the legacy-1.16.5 Forge build uses.
     id("net.minecraftforge.renamer") version "1.1.8" apply false
+}
+
+// The solver library's version (com.legoj15:solver), read from its own build's gradle.properties so the
+// library build stays standalone. Set as an extra property here so every node reads it with
+// property("solver_version") (extra properties are inherited by subprojects).
+extra["solver_version"] = java.util.Properties().run {
+    rootProject.file("solver-core/gradle.properties").inputStream().use { load(it) }
+    getProperty("solver_version") ?: error("No solver_version in solver-core/gradle.properties")
 }
 
 // The active node — what the IDE/runClient sees and what `compileJava` builds.
