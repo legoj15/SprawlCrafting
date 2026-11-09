@@ -182,7 +182,7 @@ function Get-ScNodes {
     # The legacy 1.12.2 Forge build lives OUTSIDE versions/ (its own self-contained Gradle build), so the
     # directory walk above never sees it. Inject it as a synthetic node from the config's `legacyForge`
     # block. Its store identity (Forge loader, Java 8, 1.12.2 game version) and its jar name/location differ
-    # from the modern nodes, so it carries IsLegacy + BuildDir/BuildTask/JavaHome that Test-ScJars and the
+    # from the modern nodes, so it carries IsLegacy + BuildDir/VerifyTasks/BuildTasks/JavaHome that Test-ScJars and the
     # -Build stage special-case. Java is taken from config (NOT inherited) because the forge gradle.properties
     # has no java_version key — without it the CurseForge upload would tag the wrong (or no) Java tier.
     $lf = Get-ScProp $Config 'legacyForge'
@@ -205,7 +205,6 @@ function Get-ScNodes {
                 HasJei        = $true
                 NeedsMixinBooter = $true                # the 1.12.2 client hard-stops without MixinBooter
                 BuildDir      = $lfDir
-                BuildTask     = Get-ScProp $lf 'buildTask' 'reobfJar'
                 VerifyTasks   = @('test', (Get-ScProp $lf 'buildTask' 'reobfJar'))
                 BuildTasks    = @(Get-ScProp $lf 'buildTask' 'reobfJar')
                 JavaHome      = Get-ScProp $lf 'javaHome' ''
@@ -251,7 +250,6 @@ function Get-ScNodes {
                 HasJei        = [bool](Get-ScProp $ll 'jei' $false)
                 NeedsMixinBooter = [bool](Get-ScProp $ll 'mixinBooter' $false)
                 BuildDir      = $ltDir
-                BuildTask     = ($ltBuild -join ' ')
                 VerifyTasks   = $ltVerify
                 BuildTasks    = $ltBuild
                 JavaHome      = Get-ScProp $lt 'javaHome' ''
@@ -521,6 +519,15 @@ function Update-ScManifest {
 }
 
 # ─── GitHub release (via gh) ─────────────────────────────────────────────────
+function Test-ScGithubReleaseExists {
+    # True when a GitHub release for $Tag already exists. Read-only (gh release view). Returns $null when
+    # gh is not installed, so a dry run on a machine without gh still completes; callers decide what that means.
+    param([Parameter(Mandatory)]$Config, [Parameter(Mandatory)][string]$Tag)
+    if (-not (Get-Command gh -ErrorAction SilentlyContinue)) { return $null }
+    & gh release view $Tag --repo $Config.github.repo *> $null
+    return ($LASTEXITCODE -eq 0)
+}
+
 function Invoke-ScGithubRelease {
     param(
         [Parameter(Mandatory)]$Config, [Parameter(Mandatory)]$Split, [Parameter(Mandatory)]$Channel,
@@ -544,8 +551,7 @@ function Invoke-ScGithubRelease {
     }
     Set-Content -Path $bodyFile -Value $Body -Encoding utf8
     # Refuse to clobber an existing release/tag silently.
-    & gh release view $tag --repo $Config.github.repo *> $null
-    if ($LASTEXITCODE -eq 0) { throw "GitHub release '$tag' already exists. Delete it or bump the version." }
+    if (Test-ScGithubReleaseExists -Config $Config -Tag $tag) { throw "GitHub release '$tag' already exists. Delete it or bump the version." }
     & gh @ghArgs
     if ($LASTEXITCODE -ne 0) { throw "gh release create failed (exit $LASTEXITCODE)." }
     Remove-Item $bodyFile -ErrorAction SilentlyContinue

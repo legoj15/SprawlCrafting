@@ -107,6 +107,23 @@ if (Test-Path $manifestPath) {
 }
 Test-ScChangelogTags -ChangelogSplit $clSplit -KnownVersions (@($mcSet) + $manifestBlocks | Select-Object -Unique)
 
+# ── Version not already released (fail-fast BEFORE anything is committed or pushed) ──
+# Invoke-ScGithubRelease refuses an existing tag, but it runs AFTER the Manifest stage has committed
+# update.json and the GitHub stage has pushed it to main, so a run at an already-shipped version would
+# announce that version live in the manifest and then abort. Check up front instead. Only when the GitHub
+# stage will run: a resume with -Only Modrinth/CurseForge legitimately runs after the release exists.
+if (Want 'GitHub') {
+    $relExists = Test-ScGithubReleaseExists -Config $cfg -Tag $split.Full
+    if ($relExists) {
+        $msg = "GitHub release '$($split.Full)' already exists. Bump version in the root gradle.properties (or resume with -Only <later stages>)."
+        if ($Execute) { throw $msg }
+        Write-ScWarn "$msg -Execute would stop here."
+    } elseif ($null -eq $relExists) {
+        if ($Execute) { throw 'gh (GitHub CLI) not found; it is needed to check for and create the GitHub release.' }
+        Write-ScWarn 'gh not found; could not check whether this version is already released.'
+    }
+}
+
 # ── 0. Pre-release verification (gates the whole release) ─────────────────────
 # The full suite must pass before ANY publish. The trees run on different JDKs (modern and legacy-1.16.5
 # need 21; the legacy 1.12.2 Forge build needs 25 — they can't share one Gradle host), so this stage
