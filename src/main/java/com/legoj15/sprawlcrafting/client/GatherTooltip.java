@@ -8,6 +8,7 @@ import com.legoj15.solver.CountFormat;
 
 import net.minecraft.ChatFormatting;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.item.ItemStack;
 
@@ -24,16 +25,14 @@ public final class GatherTooltip {
     private GatherTooltip() {
     }
 
-    /** Header, the first few items as "count× Name" (see {@link #countText}), an overflow note, an approximate note, the hint. */
+    /** Header, the first few items as "count× Name" (see {@link #lineText}), an overflow note, an approximate note, the hint. */
     public static List<Component> compact(List<ItemDemand> demands, boolean approximate) {
         List<Component> out = new ArrayList<>();
         out.add(Component.translatable("sprawlcrafting.gather.header").withStyle(ChatFormatting.GOLD));
         int shown = Math.min(MAX_LINES, demands.size());
         for (int i = 0; i < shown; i++) {
             ItemDemand demand = demands.get(i);
-            out.add(Component.translatable("sprawlcrafting.gather.line", countText(demand.count()),
-                            nameOf(demand.items().get(0)))
-                    .withStyle(ChatFormatting.GRAY));
+            out.add(lineText(demand.count(), nameOf(demand.items().get(0))).withStyle(ChatFormatting.GRAY));
         }
         if (demands.size() > shown) {
             out.add(Component.translatable("sprawlcrafting.gather.more", demands.size() - shown)
@@ -63,6 +62,16 @@ public final class GatherTooltip {
         return CountFormat.isSaturated(count)
                 ? Component.translatable("sprawlcrafting.gather.more_than", CountFormat.format(Long.MAX_VALUE))
                 : Component.literal(CountFormat.format(count));
+    }
+
+    /**
+     * One tooltip item line: {@code 1,234× Name}, but for a saturated count {@code More than 9.22e18 Name}
+     * (its own lang key: "more than 9.22e18× Name" reads as a garbled multiplier).
+     */
+    static MutableComponent lineText(long count, Component name) {
+        return CountFormat.isSaturated(count)
+                ? Component.translatable("sprawlcrafting.gather.line_more_than", CountFormat.format(Long.MAX_VALUE), name)
+                : Component.translatable("sprawlcrafting.gather.line", CountFormat.format(count), name);
     }
 
     static Component nameOf(ResourceLocation itemId) {
