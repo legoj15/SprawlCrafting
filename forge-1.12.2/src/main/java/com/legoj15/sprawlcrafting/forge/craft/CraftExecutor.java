@@ -2,8 +2,10 @@ package com.legoj15.sprawlcrafting.forge.craft;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import com.legoj15.sprawlcrafting.craft.solver.ProducedLedger;
 
@@ -301,15 +303,17 @@ public final class CraftExecutor {
      * pool {@link #buildSources} describes, chosen without mutating anything, or the first
      * ingredient nothing could satisfy. A stack {@link #usableAsIngredient} rejects is chosen only
      * when no acceptable stack matches and {@code ledger} (null: never) still admits its identity.
-     * Those picks, and plain picks of an identity the ledger still has count for (never more than
-     * it has), are tallied for {@link Assignment#chargeTo}. Package-visible: the final-step
-     * hand-off ({@link ServerGridPlacer}) lays out the same choice.
+     * Those picks are tallied for {@link Assignment#chargeTo}, and so are plain picks of an
+     * identity the ledger still has count for (never more than it has) when the pool holds no
+     * rejected stack of that identity. Package-visible: the final-step hand-off
+     * ({@link ServerGridPlacer}) lays out the same choice.
      */
     static Assignment assign(EntityPlayer player, List<Ingredient> ingredients, ProducedLedger<ItemKey> ledger) {
         List<Source> sources = buildSources(player, player.inventory);
         int[] chosen = new int[ingredients.size()];
         int[] reserved = new int[sources.size()];
         Map<ItemKey, Integer> ledgerTakes = new HashMap<ItemKey, Integer>();
+        Set<ItemKey> refusedKeys = ledger == null ? null : refusedKeys(sources);
         for (int i = 0; i < chosen.length; i++) {
             Ingredient ingredient = ingredients.get(i);
             if (ingredient == null || ingredient == Ingredient.EMPTY) {
@@ -327,15 +331,29 @@ public final class CraftExecutor {
                 ItemKey key = ledgerKey(stack);
                 Integer taken = ledgerTakes.get(key);
                 int claimed = taken == null ? 0 : taken;
-                // A refused stack was admitted against this tally already. A plain one is tallied
-                // too while the ledger has count left for its identity, so a stale count cannot
-                // outlive the copies it described and later admit the player's own altered stack.
-                if (!usableAsIngredient(stack) || ledger.canTake(key, claimed)) {
+                // A refused stack was admitted against this tally already. A plain one is the job's
+                // own copy when the pool holds no refused stack of its identity, so it drains the
+                // count and a stale count cannot later admit the player's own altered stack. With a
+                // refused copy present the count most plausibly describes that copy, so it is kept
+                // for it.
+                if (!usableAsIngredient(stack) || (!refusedKeys.contains(key) && ledger.canTake(key, claimed))) {
                     ledgerTakes.put(key, claimed + 1);
                 }
             }
         }
         return new Assignment(sources, chosen, ledgerTakes, null);
+    }
+
+    /** The {@link #ledgerKey} of every stack in the pool that {@link #usableAsIngredient} rejects. */
+    private static Set<ItemKey> refusedKeys(List<Source> sources) {
+        Set<ItemKey> refused = new HashSet<ItemKey>();
+        for (Source source : sources) {
+            ItemStack stack = source.peek();
+            if (!stack.isEmpty() && !usableAsIngredient(stack)) {
+                refused.add(ledgerKey(stack));
+            }
+        }
+        return refused;
     }
 
     static final class Assignment {
