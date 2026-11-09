@@ -25,7 +25,8 @@ import net.minecraft.item.ItemStack;
  * with its own progress update and step sound. A <em>bulk</em> step (more than {@link #BULK_THRESHOLD}
  * crafts, i.e. a batched compressed-block chain such as 6,561 crafts) waits {@link #TICKS_PER_STEP} ticks
  * once, then runs in bursts of up to {@link #MAX_CRAFTS_PER_TICK} crafts (and at most
- * {@link #BURST_BUDGET_NANOS} of server time), one burst per tick, until the step is done: roughly 5-16
+ * {@link #BURST_BUDGET_NANOS} of server time, and all players' bursts together at most
+ * {@link #SERVER_TICK_BURST_BUDGET_NANOS}), one burst per tick, until the step is done: roughly 5-16
  * seconds instead of the ~55 minutes one craft per half second would take.
  */
 public final class CraftJob {
@@ -54,8 +55,18 @@ public final class CraftJob {
      * {@link #MAX_CRAFTS_PER_TICK} comes first (always at least one craft). Same value as the modern
      * tree, where a worst-case 64-craft burst of a 9-ingredient recipe measured 2.5-6.1 ms warm and
      * 15.4 ms cold on the 1.21.1 game-test server: 2 ms keeps one player's burst to 4% of a tick.
+     * This is the per-job ceiling; {@link #SERVER_TICK_BURST_BUDGET_NANOS} bounds all players together.
      */
     public static final long BURST_BUDGET_NANOS = 2_000_000L;
+
+    /**
+     * Wall-time budget that every player's burst shares within one server tick (see {@link BurstBudget}):
+     * 10 ms, a fifth of a 50 ms tick, so N players bursting together cost about this instead of N times
+     * {@link #BURST_BUDGET_NANOS}. Up to five bulk jobs still get the full per-job 2 ms; beyond that the
+     * budget is split evenly. A burst's first craft is exempt (no job starves), so past roughly
+     * 100-200 concurrent bulk jobs the one-craft floor, not this figure, sets the cost.
+     */
+    public static final long SERVER_TICK_BURST_BUDGET_NANOS = 10_000_000L;
 
     private final ResourceLocation targetRecipe;
     private final ItemStack targetResult;

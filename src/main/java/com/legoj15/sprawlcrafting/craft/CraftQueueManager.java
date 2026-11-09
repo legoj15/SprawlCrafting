@@ -29,6 +29,10 @@ public final class CraftQueueManager {
 
     private static final Map<UUID, CraftJob> ACTIVE = new ConcurrentHashMap<>();
 
+    /** The burst time all players share within one server tick; see {@link BurstBudget}. */
+    private static final BurstBudget BURSTS = new BurstBudget(
+            CraftJob.SERVER_TICK_BURST_BUDGET_NANOS, CraftJob.BURST_BUDGET_NANOS);
+
     private CraftQueueManager() {
     }
 
@@ -52,6 +56,7 @@ public final class CraftQueueManager {
 
     public static void clearAll() {
         ACTIVE.clear();
+        BURSTS.reset();
         ClientCraftingView.clearAll();
     }
 
@@ -59,10 +64,11 @@ public final class CraftQueueManager {
      * Advances the player's job by one tick. When a craft is due: a paced step ({@code <=}
      * {@link CraftJob#BULK_THRESHOLD} crafts) performs exactly one and syncs progress, once per
      * {@link CraftJob#TICKS_PER_STEP} ticks; a bulk step performs a burst of up to
-     * {@link CraftJob#MAX_CRAFTS_PER_TICK} crafts (within {@link CraftJob#BURST_BUDGET_NANOS}) every tick
-     * until it is done. Each craft is validated and applied by {@link CraftExecutor#craftOnce} against the
-     * live inventory, exactly as a lone craft is. A burst ends early at a step boundary, so the next step
-     * still waits its half second.
+     * {@link CraftJob#MAX_CRAFTS_PER_TICK} crafts (within {@link CraftJob#BURST_BUDGET_NANOS}, and within
+     * its share of the {@link CraftJob#SERVER_TICK_BURST_BUDGET_NANOS} all players split, see
+     * {@link BurstBudget}) every tick until it is done. Each craft is validated and applied by
+     * {@link CraftExecutor#craftOnce} against the live inventory, exactly as a lone craft is. A burst ends
+     * early at a step boundary, so the next step still waits its half second.
      */
     public static void tick(ServerPlayer player) {
         CraftJob job = ACTIVE.get(player.getUUID());
@@ -88,10 +94,42 @@ public final class CraftQueueManager {
                 return;
             }
         }
-        boolean bulk = job.isBulkStep();
+        if (!job.isBulkStep()) {
+            // One craft per due tick, whatever the clock says: it never draws on the shared burst budget.
+            craftBurst(player, job, false, 0L);
+            return;
+        }
+        // The window is keyed on the SERVER tick, NOT player.tickCount: that is per-entity and resets to 0
+        // on death/respawn (see DeferredCraftSync.maybeSync, which hit exactly that wedge).
+        long start = System.nanoTime();
+        long deadline = start + BURSTS.grant(player.level().getServer().getTickCount(),
+                CraftQueueManager::bulkJobCount);
+        try {
+            craftBurst(player, job, true, deadline);
+        } finally {
+            BURSTS.charge(System.nanoTime() - start);
+        }
+    }
+
+    /** Active jobs currently in a bulk step: the players that may burst this tick and so split its budget. */
+    private static int bulkJobCount() {
+        int count = 0;
+        for (CraftJob job : ACTIVE.values()) {
+            if (!job.isFinished() && job.isBulkStep()) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    /**
+     * Performs the crafts due this tick: one for a paced step, up to {@link CraftJob#MAX_CRAFTS_PER_TICK}
+     * for a bulk one. The clock is checked after a craft, never before, so a job always makes at least one
+     * craft of progress even when its {@code deadline} (nanoTime) has already passed.
+     */
+    private static void craftBurst(ServerPlayer player, CraftJob job, boolean bulk, long deadline) {
         int cap = bulk ? CraftJob.MAX_CRAFTS_PER_TICK : 1;
         ItemStack lastCrafted = ItemStack.EMPTY;
-        long deadline = System.nanoTime() + CraftJob.BURST_BUDGET_NANOS;
         for (int burst = 0; burst < cap; burst++) {
             // If the final craft is due and the player has a compatible crafting grid open, lay the
             // recipe out in that grid for them to grab (a real vanilla craft) instead of auto-crafting
