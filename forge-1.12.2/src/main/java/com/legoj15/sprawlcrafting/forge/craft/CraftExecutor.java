@@ -2,11 +2,10 @@ package com.legoj15.sprawlcrafting.forge.craft;
 
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
+import com.legoj15.solver.LedgerTally;
 import com.legoj15.solver.ProducedLedger;
 import com.legoj15.solver.SlotAssignment;
 
@@ -303,18 +302,25 @@ public final class CraftExecutor {
      * One source per ingredient ({@code -1} for a gap: null or {@link Ingredient#EMPTY}) over the
      * pool {@link #buildSources} describes, chosen without mutating anything, or the first
      * ingredient nothing could satisfy. A stack {@link #usableAsIngredient} rejects is chosen only
-     * when no acceptable stack matches and {@code ledger} (null: never) still admits its identity.
-     * Those picks are tallied for {@link Assignment#chargeTo}, and so are plain picks of an
-     * identity the ledger still has count for (never more than it has) when the pool holds no
-     * rejected stack of that identity. Package-visible: the final-step hand-off
-     * ({@link ServerGridPlacer}) lays out the same choice.
+     * when no acceptable stack matches and {@code ledger} (null: never) still admits its identity
+     * through {@link LedgerTally#admissible}: only rejected copies above those the player held
+     * before the job produced anything. Every pick is recorded in the tally, which
+     * {@link Assignment#chargeTo} charges: rejected picks, plus plain picks beyond the job's
+     * rejected copies of that identity the pool still
+     * holds. Package-visible: the final-step hand-off ({@link ServerGridPlacer}) lays out the same
+     * choice.
      */
     static Assignment assign(EntityPlayer player, List<Ingredient> ingredients, ProducedLedger<ItemKey> ledger) {
         List<Source> sources = buildSources(player, player.inventory);
         int[] chosen = new int[ingredients.size()];
         int[] reserved = new int[sources.size()];
-        Map<ItemKey, Integer> ledgerTakes = new HashMap<ItemKey, Integer>();
-        Set<ItemKey> refusedKeys = ledger == null ? null : refusedKeys(sources);
+        LedgerTally<ItemKey> tally = new LedgerTally<ItemKey>();
+        Map<ItemKey, Integer> ledgerTakes = tally.refusedTakes();
+        ProducedLedger<ItemKey> admitting = null;
+        if (ledger != null) {
+            countRefused(sources, tally);
+            admitting = tally.admissible(ledger);
+        }
         ItemKey[] preferred = preferredKeys(sources, ingredients);
         for (int i = 0; i < chosen.length; i++) {
             Ingredient ingredient = ingredients.get(i);
@@ -322,53 +328,41 @@ public final class CraftExecutor {
                 chosen[i] = -1;
                 continue;
             }
-            int idx = findMatchingSource(sources, ingredient, preferred[i], reserved, ledger, ledgerTakes);
+            int idx = findMatchingSource(sources, ingredient, preferred[i], reserved, admitting, ledgerTakes);
             if (idx < 0) {
-                return new Assignment(sources, chosen, ledgerTakes, ingredient);
+                return new Assignment(sources, chosen, tally, ingredient);
             }
             reserved[idx]++;
             chosen[i] = idx;
-            ItemStack stack = sources.get(idx).peek();
             if (ledger != null) {
-                ItemKey key = ledgerKey(stack);
-                Integer taken = ledgerTakes.get(key);
-                int claimed = taken == null ? 0 : taken;
-                // A refused stack was admitted against this tally already. A plain one is the job's
-                // own copy when the pool holds no refused stack of its identity, so it drains the
-                // count and a stale count cannot later admit the player's own altered stack. With a
-                // refused copy present the count most plausibly describes that copy, so it is kept
-                // for it.
-                if (!usableAsIngredient(stack) || (!refusedKeys.contains(key) && ledger.canTake(key, claimed))) {
-                    ledgerTakes.put(key, claimed + 1);
-                }
+                ItemStack stack = sources.get(idx).peek();
+                tally.picked(ledgerKey(stack), !usableAsIngredient(stack));
             }
         }
-        return new Assignment(sources, chosen, ledgerTakes, null);
+        return new Assignment(sources, chosen, tally, null);
     }
 
-    /** The {@link #ledgerKey} of every stack in the pool that {@link #usableAsIngredient} rejects. */
-    private static Set<ItemKey> refusedKeys(List<Source> sources) {
-        Set<ItemKey> refused = new HashSet<ItemKey>();
+    /** Records in {@code tally}, by {@link #ledgerKey}, every stack in the pool that {@link #usableAsIngredient} rejects. */
+    private static void countRefused(List<Source> sources, LedgerTally<ItemKey> tally) {
         for (Source source : sources) {
             ItemStack stack = source.peek();
             if (!stack.isEmpty() && !usableAsIngredient(stack)) {
-                refused.add(ledgerKey(stack));
+                tally.held(ledgerKey(stack), stack.getCount());
             }
         }
-        return refused;
     }
 
     static final class Assignment {
         private final List<Source> sources;
         private final int[] chosen;
-        private final Map<ItemKey, Integer> ledgerTakes;
+        private final LedgerTally<ItemKey> tally;
         private final Ingredient missing;
 
-        private Assignment(List<Source> sources, int[] chosen, Map<ItemKey, Integer> ledgerTakes,
+        private Assignment(List<Source> sources, int[] chosen, LedgerTally<ItemKey> tally,
                            Ingredient missing) {
             this.sources = sources;
             this.chosen = chosen;
-            this.ledgerTakes = ledgerTakes;
+            this.tally = tally;
             this.missing = missing;
         }
 
@@ -389,9 +383,7 @@ public final class CraftExecutor {
         }
 
         void chargeTo(ProducedLedger<ItemKey> ledger) {
-            for (Map.Entry<ItemKey, Integer> take : ledgerTakes.entrySet()) {
-                ledger.consumed(take.getKey(), take.getValue());
-            }
+            tally.chargeTo(ledger);
         }
     }
 

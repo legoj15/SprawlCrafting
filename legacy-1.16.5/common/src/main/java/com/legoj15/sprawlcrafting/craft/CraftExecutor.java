@@ -2,11 +2,10 @@ package com.legoj15.sprawlcrafting.craft;
 
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
+import com.legoj15.solver.LedgerTally;
 import com.legoj15.solver.ProducedLedger;
 import com.legoj15.solver.SlotAssignment;
 
@@ -378,16 +377,22 @@ public final class CraftExecutor {
     /**
      * One inventory slot per ingredient ({@code -1} for an empty cell), chosen without mutating anything,
      * or the first ingredient nothing could satisfy. A stack {@link #usableAsIngredient} rejects is chosen
-     * only when no acceptable stack matches and {@code ledger} (null: never) still admits its item. Those
-     * picks are tallied for {@link Assignment#chargeTo}, and so are plain picks of an item the ledger still
-     * has count for (never more than it has) when the pool holds no rejected stack of that item.
+     * only when no acceptable stack matches and {@code ledger} (null: never) still admits its item through
+     * {@link LedgerTally#admissible}: only rejected copies above those the player held before the job
+     * produced anything. Every pick is recorded in the tally, which {@link Assignment#chargeTo} charges:
+     * rejected picks, plus plain picks beyond the job's rejected copies of that item the pool still holds.
      */
     private static Assignment assign(PlayerInventory inventory, List<Ingredient> ingredients,
                                      ProducedLedger<Item> ledger) {
         int[] slots = new int[ingredients.size()];
         int[] reserved = new int[MAIN_SLOTS];
-        Map<Item, Integer> ledgerTakes = new HashMap<>();
-        Set<Item> refusedItems = ledger == null ? null : refusedItems(inventory);
+        LedgerTally<Item> tally = new LedgerTally<>();
+        Map<Item, Integer> ledgerTakes = tally.refusedTakes();
+        ProducedLedger<Item> admitting = null;
+        if (ledger != null) {
+            countRefused(inventory, tally);
+            admitting = tally.admissible(ledger);
+        }
         Item[] preferred = preferredItems(inventory, ingredients);
         for (int n = 0; n < slots.length; n++) {
             Ingredient ingredient = ingredients.get(n);
@@ -395,55 +400,43 @@ public final class CraftExecutor {
                 slots[n] = -1;
                 continue;
             }
-            int slot = findMatchingSlot(inventory, ingredient, preferred[n], reserved, ledger, ledgerTakes);
+            int slot = findMatchingSlot(inventory, ingredient, preferred[n], reserved, admitting, ledgerTakes);
             if (slot < 0) {
-                return new Assignment(slots, ledgerTakes, ingredient);
+                return new Assignment(slots, tally, ingredient);
             }
             reserved[slot]++;
             slots[n] = slot;
-            ItemStack stack = inventory.getItem(slot);
             if (ledger != null) {
-                int claimed = ledgerTakes.getOrDefault(stack.getItem(), 0);
-                // A refused stack was admitted against this tally already. A plain one is the job's
-                // own copy when the pool holds no refused stack of its item, so it drains the count
-                // and a stale count cannot later admit the player's own altered stack. With a refused
-                // copy present the count most plausibly describes that copy, so it is kept for it.
-                if (!usableAsIngredient(stack)
-                        || (!refusedItems.contains(stack.getItem()) && ledger.canTake(stack.getItem(), claimed))) {
-                    ledgerTakes.put(stack.getItem(), claimed + 1);
-                }
+                ItemStack stack = inventory.getItem(slot);
+                tally.picked(stack.getItem(), !usableAsIngredient(stack));
             }
         }
-        return new Assignment(slots, ledgerTakes, null);
+        return new Assignment(slots, tally, null);
     }
 
-    /** The items of every stack in the 36 main slots that {@link #usableAsIngredient} rejects. */
-    private static Set<Item> refusedItems(PlayerInventory inventory) {
-        Set<Item> refused = new HashSet<>();
+    /** Records in {@code tally} every stack in the 36 main slots that {@link #usableAsIngredient} rejects. */
+    private static void countRefused(PlayerInventory inventory, LedgerTally<Item> tally) {
         for (int i = 0; i < MAIN_SLOTS; i++) {
             ItemStack stack = inventory.getItem(i);
             if (!stack.isEmpty() && !usableAsIngredient(stack)) {
-                refused.add(stack.getItem());
+                tally.held(stack.getItem(), stack.getCount());
             }
         }
-        return refused;
     }
 
     private static final class Assignment {
         final int[] slots;
-        final Map<Item, Integer> ledgerTakes;
+        final LedgerTally<Item> tally;
         final Ingredient missing;
 
-        Assignment(int[] slots, Map<Item, Integer> ledgerTakes, Ingredient missing) {
+        Assignment(int[] slots, LedgerTally<Item> tally, Ingredient missing) {
             this.slots = slots;
-            this.ledgerTakes = ledgerTakes;
+            this.tally = tally;
             this.missing = missing;
         }
 
         void chargeTo(ProducedLedger<Item> ledger) {
-            for (Map.Entry<Item, Integer> take : ledgerTakes.entrySet()) {
-                ledger.consumed(take.getKey(), take.getValue());
-            }
+            tally.chargeTo(ledger);
         }
     }
 
