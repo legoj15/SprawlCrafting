@@ -1,32 +1,33 @@
-# Handoff (2026-11-08, end of session)
+# Handoff (2026-11-09, end of session)
+
+Branch `claude/sprawlcrafting-bot-mod-prep-e681d0` (worktree `version-26-3-testing-26ac36`), on top of
+main `e39879c`. Local only, NOT pushed, NOT merged to main.
 
 ## Done
-- Ports: 1.20.1 (fabric, forge) in the Stonecutter tree; 1.16.5 (forge, fabric) as the separate legacy-1.16.5/ tree (FG7, built via ./gw.sh).
-- Forge nodes for every version except 1.12.2 (which is already Forge): 1.20.1, 1.21.1, 26.1.2, 26.2, 26.3. 26.x Forge has no JEI (none is published).
-- Live stress tests:
-  - IMDS on 1.16.5: gather lists exact, including saturated counts; a 61-craft chain consumed exactly.
-  - IMDS Reborn on 1.20.1-forge: the full 69-step sword chain completed after the produced-ledger fix.
-- Produced ledger (#12) fixed and reviewed (final sha ed491c2, both review_fast lanes approved).
-- **main fast-forwarded to 3e178b1** (local only, NOT pushed).
+- **Solver library (MegaBlockBot#2):** `solver-core/` is now the standalone plain-Java library
+  `com.legoj15:solver` (package `com.legoj15.solver`, currently 1.0.1), consumed by every tree through a
+  Gradle composite build and bundled jar-in-jar (Fabric include, NeoForge/Forge jarJar `[v,2.0.0)`) or
+  shaded (1.16.5 Forge, 1.12.2). Its JUnit suite runs only in `./gradlew -p solver-core build`; the
+  release gate runs it first. See `docs/solver-library.md` for the consumer recipe and executor contract.
+- Issues fixed on this branch (closed with `done` notes once merged/pushed): #4 (1.12.2 alternates
+  bubble), #10 + #18 (SlotAssignment + PlanSimulator), #11 (cycle members in gather list), #13
+  (LedgerTally), #15 (fernflower txt, release legacyTrees), #16 (saturated wording, 1.12.2 gather width),
+  #17 (shared per-tick burst budget). #19 closed as not-a-bug. #5 #6 #7 #9 #12 closed (shipped earlier).
+- Full rebuild green at the last merge: solver-core (66 tests), 14 root nodes, legacy-1.16.5, forge-1.12.2.
+- review_final on the old ports range done; review_fast on c90e178..d825b8f done (adjudicated, see
+  progress.md).
 
 ## Not done / next
-1. After the merge, run `review_final` (dgx + glm-5.3) on the merged range 4bcbd34..3e178b1, per CLAUDE.md, then verify and act on its findings as follow-up commits. Scope with `files` (the range is large).
-2. Production matrix legs missing for the new nodes: 1.20.1-fabric/forge, 1.21.1-forge, 26.x-forge, 1.16.5, plus a modless-connect test. **Do not run the release tooling until these exist**: Get-ScNodes auto-discovers versions/*, so it would publish untested nodes.
-3. In-game re-test of the #12 fix with Reborn (no unit harness covers assign()).
-4. Open issues:
-   - #11: the gather list treats craft-cycle members as raw.
-   - #13: the ledger residual stale-count cases.
-   - Check #5, #6, #7, #9 for closure.
-5. Open lows:
-   - JEI saturated-line wording.
-   - Per-player burst budget.
-   - Stray fernflower txt in the 1.16.5 jar.
-   - 1.16.5 missing from update.json.
-   - The Forge 26.x shortfall_v2 round trip is verified from source only.
-   - The 1.12.2 name/need text overlaps.
-
-## Open questions
-- Push main and the session branch? (Not done; needs the user's go-ahead.)
+1. Collect the review_fast on d825b8f..HEAD (group `solver-exec-fixes-20261109-195006-b6a5`) and the
+   Haiku review of the three hand-merges; fix anything real, re-gate the final sha.
+2. Merge this branch to main (user's call), then `done` the fixed issues, then push (user's go-ahead).
+3. In-game: #8 (1.12.2 playtest, now also covers #4's bubble and #20), #3 (26.3 untakeable result,
+   re-check), and the executor change from #10/#18/#13 on at least one modern node (no unit harness
+   covers the Minecraft side of assign()).
+4. #14 production matrix legs (new nodes, modless connect, Fabric two-mod solver dedupe). Do not run
+   the release tooling before this.
+5. Open follow-ups: #20 #21 #22 #23 #24. #2 is ON HOLD (owner undecided; design rule: every source
+   item visible in the open screen).
 
 ## Uncommitted changes
 None besides this file (committed with it).
