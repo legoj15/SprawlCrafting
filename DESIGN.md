@@ -399,10 +399,13 @@ compression mods saturate at `Long.MAX_VALUE`. Counts are therefore `long` from 
   and renamed stacks are excluded from both planning and consumption (recipe-book parity),
   except that execution may consume such a stack up to the count the running job itself crafted
   of that item (`ProducedLedger`), because some mods alter an item right after it is inserted.
-  The executor draws that count down on its own takes through `LedgerTally`: every rejected take,
-  plus plain takes beyond the rejected copies of that item still held (the count kept back can
-  only describe those); the vanilla final hand-off is exempt because it never takes rejected
-  stacks and ends the job.
+  Rejected copies the pool held before the job produced anything are the player's own: the
+  ledger records that count and `LedgerTally` admits only rejected copies above it. The executor
+  draws the count down on its own takes: every rejected take, plus plain takes beyond the job's
+  rejected copies still held (the count kept back can only describe those). Altered copies that
+  enter the pool only after the job's first production cannot be told apart from the job's and
+  stay bounded by the produced count. The vanilla final hand-off is exempt because it never takes
+  rejected stacks and ends the job.
 - **Per-item crafting remainders.** Recipes overriding `getRemainingItems` (and NeoForge's
   stack-sensitive remainders on modded items) are approximated at the item level.
 - **NeoForge empty-tag placeholder.** Ingredients with empty tags fail at execution

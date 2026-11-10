@@ -44,60 +44,73 @@ class ProducedLedgerTest {
     }
 
     @Test
-    void plainPicksBeyondTheHeldAlteredCopiesDrainTheCount() {
-        // The job made 3 plain swords; the player's own enchanted sword sits in the pool. A craft
-        // eats the 3 plain ones. Only one count may be kept back (for the one altered copy held),
-        // so a later step can admit at most one altered sword, not three.
+    void plainPicksLeaveNoCountForThePlayersOwnAlteredCopies() {
+        // #13 (a): the player owns 2 enchanted swords before the job starts. The job makes 3 plain
+        // swords and a later craft eats all 3. None of the job's swords are left, so no count may
+        // remain that would let a later step take the player's enchanted ones.
         ProducedLedger<String> ledger = new ProducedLedger<>();
+        tally(ledger, "sword", 2);
         ledger.produced("sword", 3);
-        LedgerTally<String> tally = new LedgerTally<>();
-        tally.held("sword", 1);
-        tally.picked("sword", false);
-        tally.picked("sword", false);
-        tally.picked("sword", false);
-        tally.chargeTo(ledger);
-        assertEquals(1, ledger.outstanding("sword"));
-        assertFalse(ledger.canTake("sword", 1));
+
+        LedgerTally<String> craft = tally(ledger, "sword", 2);
+        craft.picked("sword", false);
+        craft.picked("sword", false);
+        craft.picked("sword", false);
+        craft.chargeTo(ledger);
+        assertEquals(0, ledger.outstanding("sword"));
+    }
+
+    @Test
+    void onlyAlteredCopiesBeyondThoseHeldAtJobStartAreAdmitted() {
+        // The player owns 1 enchanted sword at job start. The job makes 1 sword, which then leaves the
+        // pool (the player moves it out): the player's own sword must not be admitted in its place.
+        ProducedLedger<String> ledger = new ProducedLedger<>();
+        tally(ledger, "sword", 1);
+        ledger.produced("sword", 1);
+        assertFalse(tally(ledger, "sword", 1).admissible(ledger).canTake("sword", 0));
+
+        // Once a mod enchants the job's copy instead, the pool holds 2 enchanted swords: one is admitted.
+        ProducedLedger<String> view = tally(ledger, "sword", 2).admissible(ledger);
+        assertTrue(view.canTake("sword", 0));
+        assertFalse(view.canTake("sword", 1));
     }
 
     @Test
     void aCraftTakingTheAlteredAndThePlainCopyChargesBoth() {
-        // The job made 2 swords and a mod enchanted one. One craft takes the enchanted one (admitted
-        // by the ledger) and the plain one: both were the job's, nothing is left to describe.
+        // #13 (b): the job made 2 swords and a mod enchanted one. One craft takes the enchanted one
+        // (admitted by the ledger) and the plain one: both were the job's, nothing is left to describe.
         ProducedLedger<String> ledger = new ProducedLedger<>();
+        tally(ledger, "sword", 0);
         ledger.produced("sword", 2);
-        LedgerTally<String> tally = new LedgerTally<>();
-        tally.held("sword", 1);
-        tally.picked("sword", false);
-        assertTrue(ledger.canTake("sword", tally.refusedTakes().getOrDefault("sword", 0)));
-        tally.picked("sword", true);
-        tally.chargeTo(ledger);
+        LedgerTally<String> craft = tally(ledger, "sword", 1);
+        craft.picked("sword", false);
+        assertTrue(craft.admissible(ledger).canTake("sword", craft.refusedTakes().getOrDefault("sword", 0)));
+        craft.picked("sword", true);
+        craft.chargeTo(ledger);
         assertEquals(0, ledger.outstanding("sword"));
     }
 
     @Test
-    void aPlainPickDoesNotSpendHeadroomAnAlteredCopyStillHeldNeeds() {
-        // #12: the job's one sword was enchanted, the player owns a plain one, the recipe needs both.
-        // The plain pick must not use up the headroom the enchanted pick needs.
+    void aPlainPickKeepsTheCountForTheJobsAlteredCopiesStillHeld() {
+        // The player owns 1 enchanted sword and 1 plain one at job start. The job makes 2 swords and a
+        // mod enchants both. One craft takes one enchanted sword and the player's plain one: the
+        // other enchanted copy of the job's is still held and must stay admissible.
         ProducedLedger<String> ledger = new ProducedLedger<>();
-        ledger.produced("sword", 1);
-        LedgerTally<String> tally = new LedgerTally<>();
-        tally.held("sword", 1);
-        tally.picked("sword", false);
-        assertTrue(ledger.canTake("sword", tally.refusedTakes().getOrDefault("sword", 0)));
-        tally.picked("sword", true);
-        tally.chargeTo(ledger);
-        assertEquals(0, ledger.outstanding("sword"));
-
-        // Both of the job's 2 swords were enchanted; one craft takes one of them plus the player's
-        // plain sword. The other enchanted copy is still the job's and must stay admissible.
+        tally(ledger, "sword", 1);
         ledger.produced("sword", 2);
-        tally = new LedgerTally<>();
-        tally.held("sword", 2);
-        tally.picked("sword", false);
-        tally.picked("sword", true);
-        tally.chargeTo(ledger);
+        LedgerTally<String> craft = tally(ledger, "sword", 3);
+        craft.picked("sword", false);
+        craft.picked("sword", true);
+        craft.chargeTo(ledger);
         assertEquals(1, ledger.outstanding("sword"));
-        assertTrue(ledger.canTake("sword", 0));
+        assertTrue(tally(ledger, "sword", 2).admissible(ledger).canTake("sword", 0));
+    }
+
+    /** A craft's tally over a pool holding {@code held} filter-rejected copies of {@code key}, opened against {@code ledger}. */
+    private static LedgerTally<String> tally(ProducedLedger<String> ledger, String key, int held) {
+        LedgerTally<String> tally = new LedgerTally<>();
+        tally.held(key, held);
+        tally.admissible(ledger);
+        return tally;
     }
 }

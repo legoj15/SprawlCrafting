@@ -19,7 +19,7 @@ From the repo root, on a JDK 21 host (`export JAVA_HOME="/c/Program Files/Java/j
 
     ./gradlew -p solver-core build publishToMavenLocal
 
-`build` runs the JUnit 5 suite (55 tests: `RecipeGraphSolverTest` 49, `ProducedLedgerTest` 6). The
+`build` runs the JUnit 5 suite (`RecipeGraphSolverTest`, `ProducedLedgerTest`). The
 solver suite runs ONLY here now; the mod builds no longer compile or run it. It is still on the
 release gate: the root `fullTestSuite` task depends on the included build's `:check`, and
 `release/Invoke-Release.ps1`'s Test stage runs `./gradlew -p solver-core build` first.
@@ -96,13 +96,13 @@ coordinates); not boot-tested with two mods.
 ## A consumer mod (e.g. the bot) depending on it
 
 Add `mavenLocal()` (local dev) or `maven("https://jitpack.io")`, or include this repo's `solver-core` as
-a composite build. Then, per loader:
+a composite build. Then, per loader (`<v>` is the `solver_version` you build against):
 
-- Fabric Loom: `include(implementation("com.legoj15:solver:1.0.0")!!)`.
-- NeoForge MDG: `implementation("com.legoj15:solver:1.0.0")` +
-  `jarJar("com.legoj15:solver") { version { strictly("[1.0.0,2.0.0)"); prefer("1.0.0") } }`.
+- Fabric Loom: `include(implementation("com.legoj15:solver:<v>")!!)`.
+- NeoForge MDG: `implementation("com.legoj15:solver:<v>")` +
+  `jarJar("com.legoj15:solver") { version { strictly("[<v>,2.0.0)"); prefer("<v>") } }`.
 - Forge FG7: apply `net.minecraftforge.jarjar`, `jarJar.register()`, then `implementation(...)` +
-  `jarJar.configure("jarJar"("com.legoj15:solver:1.0.0")!!) { setRange("[1.0.0,2.0.0)") }`.
+  `jarJar.configure("jarJar"("com.legoj15:solver:<v>")!!) { setRange("[<v>,2.0.0)") }`.
 - Never shade it on a JarJar-era loader (see above). Use the same group/artifact (`com.legoj15:solver`)
   in jar-in-jar metadata as SprawlCrafting does, or the selector sees two different libraries and
   loads both (a split package again). A JitPack build would likely carry a `com.github...` group

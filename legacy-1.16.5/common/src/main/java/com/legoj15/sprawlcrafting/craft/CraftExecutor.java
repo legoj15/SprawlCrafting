@@ -375,9 +375,10 @@ public final class CraftExecutor {
     /**
      * One inventory slot per ingredient ({@code -1} for an empty cell), chosen without mutating anything,
      * or the first ingredient nothing could satisfy. A stack {@link #usableAsIngredient} rejects is chosen
-     * only when no acceptable stack matches and {@code ledger} (null: never) still admits its item. Every
-     * pick is recorded in a {@link LedgerTally}, which {@link Assignment#chargeTo} charges: rejected picks,
-     * plus plain picks beyond the rejected copies of that item the pool still holds.
+     * only when no acceptable stack matches and {@code ledger} (null: never) still admits its item through
+     * {@link LedgerTally#admissible}: only rejected copies above those the player held before the job
+     * produced anything. Every pick is recorded in the tally, which {@link Assignment#chargeTo} charges:
+     * rejected picks, plus plain picks beyond the job's rejected copies of that item the pool still holds.
      */
     private static Assignment assign(PlayerInventory inventory, List<Ingredient> ingredients,
                                      ProducedLedger<Item> ledger) {
@@ -385,8 +386,10 @@ public final class CraftExecutor {
         int[] reserved = new int[MAIN_SLOTS];
         LedgerTally<Item> tally = new LedgerTally<>();
         Map<Item, Integer> ledgerTakes = tally.refusedTakes();
+        ProducedLedger<Item> admitting = null;
         if (ledger != null) {
             countRefused(inventory, tally);
+            admitting = tally.admissible(ledger);
         }
         for (int n = 0; n < slots.length; n++) {
             Ingredient ingredient = ingredients.get(n);
@@ -394,7 +397,7 @@ public final class CraftExecutor {
                 slots[n] = -1;
                 continue;
             }
-            int slot = findMatchingSlot(inventory, ingredient, reserved, ledger, ledgerTakes);
+            int slot = findMatchingSlot(inventory, ingredient, reserved, admitting, ledgerTakes);
             if (slot < 0) {
                 return new Assignment(slots, tally, ingredient);
             }

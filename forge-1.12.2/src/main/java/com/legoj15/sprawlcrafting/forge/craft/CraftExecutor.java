@@ -300,9 +300,11 @@ public final class CraftExecutor {
      * One source per ingredient ({@code -1} for a gap: null or {@link Ingredient#EMPTY}) over the
      * pool {@link #buildSources} describes, chosen without mutating anything, or the first
      * ingredient nothing could satisfy. A stack {@link #usableAsIngredient} rejects is chosen only
-     * when no acceptable stack matches and {@code ledger} (null: never) still admits its identity.
-     * Every pick is recorded in a {@link LedgerTally}, which {@link Assignment#chargeTo} charges:
-     * rejected picks, plus plain picks beyond the rejected copies of that identity the pool still
+     * when no acceptable stack matches and {@code ledger} (null: never) still admits its identity
+     * through {@link LedgerTally#admissible}: only rejected copies above those the player held
+     * before the job produced anything. Every pick is recorded in the tally, which
+     * {@link Assignment#chargeTo} charges: rejected picks, plus plain picks beyond the job's
+     * rejected copies of that identity the pool still
      * holds. Package-visible: the final-step hand-off ({@link ServerGridPlacer}) lays out the same
      * choice.
      */
@@ -312,8 +314,10 @@ public final class CraftExecutor {
         int[] reserved = new int[sources.size()];
         LedgerTally<ItemKey> tally = new LedgerTally<ItemKey>();
         Map<ItemKey, Integer> ledgerTakes = tally.refusedTakes();
+        ProducedLedger<ItemKey> admitting = null;
         if (ledger != null) {
             countRefused(sources, tally);
+            admitting = tally.admissible(ledger);
         }
         for (int i = 0; i < chosen.length; i++) {
             Ingredient ingredient = ingredients.get(i);
@@ -321,7 +325,7 @@ public final class CraftExecutor {
                 chosen[i] = -1;
                 continue;
             }
-            int idx = findMatchingSource(sources, ingredient, reserved, ledger, ledgerTakes);
+            int idx = findMatchingSource(sources, ingredient, reserved, admitting, ledgerTakes);
             if (idx < 0) {
                 return new Assignment(sources, chosen, tally, ingredient);
             }
