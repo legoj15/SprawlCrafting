@@ -378,16 +378,23 @@ compression mods saturate at `Long.MAX_VALUE`. Counts are therefore `long` from 
 
 **Planning**
 
-- **Greedy, no cross-slot backtracking.** Slots resolve left-to-right against one virtual
-  inventory; under shared-resource contention a solvable target can be reported unsolvable.
+- **One slot-filling rule, no look-ahead.** Which stock fills which slot of a craft is decided by
+  `SlotAssignment` (solver-core): most constrained slot first, non-scarce alternative first, then
+  bipartite repair. Every executor (`CraftExecutor.assign` in all three trees, so also the grid
+  hand-off's ledger path) prefers the stack that rule names, and `solve` only returns plans that
+  `PlanSimulator` replays craft by craft under it (#10, #18), so a plan never depends on inventory
+  layout. The rule sees one craft at a time: a sub-craft whose slot lists an item first that a later
+  step needs (and holds the only copy of) takes it, and such a target is reported unsolvable instead
+  of stalling mid-job. Carrying a per-step slot choice in the plan would lift that; not done.
   Full search is exponential — rejected.
 - **Search budget instead of memoization.** The solver plans in batches: identical slots are
   merged and quantities carried, so a recipe is resolved once per batch size rather than once
   per unit, and a `PlannedStep` can hold thousands of crafts. `MAX_ATTEMPTS` counts *batched
   resolver visits* (one recipe resolved for one batch size) per planning pass. `solve` may run
-  two passes — the batched pass, then, if that fails, the exact per-unit (slot-by-slot) fallback
-  — so nothing makeable under the old per-unit planner becomes unmakeable; each pass gets its
-  own budget. `shortfall` walks quantities with saturating `long` counts (pinned at
+  three passes — the batched pass, then the per-unit (slot-by-slot) one, then, only when a plan
+  failed replay or a pass came up short on an item another slot group took, an exact pass that
+  applies the replay as it plans; each pass gets its own budget. The replay is O(steps x slots)
+  (a batch is applied in chunks over which the rule's choice cannot change). `shortfall` walks quantities with saturating `long` counts (pinned at
   `Long.MAX_VALUE`, reported via `saturated()`), gets `MAX_ATTEMPTS` search visits plus as many
   expansion visits, then verifies its own list against the planner (a `solve`-sized run per
   check, with a couple of top-up rounds if the planner rejects it). Pathological graphs (the
