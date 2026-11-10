@@ -2,6 +2,7 @@ package com.legoj15.solver;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
@@ -367,7 +368,8 @@ public final class RecipeGraphSolver<R, K> {
      *
      * <p>This is a best-effort UX estimate, NOT a proof of solvability (the same contract as
      * {@link Result.Failure#missing}). The walk credits whatever can be crafted from stock (the same
-     * batched search {@link #solve} uses) and commits to the first producer per item for the rest.
+     * batched search {@link #solve} uses) and commits to the first producer per item that does not
+     * loop back through a craft cycle for the rest.
      * Its list is then checked against the planner itself: if the target is already solvable the
      * answer is empty; if holding the listed items would still not make it solvable, up to
      * {@value #TOP_UP_ROUNDS} further walks over the topped-up inventory add what the planner's own
@@ -425,6 +427,8 @@ public final class RecipeGraphSolver<R, K> {
                 }
             }
         }
+        // Re-read: the top-up merges can saturate a count the first walk left exact.
+        saturated = demands.containsValue(Long.MAX_VALUE);
         return new ShortfallResult<>(demands, alternatives, approximate, saturated);
     }
 
@@ -435,14 +439,21 @@ public final class RecipeGraphSolver<R, K> {
         solve.shortfall = new UndoMap<>(new HashMap<K, Long>());
         solve.alts = new UndoMap<>(new HashMap<K, List<K>>());
         for (Group<K> group : solve.groups(target)) {
+            // Nothing is mid-craft at the top, so no cycle hit can come back here (every hit set is a
+            // subset of the chain being crafted).
             solve.requireSlot(group, group.count, new HashSet<K>(), 0);
         }
         return new Walk<>(solve.shortfall.copy(), solve.alts.copy(), solve.approximate || solve.budgetHit);
     }
 
-    /** Whether {@link #solve} would succeed holding {@code held} (long counts, no int step cap). */
+    /**
+     * Whether {@link #solve} would succeed holding {@code held} (long counts). Runs the same two
+     * passes with a scratch step list, so the same {@link Integer#MAX_VALUE} per-step batch cap
+     * applies: a list is never verified by a plan {@link #solve} could not emit. Keep the cap when
+     * merging plan/validation rewrites (issue #11, review_final low 2).
+     */
     private boolean feasible(RecipeInfo<R, K> target, Map<K, Long> held) {
-        return plan(target, held, false).steps != null;
+        return plan(target, held, true).steps != null;
     }
 
     private static final class Walk<T> {
@@ -495,7 +506,11 @@ public final class RecipeGraphSolver<R, K> {
         int expandLeft = maxAttempts;
         boolean budgetHit = false;
         final Set<K> missing = new LinkedHashSet<>();
-        /** Set by the shortfall walk when the depth/expansion budget forced an early leaf. */
+        /**
+         * Set by the shortfall walk when the depth/expansion budget forced an early leaf in a branch
+         * that was kept; undoing a branch restores it. ({@link #budgetHit} stays sticky: the stock
+         * search budget is not refunded.)
+         */
         boolean approximate = false;
         private final Map<RecipeInfo<R, K>, List<Group<K>>> groupCache = new IdentityHashMap<>();
 
@@ -895,22 +910,29 @@ public final class RecipeGraphSolver<R, K> {
          * the craftable {@code oak_wood} (4 logs → 3 wood): gathering the log is right; "crafting"
          * the wood block would demand four logs per slot. And for {@code #planks} with one oak log
          * and one birch log held, both are used before anything is listed to gather.
+         *
+         * <p>A craftable alternative whose expansion cycles back into the chain (see {@link #require})
+         * is undone and the next one tried. If every craftable alternative is already being crafted
+         * up the chain or cycles, nothing is recorded: the cycle members hit are returned so the
+         * ancestor that owns them can try another producer.
+         *
+         * @return the items of {@code crafting} this slot could only be satisfied through (empty: done)
          */
-        void requireSlot(Group<K> group, long qty, Set<K> crafting, int depth) {
+        Set<K> requireSlot(Group<K> group, long qty, Set<K> crafting, int depth) {
             long left = qty;
             for (K item : group.alternatives) {
                 if (left <= 0) {
-                    return;
+                    return Collections.emptySet();
                 }
                 left -= take(item, left, virtual, null);
             }
             if (left <= 0) {
-                return;
+                return Collections.emptySet();
             }
             for (K item : group.alternatives) {
                 if (producers.apply(item).isEmpty()) {
                     require(item, left, group.alternatives, crafting, depth);
-                    return; // a raw gatherable — the simplest answer
+                    return Collections.emptySet(); // a raw gatherable — the simplest answer
                 }
             }
             // Credit everything the player can already make (quantity-exact, the solve's own batched
@@ -925,83 +947,134 @@ public final class RecipeGraphSolver<R, K> {
                 }
             }
             if (left <= 0) {
-                return;
+                return Collections.emptySet();
             }
+            Set<K> hits = null;
             for (K item : group.craftable) {
-                if (!crafting.contains(item)) {
-                    require(item, left, group.alternatives, crafting, depth);
-                    return; // craft it, skipping anything mid-craft up the chain
+                if (crafting.contains(item)) {
+                    // Mid-craft up the chain: only reachable through that ancestor's own recipe.
+                    hits = withAll(hits, Collections.singleton(item));
+                    continue;
                 }
+                int virtualMark = virtual.mark();
+                int shortfallMark = shortfall.mark();
+                int altsMark = alts.mark();
+                boolean approximateMark = approximate;
+                Set<K> itemHits = require(item, left, group.alternatives, crafting, depth);
+                if (itemHits.isEmpty()) {
+                    return itemHits; // crafted (or listed) without looping back up the chain
+                }
+                virtual.rollback(virtualMark);
+                shortfall.rollback(shortfallMark);
+                alts.rollback(altsMark);
+                approximate = approximateMark; // a depth/budget leaf in an undone branch is gone too
+                hits = withAll(hits, itemHits);
             }
-            // Nothing here can be manufactured (an inventory-only filled bucket) or everything that
-            // can is already being crafted up the chain: the item itself is what to gather.
+            if (hits != null) {
+                return hits; // every way in here is a cycle: an ancestor decides
+            }
+            // Nothing here can be manufactured (an inventory-only filled bucket): the item itself is
+            // what to gather.
             recordLeaf(group.alternatives.get(0), left, group.alternatives);
+            return Collections.emptySet();
         }
 
         /**
          * Accumulates the leaf demand to obtain {@code qty} of {@code item}: consume stock first,
-         * then either sub-craft one batch via the first producer (recording the sub-recipe's own
-         * leaf demands and crediting the overproduction back) or, if the item has no usable
-         * producer, record it as a gatherable.
+         * then either sub-craft one batch via a producer (recording the sub-recipe's own leaf
+         * demands and crediting the overproduction back) or, if the item has no usable producer,
+         * record it as a gatherable.
          *
-         * <p>The sub-craft is journaled so a storage/decompression recipe — where the item's only
-         * producer is "uncrafting" a block that is itself made from the item (coal ⟷ coal_block) —
-         * can be undone: if producing {@code item} ends up demanding {@code item} again, crafting
-         * it was pointless, so it is treated as a raw gatherable for the original {@code qty}
-         * (you'd report "1 coal", not the 9 that filling a block would imply).
+         * <p>Producers are tried in order, each expansion journaled. One that can only be satisfied
+         * through an item already being crafted up the chain (itself or an ancestor) is a cycle —
+         * block ⟷ ingot ⟷ nugget, crystal ⟷ crystal_block — so it is undone and the next producer
+         * tried; a cycle member that also has a recipe from raws is thus expanded through that
+         * recipe. If every producer cycles back to {@code item} itself, crafting it is pointless and
+         * it is the gatherable for the original {@code qty} (you'd report "1 coal", not the 9 that
+         * filling a block would imply). If some producer cycles back to an ancestor instead, nothing
+         * is recorded and those ancestors are returned, so the outermost cycle member — the item
+         * actually asked for — is the one listed (1 iron block, not 81 nuggets).
+         *
+         * @return the items of {@code crafting} that obtaining {@code item} could only go through
+         *         (empty: demand recorded)
          */
-        void require(K item, long qty, List<K> slotAlternatives, Set<K> crafting, int depth) {
+        Set<K> require(K item, long qty, List<K> slotAlternatives, Set<K> crafting, int depth) {
             if (qty <= 0) {
-                return;
+                return Collections.emptySet();
             }
             qty -= take(item, qty, virtual, null);
             if (qty <= 0) {
-                return;
+                return Collections.emptySet();
             }
-            // First usable producer (deterministic — CraftPlanner sorts by id). A cycle (the item is
-            // being crafted higher up) or no producer at all means it bottoms out as a gatherable.
-            RecipeInfo<R, K> producer = null;
-            if (!crafting.contains(item)) {
-                for (RecipeInfo<R, K> candidate : producers.apply(item)) {
-                    if (candidate.resultCount() > 0) {
-                        producer = candidate;
-                        break;
-                    }
+            if (crafting.contains(item)) {
+                return Collections.singleton(item); // mid-craft up the chain: a cycle
+            }
+            // Usable producers in order (deterministic — CraftPlanner sorts by id). None at all means
+            // it bottoms out as a gatherable.
+            boolean expandable = false;
+            for (RecipeInfo<R, K> candidate : producers.apply(item)) {
+                if (candidate.resultCount() > 0) {
+                    expandable = true;
+                    break;
                 }
             }
-            if (producer == null) {
+            if (!expandable) {
                 recordLeaf(item, qty, slotAlternatives); // a true leaf: exact, not approximate
-                return;
+                return Collections.emptySet();
             }
-            if (depth > maxDepth || !expandVisit()) {
-                // Expandable, but out of depth or budget: list the intermediate itself, flagged.
-                recordLeaf(item, qty, slotAlternatives);
-                approximate = true;
-                return;
-            }
-            long yield = producer.resultCount();
-            long crafts = ceilDiv(qty, yield);
-            long before = count(shortfall, item);
-            int virtualMark = virtual.mark();
-            int shortfallMark = shortfall.mark();
-            int altsMark = alts.mark();
+            Set<K> hits = null;
             crafting.add(item);
-            for (Group<K> group : groups(producer)) {
-                requireSlot(group, satMul(crafts, group.count), crafting, depth + 1);
+            try {
+                for (RecipeInfo<R, K> producer : producers.apply(item)) {
+                    if (producer.resultCount() <= 0) {
+                        continue;
+                    }
+                    if (depth > maxDepth || !expandVisit()) {
+                        // Expandable, but out of depth or budget: list the intermediate itself, flagged.
+                        recordLeaf(item, qty, slotAlternatives);
+                        approximate = true;
+                        return Collections.emptySet();
+                    }
+                    long yield = producer.resultCount();
+                    long crafts = ceilDiv(qty, yield);
+                    int virtualMark = virtual.mark();
+                    int shortfallMark = shortfall.mark();
+                    int altsMark = alts.mark();
+                    boolean approximateMark = approximate;
+                    Set<K> producerHits = null;
+                    for (Group<K> group : groups(producer)) {
+                        Set<K> groupHits = requireSlot(group, satMul(crafts, group.count), crafting, depth + 1);
+                        if (!groupHits.isEmpty()) {
+                            producerHits = groupHits;
+                            break;
+                        }
+                    }
+                    if (producerHits == null) {
+                        long made = satMul(crafts, yield);
+                        if (made < Long.MAX_VALUE && made > qty) {
+                            addTo(virtual, item, made - qty);
+                        }
+                        return Collections.emptySet();
+                    }
+                    // This producer loops back into the chain: undo it and try the next one.
+                    virtual.rollback(virtualMark);
+                    shortfall.rollback(shortfallMark);
+                    alts.rollback(altsMark);
+                    // Expansion budget is not refunded, so a later expandable item still flags.
+                    approximate = approximateMark;
+                    hits = withAll(hits, producerHits);
+                }
+            } finally {
+                crafting.remove(item);
             }
-            crafting.remove(item);
-            if (count(shortfall, item) > before) {
-                // Producing the item demanded the item itself — a storage cycle. Gather it raw.
-                virtual.rollback(virtualMark);
-                shortfall.rollback(shortfallMark);
-                alts.rollback(altsMark);
+            Set<K> outer = hits == null ? new LinkedHashSet<K>() : new LinkedHashSet<>(hits);
+            outer.remove(item);
+            if (outer.isEmpty()) {
+                // Every producer needs the item itself — a storage cycle. Gather it raw.
                 recordLeaf(item, qty, slotAlternatives);
-                return;
+                return Collections.emptySet();
             }
-            long made = satMul(crafts, yield);
-            if (made < Long.MAX_VALUE && made > qty) {
-                addTo(virtual, item, made - qty);
-            }
+            return outer; // only reachable through an ancestor: that ancestor decides
         }
 
         /** Records {@code qty} of a gatherable, unioning in the slot's alternatives (for UI cycling). */
@@ -1021,6 +1094,13 @@ public final class RecipeGraphSolver<R, K> {
                 alts.put(item, list);
             }
         }
+    }
+
+    /** {@code acc} plus {@code more}, allocating only on first use ({@code acc} may be null). */
+    private static <T> Set<T> withAll(Set<T> acc, Set<T> more) {
+        Set<T> out = acc == null ? new LinkedHashSet<T>() : acc;
+        out.addAll(more);
+        return out;
     }
 
     /** Removes up to {@code max} of {@code item} from {@code inv}; returns how many were taken. */
