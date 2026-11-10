@@ -808,6 +808,125 @@ class RecipeGraphSolverTest {
     }
 
     @Test
+    void resultAlsoAcceptedBySameRecipeSlotDoesNotInflateStock() {
+        // Each craft of r0 after the first eats the c the craft before it made (its [c|d|f] slot takes
+        // c), so three crafts leave one c, not three. A batched replay that books consumption and
+        // credit separately, clamping in between, would count three and accept a plan that shorts.
+        recipes.add(TestRecipe.of("r0", "c", 1, "c|d|f", "b", "b|f"));
+        remainders.put("b", "f");
+        TestRecipe target = TestRecipe.of("TARGET", "TARGET", 1, "c|f", "c", "b", "c");
+        Map<String, Integer> held = inv("d", 4, "b", 11);
+        List<PlannedStep<String>> broken = Arrays.asList(new PlannedStep<>("r0", 3), new PlannedStep<>("TARGET", 1));
+        assertFalse(replayCraftByCraft(target, broken, held) == null, "premise: " + broken + " shorts craft by craft");
+        assertFalse(simulate(target, broken, held).ok(), "PlanSimulator accepts " + broken + ", which shorts");
+        Result<String, String> result = solver().solve(target, held);
+        if (result instanceof Result.Success) {
+            List<PlannedStep<String>> steps = ((Result.Success<String, String>) result).steps();
+            assertEquals(null, replayCraftByCraft(target, steps, held), "plan " + steps + " shorts craft by craft");
+        }
+    }
+
+    @Test
+    void batchedReplayMatchesCraftByCraft() {
+        // PlanSimulator applies runs of identical crafts in one go; that must leave exactly the stock
+        // (and the same shortage point) as crafting one at a time, including when a craft consumes an
+        // item it is also credited (its own result in a slot, or a remainder equal to an alternative).
+        java.util.Random random = new java.util.Random(0x5C1A7C4EL);
+        String[] items = {"a", "b", "c", "d", "e"};
+        for (int trial = 0; trial < 20000; trial++) {
+            remainders.clear();
+            for (int r = random.nextInt(3); r > 0; r--) {
+                remainders.put(items[random.nextInt(items.length)], items[random.nextInt(items.length)]);
+            }
+            String[] slots = new String[1 + random.nextInt(4)];
+            for (int s = 0; s < slots.length; s++) {
+                List<String> pool = new ArrayList<>(Arrays.asList(items));
+                Collections.shuffle(pool, random);
+                slots[s] = String.join("|", pool.subList(0, 1 + random.nextInt(3)));
+            }
+            TestRecipe recipe = TestRecipe.of("r", items[random.nextInt(items.length)], 1 + random.nextInt(3), slots);
+            Map<String, Integer> stock = new HashMap<>();
+            Map<String, Long> start = new HashMap<>();
+            for (String item : items) {
+                int count = random.nextInt(7);
+                if (count > 0) {
+                    stock.put(item, count);
+                    start.put(item, (long) count);
+                }
+            }
+            int crafts = 1 + random.nextInt(12);
+            String where = "trial " + trial + ": " + recipe.ingredientSlots() + " -> " + recipe.resultCount() + " "
+                    + recipe.result() + " x" + crafts + ", stock " + stock + ", remainders " + remainders;
+
+            UndoMap<String, Long> batched = new UndoMap<>(start);
+            PlanSimulator.Batch<String> batch = PlanSimulator.run(recipe, crafts, batched, remainders::get, true);
+
+            boolean shorted = false;
+            int completed = 0;
+            for (; completed < crafts; completed++) {
+                List<String> chosen = SlotAssignment.assign(recipe.ingredientSlots(), stock);
+                if (chosen.contains(null)) {
+                    shorted = true;
+                    break;
+                }
+                for (String item : chosen) {
+                    stock.merge(item, -1, Integer::sum);
+                }
+                stock.merge(recipe.result(), recipe.resultCount(), Integer::sum);
+                for (String item : chosen) {
+                    String leftBehind = remainders.get(item);
+                    if (leftBehind != null) {
+                        stock.merge(leftBehind, 1, Integer::sum);
+                    }
+                }
+            }
+            assertEquals(shorted, batch.isShort(), where);
+            assertEquals(completed, batch.completeBeforeShort, where);
+            for (String item : items) {
+                Long have = batched.get(item);
+                assertEquals((long) stock.getOrDefault(item, 0), have == null ? 0L : have, where + ": count of " + item);
+            }
+
+            // Without stopping at the first short craft (the exact pass's mode): a short craft
+            // consumes what it could assign and is credited nothing.
+            UndoMap<String, Long> through = new UndoMap<>(start);
+            PlanSimulator.Batch<String> all = PlanSimulator.run(recipe, crafts, through, remainders::get, false);
+            Map<String, Integer> slow = new HashMap<>();
+            for (Map.Entry<String, Long> entry : start.entrySet()) {
+                slow.put(entry.getKey(), entry.getValue().intValue());
+            }
+            long[] shortage = new long[recipe.ingredientSlots().size()];
+            for (int craft = 0; craft < crafts; craft++) {
+                List<String> chosen = SlotAssignment.assign(recipe.ingredientSlots(), slow);
+                for (int s = 0; s < chosen.size(); s++) {
+                    if (chosen.get(s) == null) {
+                        shortage[s]++;
+                    } else {
+                        slow.merge(chosen.get(s), -1, Integer::sum);
+                    }
+                }
+                if (chosen.contains(null)) {
+                    continue;
+                }
+                slow.merge(recipe.result(), recipe.resultCount(), Integer::sum);
+                for (String item : chosen) {
+                    String leftBehind = remainders.get(item);
+                    if (leftBehind != null) {
+                        slow.merge(leftBehind, 1, Integer::sum);
+                    }
+                }
+            }
+            assertTrue(Arrays.equals(shortage, all.shortage), where + ": per-slot shortage "
+                    + Arrays.toString(all.shortage) + ", craft by craft " + Arrays.toString(shortage));
+            for (String item : items) {
+                Long have = through.get(item);
+                assertEquals((long) slow.getOrDefault(item, 0), have == null ? 0L : have,
+                        where + ": count of " + item + " when not stopping at a short craft");
+            }
+        }
+    }
+
+    @Test
     void randomGraphsOnlyYieldExecutablePlans() {
         // The property review_final fuzzed: whatever solve() returns replays without a shortage when
         // an executor follows SlotAssignment craft by craft. Also checks PlanSimulator's batched replay
@@ -822,14 +941,17 @@ class RecipeGraphSolverTest {
             recipes.clear();
             remainders.clear();
             if (random.nextInt(10) == 0) {
-                remainders.put(raws[random.nextInt(4)], raws[random.nextInt(4)]);
+                // Sometimes a mid as the remainder, so a craft can be credited what it also consumes.
+                String[] pool = random.nextBoolean() ? raws : mids;
+                remainders.put(raws[random.nextInt(4)], pool[random.nextInt(pool.length)]);
             }
             for (int m = 0; m < mids.length; m++) {
                 int variants = 1 + random.nextInt(2);
                 for (int v = 0; v < variants; v++) {
                     String[] slots = new String[1 + random.nextInt(4)];
                     for (int s = 0; s < slots.length; s++) {
-                        slots[s] = randomSlot(random, raws, mids, m);
+                        // One slot in eight may also accept the recipe's own result (a cycle).
+                        slots[s] = randomSlot(random, raws, mids, random.nextInt(8) == 0 ? m + 1 : m);
                     }
                     recipes.add(TestRecipe.of(mids[m] + "_" + v, mids[m],
                             yields[random.nextInt(yields.length)], slots));

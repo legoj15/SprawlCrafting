@@ -206,19 +206,29 @@ public final class PlanSimulator {
                 }
             }
             repeat = Math.max(1, repeat);
+            // Net each item's change per craft before applying it: a craft can consume an item it is
+            // also credited (its own result in a slot, a remainder equal to an alternative), and
+            // booking the two separately would clamp the consumption at zero and inflate the stock.
+            Map<K, Long> net = new LinkedHashMap<>();
             for (Map.Entry<K, Long> entry : use.entrySet()) {
+                net.merge(entry.getKey(), -entry.getValue(), Long::sum);
+            }
+            for (Map.Entry<K, Long> entry : made.entrySet()) {
+                net.merge(entry.getKey(), entry.getValue(), Long::sum);
+            }
+            for (Map.Entry<K, Long> entry : net.entrySet()) {
+                long delta = entry.getValue();
+                if (delta == 0) {
+                    continue;
+                }
                 long have = count(inv, entry.getKey());
-                long after = have - RecipeGraphSolver.satMul(repeat, entry.getValue());
+                long after = delta > 0
+                        ? RecipeGraphSolver.satAdd(have, RecipeGraphSolver.satMul(repeat, delta))
+                        : have - RecipeGraphSolver.satMul(repeat, -delta);
                 if (after <= 0) {
                     inv.remove(entry.getKey());
                 } else {
                     inv.put(entry.getKey(), after);
-                }
-            }
-            for (Map.Entry<K, Long> entry : made.entrySet()) {
-                long gain = RecipeGraphSolver.satMul(repeat, entry.getValue());
-                if (gain > 0) {
-                    inv.put(entry.getKey(), RecipeGraphSolver.satAdd(count(inv, entry.getKey()), gain));
                 }
             }
             if (isShort) {
