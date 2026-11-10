@@ -1,8 +1,17 @@
 # Solver library (`com.legoj15:solver`) — agent notes
 
-The Minecraft-free crafting planner (`RecipeGraphSolver`, `PlannedStep`, `ProducedLedger`, `UndoMap`,
-`CountFormat`; package `com.legoj15.solver`) is a plain-Java library built from `solver-core/`. Every
-SprawlCrafting build depends on it and bundles it; a second mod (MegaBlockBot) can do the same.
+The Minecraft-free crafting planner (`RecipeGraphSolver`, `PlannedStep`, `SlotAssignment`,
+`PlanSimulator`, `ProducedLedger`, `UndoMap`, `CountFormat`; package `com.legoj15.solver`) is a
+plain-Java library built from `solver-core/`. Every SprawlCrafting build depends on it and bundles it;
+a second mod (MegaBlockBot) can do the same.
+
+**Executor contract (since 1.0.1).** `solve` only returns plans that `PlanSimulator` replays craft by
+craft, filling each craft's slots with `SlotAssignment.assign(slots, stock)`. An executor must make the
+same choice: build `slots` exactly as its `RecipeInfo.ingredientSlots()` (blank cells dropped) and
+`stock` from the same pool and filter the planner snapshots, then take a stack of the item named for
+each slot (falling back to its own matching only when none fits). SprawlCrafting's three
+`CraftExecutor`s do this via `CraftPlanner.slotAlternatives`. An executor that picks by inventory order
+instead can stall mid-job on plans that share stock across slots or steps (issues #10, #18).
 
 | | |
 |---|---|
@@ -19,7 +28,8 @@ From the repo root, on a JDK 21 host (`export JAVA_HOME="/c/Program Files/Java/j
 
     ./gradlew -p solver-core build publishToMavenLocal
 
-`build` runs the JUnit 5 suite (52 tests: `RecipeGraphSolverTest` 49, `ProducedLedgerTest` 3). The
+`build` runs the JUnit 5 suite (`RecipeGraphSolverTest`, including a fixed-seed random-graph check
+that every returned plan replays, and `ProducedLedgerTest`). The
 solver suite runs ONLY here now; the mod builds no longer compile or run it. It is still on the
 release gate: the root `fullTestSuite` task depends on the included build's `:check`, and
 `release/Invoke-Release.ps1`'s Test stage runs `./gradlew -p solver-core build` first.
@@ -98,11 +108,11 @@ coordinates); not boot-tested with two mods.
 Add `mavenLocal()` (local dev) or `maven("https://jitpack.io")`, or include this repo's `solver-core` as
 a composite build. Then, per loader:
 
-- Fabric Loom: `include(implementation("com.legoj15:solver:1.0.0")!!)`.
-- NeoForge MDG: `implementation("com.legoj15:solver:1.0.0")` +
-  `jarJar("com.legoj15:solver") { version { strictly("[1.0.0,2.0.0)"); prefer("1.0.0") } }`.
+- Fabric Loom: `include(implementation("com.legoj15:solver:1.0.1")!!)`.
+- NeoForge MDG: `implementation("com.legoj15:solver:1.0.1")` +
+  `jarJar("com.legoj15:solver") { version { strictly("[1.0.1,2.0.0)"); prefer("1.0.1") } }`.
 - Forge FG7: apply `net.minecraftforge.jarjar`, `jarJar.register()`, then `implementation(...)` +
-  `jarJar.configure("jarJar"("com.legoj15:solver:1.0.0")!!) { setRange("[1.0.0,2.0.0)") }`.
+  `jarJar.configure("jarJar"("com.legoj15:solver:1.0.1")!!) { setRange("[1.0.1,2.0.0)") }`.
 - Never shade it on a JarJar-era loader (see above). Use the same group/artifact (`com.legoj15:solver`)
   in jar-in-jar metadata as SprawlCrafting does, or the selector sees two different libraries and
   loads both (a split package again). A JitPack build would likely carry a `com.github...` group

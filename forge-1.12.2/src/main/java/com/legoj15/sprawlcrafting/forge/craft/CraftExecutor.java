@@ -8,6 +8,7 @@ import java.util.Map;
 import java.util.Set;
 
 import com.legoj15.solver.ProducedLedger;
+import com.legoj15.solver.SlotAssignment;
 
 import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.entity.player.EntityPlayerMP;
@@ -314,13 +315,14 @@ public final class CraftExecutor {
         int[] reserved = new int[sources.size()];
         Map<ItemKey, Integer> ledgerTakes = new HashMap<ItemKey, Integer>();
         Set<ItemKey> refusedKeys = ledger == null ? null : refusedKeys(sources);
+        ItemKey[] preferred = preferredKeys(sources, ingredients);
         for (int i = 0; i < chosen.length; i++) {
             Ingredient ingredient = ingredients.get(i);
             if (ingredient == null || ingredient == Ingredient.EMPTY) {
                 chosen[i] = -1;
                 continue;
             }
-            int idx = findMatchingSource(sources, ingredient, reserved, ledger, ledgerTakes);
+            int idx = findMatchingSource(sources, ingredient, preferred[i], reserved, ledger, ledgerTakes);
             if (idx < 0) {
                 return new Assignment(sources, chosen, ledgerTakes, ingredient);
             }
@@ -403,8 +405,55 @@ public final class CraftExecutor {
         return new ItemKey(stack.getItem(), subtyped ? stack.getMetadata() : 0);
     }
 
-    private static int findMatchingSource(List<Source> sources, Ingredient ingredient, int[] reserved,
-                                          ProducedLedger<ItemKey> ledger, Map<ItemKey, Integer> ledgerTakes) {
+    /**
+     * Per ingredient, the identity {@link SlotAssignment} picks for it from the usable stacks of the
+     * whole pool (null for a gap or when nothing usable fits). The solver plans every craft with the
+     * same rule over the same slot lists ({@link CraftPlanner#slotAlternatives}) and the same pool
+     * counts, so each craft takes what the plan counted on, not whichever stack comes first.
+     */
+    private static ItemKey[] preferredKeys(List<Source> sources, List<Ingredient> ingredients) {
+        Map<ItemKey, Integer> stock = new HashMap<ItemKey, Integer>();
+        for (Source source : sources) {
+            ItemStack stack = source.peek();
+            if (!stack.isEmpty() && usableAsIngredient(stack)) {
+                ItemKey key = ItemKey.of(stack);
+                Integer have = stock.get(key);
+                stock.put(key, (have == null ? 0 : have) + stack.getCount());
+            }
+        }
+        List<List<ItemKey>> slots = new ArrayList<List<ItemKey>>();
+        List<Integer> cells = new ArrayList<Integer>();
+        for (int i = 0; i < ingredients.size(); i++) {
+            Ingredient ingredient = ingredients.get(i);
+            if (ingredient != null && ingredient != Ingredient.EMPTY) {
+                slots.add(CraftPlanner.slotAlternatives(ingredient));
+                cells.add(i);
+            }
+        }
+        List<ItemKey> chosen = SlotAssignment.assign(slots, stock);
+        ItemKey[] preferred = new ItemKey[ingredients.size()];
+        for (int s = 0; s < cells.size(); s++) {
+            preferred[cells.get(s)] = chosen.get(s);
+        }
+        return preferred;
+    }
+
+    /**
+     * A stack of {@code preferred} ({@link #preferredKeys}) when one matches; otherwise the first
+     * match in pool order, then (with a ledger) a refused stack the ledger admits.
+     */
+    private static int findMatchingSource(List<Source> sources, Ingredient ingredient, ItemKey preferred,
+                                          int[] reserved, ProducedLedger<ItemKey> ledger,
+                                          Map<ItemKey, Integer> ledgerTakes) {
+        if (preferred != null) {
+            for (int i = 0; i < sources.size(); i++) {
+                ItemStack stack = sources.get(i).peek();
+                if (!stack.isEmpty() && stack.getCount() - reserved[i] > 0 && preferred.equals(ItemKey.of(stack))
+                        && usableAsIngredient(stack) && ingredient.apply(stack)) {
+                    return i;
+                }
+            }
+        }
         for (int i = 0; i < sources.size(); i++) {
             ItemStack stack = sources.get(i).peek();
             if (!stack.isEmpty() && stack.getCount() - reserved[i] > 0

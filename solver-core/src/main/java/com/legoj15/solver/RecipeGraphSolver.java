@@ -35,6 +35,13 @@ import java.util.function.UnaryOperator;
  *       per slot in slot order — the pre-batching planner exactly — so a recipe whose slots
  *       compete for shared stock (oak-or-birch, oak, oak-or-birch) is never lost to the batching
  *       order.</li>
+ *   <li>Executable as run: every plan {@link #solve} returns replays through {@link PlanSimulator},
+ *       which fills each craft's slots with {@link SlotAssignment} — the same rule the executors use
+ *       to pick inventory stacks — one craft at a time. A pass whose plan does not replay is
+ *       discarded, and an exact pass that applies that replay as it plans gets a turn (see
+ *       {@code plan}). A plan therefore never depends on inventory layout; what the rule cannot do is
+ *       look ahead, so a sub-craft whose slot prefers an item a later step needs (and holds the only
+ *       copy of) takes it, and such a target fails rather than stalling mid-job.</li>
  *   <li>Stock first: items already (virtually) in the inventory satisfy a slot before any
  *       sub-craft is planned.</li>
  *   <li>Each ingredient slot lists its acceptable alternatives in preference order; stock is
@@ -212,6 +219,9 @@ public final class RecipeGraphSolver<R, K> {
     /** Extra walk rounds {@link #shortfall} may add when the planner rejects the first list. */
     private static final int TOP_UP_ROUNDS = 2;
 
+    /** Sub-craft-and-replay rounds the exact pass gives one batch before shrinking it. */
+    private static final int EXACT_ROUNDS = 4;
+
     private final Function<K, List<? extends RecipeInfo<R, K>>> producers;
     private final UnaryOperator<K> remainder;
     private final int maxDepth;
@@ -223,7 +233,7 @@ public final class RecipeGraphSolver<R, K> {
      * @param maxDepth    recursion backstop on the recipe tree depth
      * @param maxAttempts resolver node visits (one recipe resolved for one batch size) allowed per
      *                    planning pass before aborting — bounds worst-case backtracking on hostile
-     *                    graphs. {@link #solve} runs at most two passes (batched, then slot by slot);
+     *                    graphs. {@link #solve} runs at most three passes (batched, slot by slot, exact);
      *                    a {@link #shortfall} walk gets this many search visits plus this many
      *                    expansion visits, and each of its verifications is a {@link #solve}-sized run.
      */
@@ -238,26 +248,110 @@ public final class RecipeGraphSolver<R, K> {
     }
 
     public Result<R, K> solve(RecipeInfo<R, K> target, Map<K, Integer> inventory) {
-        Map<K, Long> held = toLong(inventory);
-        List<PlannedStep<R>> steps = new ArrayList<>();
-        Solve batched = new Solve(true, true);
-        if (batched.craft(target, 1, new UndoMap<>(held), steps, new HashSet<K>(), 0) == 1) {
-            return new Result.Success<>(mergeAdjacent(steps));
+        Plan<R, K> plan = plan(target, toLong(inventory), true);
+        if (plan.steps == null) {
+            return new Result.Failure<>(plan.missing, plan.budgetExceeded);
         }
-        // The batched pass takes each slot group's whole demand at once; on a recipe whose slots
-        // compete for the same stock that order can lose where taking one unit per slot, in slot
-        // order, wins. That per-unit walk is exactly the pre-batching planner, so running it as the
-        // fallback means nothing the old planner could make is ever reported unmakeable.
+        List<PlannedStep<R>> steps = new ArrayList<>(plan.steps.size());
+        for (Step<R, K> step : plan.steps) {
+            steps.add(new PlannedStep<>(step.recipe.id(), (int) step.crafts));
+        }
+        return new Result.Success<>(mergeAdjacent(steps));
+    }
+
+    /**
+     * Up to three planning passes over {@code held}, each result accepted only if
+     * {@link PlanSimulator} replays it without a shortage (the executors follow the same
+     * {@link SlotAssignment} rule the replay does):
+     * <ol>
+     *   <li>batched: each slot group's whole demand at once (fast, the usual answer);</li>
+     *   <li>unitwise: one unit per slot in slot order, the pre-batching planner, so a recipe whose
+     *       slots compete for shared stock in a way batching loses is still found;</li>
+     *   <li>exact: only when a pass's plan was rejected or a pass came up short on an item another
+     *       slot group had taken (contention). Every step's consumption is the replay itself, applied
+     *       at the moment the step is emitted, so stock a later step counted on is never "reserved"
+     *       in the model while an earlier step physically eats it (#10), and slots are filled most
+     *       constrained first (#18).</li>
+     * </ol>
+     *
+     * @param capInt cap a batch at {@link Integer#MAX_VALUE} crafts (what a {@link PlannedStep} holds)
+     */
+    private Plan<R, K> plan(RecipeInfo<R, K> target, Map<K, Long> held, boolean capInt) {
+        List<Step<R, K>> steps = new ArrayList<>();
+        Solve batched = new Solve(true, true, false, capInt);
+        boolean batchedRejected = false;
+        if (batched.craft(target, 1, new UndoMap<>(held), steps, new HashSet<K>(), 0) == 1) {
+            if (replays(steps, held)) {
+                return new Plan<>(steps, null, false);
+            }
+            batchedRejected = true;
+        }
         steps.clear();
-        Solve unitwise = new Solve(false, true);
+        Solve unitwise = new Solve(false, true, false, capInt);
+        boolean unitwiseRejected = false;
         if (unitwise.craft(target, 1, new UndoMap<>(held), steps, new HashSet<K>(), 0) == 1) {
-            return new Result.Success<>(mergeAdjacent(steps));
+            if (replays(steps, held)) {
+                return new Plan<>(steps, null, false);
+            }
+            unitwiseRejected = true;
         }
         Set<K> missing = new LinkedHashSet<>(batched.missing);
         missing.addAll(unitwise.missing);
-        // Too complex only if neither pass could finish: a clean batched failure is a real shortfall
-        // even when the per-unit walk ran out of budget on the same (large) tree.
-        return new Result.Failure<>(missing, batched.budgetHit && unitwise.budgetHit);
+        // Too complex only if no pass failed cleanly (a rejected plan is not a clean failure) and one
+        // ran out of budget: a clean batched failure is a real shortfall even when the per-unit walk
+        // ran out of budget on the same (large) tree.
+        boolean noCleanFailure = (batched.budgetHit || batchedRejected) && (unitwise.budgetHit || unitwiseRejected);
+        boolean anyBudget = batched.budgetHit || unitwise.budgetHit;
+        if (batchedRejected || unitwiseRejected || batched.contention || unitwise.contention) {
+            steps.clear();
+            Solve exact = new Solve(false, true, true, capInt);
+            boolean exactRejected = false;
+            if (exact.craft(target, 1, new UndoMap<>(held), steps, new HashSet<K>(), 0) == 1) {
+                if (replays(steps, held)) {
+                    return new Plan<>(steps, null, false);
+                }
+                exactRejected = true; // not expected: the exact pass applies the replay as it plans
+            }
+            missing.addAll(exact.missing);
+            noCleanFailure &= exact.budgetHit || exactRejected;
+            anyBudget |= exact.budgetHit;
+        }
+        return new Plan<>(null, missing, noCleanFailure && anyBudget);
+    }
+
+    /** Whether {@code steps} replay from {@code held} without any slot of any craft coming up empty. */
+    private boolean replays(List<Step<R, K>> steps, Map<K, Long> held) {
+        UndoMap<K, Long> inv = new UndoMap<>(held);
+        for (Step<R, K> step : steps) {
+            if (PlanSimulator.run(step.recipe, step.crafts, inv, remainder, true).isShort()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** One planned batch, with the recipe itself (for replay) and a long count (uncapped passes). */
+    private static final class Step<R, K> {
+        final RecipeInfo<R, K> recipe;
+        final long crafts;
+
+        Step(RecipeInfo<R, K> recipe, long crafts) {
+            this.recipe = recipe;
+            this.crafts = crafts;
+        }
+    }
+
+    /** A plan's steps, or (steps null) why there is none. */
+    private static final class Plan<R, K> {
+        final List<Step<R, K>> steps;
+        final Set<K> missing;
+        final boolean budgetExceeded;
+
+        Plan(List<Step<R, K>> steps, Set<K> missing, boolean budgetExceeded) {
+            this.steps = steps;
+            this.missing = missing;
+            this.budgetExceeded = budgetExceeded;
+        }
     }
 
     /** True if the target could be crafted right now, possibly via sub-crafts. */
@@ -336,7 +430,7 @@ public final class RecipeGraphSolver<R, K> {
 
     /** One shortfall walk over {@code held}: leaf demands, their alternatives, and the caveat flag. */
     private Walk<K> walk(RecipeInfo<R, K> target, Map<K, Long> held) {
-        Solve solve = new Solve(true, false);
+        Solve solve = new Solve(true, false, false, false);
         solve.virtual = new UndoMap<>(held);
         solve.shortfall = new UndoMap<>(new HashMap<K, Long>());
         solve.alts = new UndoMap<>(new HashMap<K, List<K>>());
@@ -348,10 +442,7 @@ public final class RecipeGraphSolver<R, K> {
 
     /** Whether {@link #solve} would succeed holding {@code held} (long counts, no int step cap). */
     private boolean feasible(RecipeInfo<R, K> target, Map<K, Long> held) {
-        if (new Solve(true, true).craft(target, 1, new UndoMap<>(held), null, new HashSet<K>(), 0) == 1) {
-            return true;
-        }
-        return new Solve(false, true).craft(target, 1, new UndoMap<>(held), null, new HashSet<K>(), 0) == 1;
+        return plan(target, held, false).steps != null;
     }
 
     private static final class Walk<T> {
@@ -387,6 +478,17 @@ public final class RecipeGraphSolver<R, K> {
         final boolean batched;
         /** False for the shortfall walk, which ignores byproducts (see #shortfall). */
         final boolean creditRemainders;
+        /** Plan every step by replaying it against the stock as it stands (see #plan, pass 3). */
+        final boolean exact;
+        /** Cap a recorded batch at Integer.MAX_VALUE crafts (a PlannedStep's int). */
+        final boolean capInt;
+        /**
+         * Set when a slot group came up short on an item a different group had taken this pass: the
+         * failure may be an artifact of which group took it first, so the exact pass is worth a try.
+         */
+        boolean contention = false;
+        /** The first group that took each item this pass (a hint only; never rolled back). */
+        private final Map<K, Group<K>> firstTaker = new HashMap<>();
         /** Resolver (craft) node visits left; shared by the plan search and the walk's stock search. */
         int attemptsLeft = maxAttempts;
         /** Shortfall expansion (require) node visits left. */
@@ -402,9 +504,11 @@ public final class RecipeGraphSolver<R, K> {
         UndoMap<K, Long> shortfall;
         UndoMap<K, List<K>> alts;
 
-        Solve(boolean batched, boolean creditRemainders) {
+        Solve(boolean batched, boolean creditRemainders, boolean exact, boolean capInt) {
             this.batched = batched;
             this.creditRemainders = creditRemainders;
+            this.exact = exact;
+            this.capInt = capInt;
         }
 
         private boolean visit() {
@@ -472,14 +576,17 @@ public final class RecipeGraphSolver<R, K> {
         long craft(RecipeInfo<R, K> recipe,
                    long want,
                    UndoMap<K, Long> inv,
-                   List<PlannedStep<R>> steps,
+                   List<Step<R, K>> steps,
                    Set<K> crafting,
                    int depth) {
             // A PlannedStep holds an int: a larger batch is not executable, so it is capped here and
             // the shortfall surfaces as a clean failure upstream.
-            long size = steps == null ? want : Math.min(want, Integer.MAX_VALUE);
+            long size = capInt && steps != null ? Math.min(want, Integer.MAX_VALUE) : want;
             if (size <= 0) {
                 return 0;
+            }
+            if (exact) {
+                return craftExact(recipe, size, inv, steps, crafting, depth);
             }
             List<Group<K>> groups = groups(recipe);
             boolean contended = false;
@@ -499,6 +606,15 @@ public final class RecipeGraphSolver<R, K> {
                     long got = satisfySlot(group, need, inv, steps, crafting, depth, consumed);
                     if (got < need) {
                         missing.add(group.alternatives.get(0));
+                        if (!contention) {
+                            for (K item : group.alternatives) {
+                                Group<K> taker = firstTaker.get(item);
+                                if (taker != null && taker != group) {
+                                    contention = true;
+                                    break;
+                                }
+                            }
+                        }
                         shortGroup = i;
                         supplied = got / group.count;
                         break;
@@ -506,7 +622,7 @@ public final class RecipeGraphSolver<R, K> {
                 }
                 if (shortGroup < 0) {
                     if (steps != null) {
-                        steps.add(new PlannedStep<>(recipe.id(), (int) size));
+                        steps.add(new Step<>(recipe, size));
                     }
                     addTo(inv, recipe.result(), satMul(size, recipe.resultCount()));
                     // Remainders of consumed items physically reappear when this step executes.
@@ -550,7 +666,7 @@ public final class RecipeGraphSolver<R, K> {
         private long satisfySlot(Group<K> group,
                                  long need,
                                  UndoMap<K, Long> inv,
-                                 List<PlannedStep<R>> steps,
+                                 List<Step<R, K>> steps,
                                  Set<K> crafting,
                                  int depth,
                                  Map<K, Long> consumed) {
@@ -559,7 +675,7 @@ public final class RecipeGraphSolver<R, K> {
                 if (got >= need) {
                     return got;
                 }
-                got += take(item, need - got, inv, consumed);
+                got += taken(group, item, take(item, need - got, inv, consumed));
             }
             // Only craft an alternative whose crafted (bare) form would actually satisfy the slot:
             // a filled-bucket alternative is matchable from stock above but never manufactured here
@@ -569,10 +685,137 @@ public final class RecipeGraphSolver<R, K> {
                     break;
                 }
                 if (produce(item, need - got, inv, steps, crafting, depth + 1) > 0) {
-                    got += take(item, need - got, inv, consumed);
+                    got += taken(group, item, take(item, need - got, inv, consumed));
                 }
             }
             return got;
+        }
+
+        /** Notes {@code group} as a taker of {@code item} (see {@link #contention}); returns {@code n}. */
+        private long taken(Group<K> group, K item, long n) {
+            if (n > 0 && !firstTaker.containsKey(item)) {
+                firstTaker.put(item, group);
+            }
+            return n;
+        }
+
+        /**
+         * The exact pass's {@link #craft}: a batch is accepted only when {@link PlanSimulator#run}
+         * fills every slot of every craft from the stock as it stands now, and that replay IS the
+         * consumption recorded (no group reserves stock ahead of the sub-crafts that run before the
+         * step). While the replay is short, the missing units of each short slot kind are sub-crafted
+         * (each of those crafts replayed the same way, so they physically take what the rule makes
+         * them take) and the batch is replayed again, up to {@link #EXACT_ROUNDS} times. A batch that
+         * still comes up short is undone and retried at the crafts that did complete, then at one.
+         */
+        private long craftExact(RecipeInfo<R, K> recipe,
+                                long size,
+                                UndoMap<K, Long> inv,
+                                List<Step<R, K>> steps,
+                                Set<K> crafting,
+                                int depth) {
+            List<List<K>> craftableSlots = recipe.craftableIngredientSlots();
+            boolean triedSingle = false;
+            while (true) {
+                if (depth > maxDepth || !visit()) {
+                    return 0;
+                }
+                int invMark = inv.mark();
+                int stepMark = steps == null ? 0 : steps.size();
+                long complete = 0;
+                boolean done = false;
+                for (int round = 0; ; round++) {
+                    int replayMark = inv.mark();
+                    PlanSimulator.Batch<K> replay = PlanSimulator.run(recipe, size, inv, remainder, false);
+                    if (!replay.isShort()) {
+                        done = true;
+                        break;
+                    }
+                    complete = replay.completeBeforeShort;
+                    inv.rollback(replayMark);
+                    if (round == EXACT_ROUNDS || budgetHit) {
+                        break;
+                    }
+                    if (!subCraftShortages(replay, craftable(recipe, craftableSlots), inv, steps, crafting, depth)) {
+                        break;
+                    }
+                }
+                if (done) {
+                    if (steps != null) {
+                        steps.add(new Step<>(recipe, size));
+                    }
+                    return size;
+                }
+                inv.rollback(invMark);
+                if (steps != null) {
+                    steps.subList(stepMark, steps.size()).clear();
+                }
+                if (budgetHit) {
+                    return 0;
+                }
+                if (complete > 0 && complete < size) {
+                    size = complete;
+                } else if (size > 1 && !triedSingle) {
+                    size = 1;
+                    triedSingle = true;
+                } else {
+                    return 0;
+                }
+            }
+        }
+
+        /**
+         * The craftable subset for each of the recipe's non-empty slots (aligned with
+         * {@link PlanSimulator#nonEmptySlots}); the full slot where the adapter under-supplies.
+         */
+        private List<List<K>> craftable(RecipeInfo<R, K> recipe, List<List<K>> craftableSlots) {
+            List<List<K>> slots = recipe.ingredientSlots();
+            List<List<K>> out = new ArrayList<>();
+            for (int s = 0; s < slots.size(); s++) {
+                if (!slots.get(s).isEmpty()) {
+                    out.add(s < craftableSlots.size() ? craftableSlots.get(s) : slots.get(s));
+                }
+            }
+            return out;
+        }
+
+        /**
+         * Sub-crafts what a short replay lacked: per distinct slot kind (identical slots pooled), its
+         * missing units from the craftable alternatives in preference order.
+         *
+         * @return whether anything was produced at all
+         */
+        private boolean subCraftShortages(PlanSimulator.Batch<K> replay,
+                                          List<List<K>> craftable,
+                                          UndoMap<K, Long> inv,
+                                          List<Step<R, K>> steps,
+                                          Set<K> crafting,
+                                          int depth) {
+            Map<List<List<K>>, Long> deficit = new LinkedHashMap<>();
+            for (int s = 0; s < replay.slots.size(); s++) {
+                if (replay.shortage[s] > 0) {
+                    deficit.merge(Arrays.asList(replay.slots.get(s), craftable.get(s)), replay.shortage[s],
+                            RecipeGraphSolver::satAdd);
+                }
+            }
+            boolean progress = false;
+            for (Map.Entry<List<List<K>>, Long> entry : deficit.entrySet()) {
+                long need = entry.getValue();
+                for (K item : entry.getKey().get(1)) {
+                    if (need <= 0 || budgetHit) {
+                        break;
+                    }
+                    long got = produce(item, need, inv, steps, crafting, depth + 1);
+                    if (got > 0) {
+                        progress = true;
+                        need -= Math.min(need, got);
+                    }
+                }
+                if (need > 0) {
+                    missing.add(entry.getKey().get(0).get(0));
+                }
+            }
+            return progress;
         }
 
         /**
@@ -590,7 +833,7 @@ public final class RecipeGraphSolver<R, K> {
         long produce(K item,
                      long units,
                      UndoMap<K, Long> inv,
-                     List<PlannedStep<R>> steps,
+                     List<Step<R, K>> steps,
                      Set<K> crafting,
                      int depth) {
             if (units <= 0 || crafting.contains(item)) {

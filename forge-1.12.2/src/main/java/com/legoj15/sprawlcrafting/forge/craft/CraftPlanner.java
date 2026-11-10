@@ -400,6 +400,26 @@ public final class CraftPlanner {
         return null;
     }
 
+    /**
+     * One solver slot: the distinct {@link ItemKey}s of the ingredient's matching stacks, in its own
+     * order (empty when it resolves to nothing). {@code CraftExecutor} builds its
+     * {@code SlotAssignment} input with this too, so the executor fills slots from exactly the lists
+     * the plan was made with.
+     */
+    static List<ItemKey> slotAlternatives(Ingredient ingredient) {
+        List<ItemKey> alternatives = new ArrayList<ItemKey>();
+        for (ItemStack option : ingredient.getMatchingStacks()) {
+            if (option.isEmpty()) {
+                continue;
+            }
+            ItemKey key = ItemKey.of(option);
+            if (!alternatives.contains(key)) {
+                alternatives.add(key);
+            }
+        }
+        return alternatives;
+    }
+
     /** A crafting recipe reduced to the solver's view, or null if it cannot be planned. */
     static final class McRecipe implements RecipeGraphSolver.RecipeInfo<ResourceLocation, ItemKey> {
         final ResourceLocation id;
@@ -475,35 +495,27 @@ public final class CraftPlanner {
                 if (ingredient == Ingredient.EMPTY) {
                     continue; // blank cell in a shaped recipe's grid
                 }
-                ItemStack[] matching = ingredient.getMatchingStacks();
-                List<ItemKey> alternatives = new ArrayList<ItemKey>();
+                List<ItemKey> alternatives = slotAlternatives(ingredient);
                 List<ItemKey> craftable = new ArrayList<ItemKey>();
-                for (ItemStack option : matching) {
-                    if (option.isEmpty()) {
-                        continue;
-                    }
-                    ItemKey key = ItemKey.of(option);
-                    if (!alternatives.contains(key)) {
-                        alternatives.add(key);
-                        // Craft-eligible only if a bare crafted item of this (Item, meta) identity
-                        // would itself satisfy the ingredient. For a fluid-in-NBT bucket (More
-                        // Buckets / Forge universal bucket) the bare form is an empty bucket the
-                        // ingredient rejects, so it stays inventory-only: usable if the player holds
-                        // a filled one, never manufactured. NBT-blind ingredients accept the bare
-                        // form, so normal alternatives remain fully craftable.
-                        //
-                        // Deliberate tradeoff: this also excludes the (rare) case of an NBT-aware
-                        // ingredient whose required item is CRAFTED already carrying that NBT — the
-                        // solver would refuse to sub-craft it. That case can't regress a working
-                        // recipe here: the solver is NBT-blind, so it could only ever have planned
-                        // such a chain when the producer happened to yield the accepted NBT, and the
-                        // executor re-checks Ingredient#apply on the real crafted stack anyway. No
-                        // crafting-table recipe adds fluid to a bucket, so buckets are never a false
-                        // exclusion. Revisit only if a pack needs the solver to craft an NBT-gated
-                        // intermediate (would want per-producer output validation, not this filter).
-                        if (ingredient.apply(key.toStack())) {
-                            craftable.add(key);
-                        }
+                for (ItemKey key : alternatives) {
+                    // Craft-eligible only if a bare crafted item of this (Item, meta) identity
+                    // would itself satisfy the ingredient. For a fluid-in-NBT bucket (More
+                    // Buckets / Forge universal bucket) the bare form is an empty bucket the
+                    // ingredient rejects, so it stays inventory-only: usable if the player holds
+                    // a filled one, never manufactured. NBT-blind ingredients accept the bare
+                    // form, so normal alternatives remain fully craftable.
+                    //
+                    // Deliberate tradeoff: this also excludes the (rare) case of an NBT-aware
+                    // ingredient whose required item is CRAFTED already carrying that NBT — the
+                    // solver would refuse to sub-craft it. That case can't regress a working
+                    // recipe here: the solver is NBT-blind, so it could only ever have planned
+                    // such a chain when the producer happened to yield the accepted NBT, and the
+                    // executor re-checks Ingredient#apply on the real crafted stack anyway. No
+                    // crafting-table recipe adds fluid to a bucket, so buckets are never a false
+                    // exclusion. Revisit only if a pack needs the solver to craft an NBT-gated
+                    // intermediate (would want per-producer output validation, not this filter).
+                    if (ingredient.apply(key.toStack())) {
+                        craftable.add(key);
                     }
                 }
                 if (alternatives.isEmpty()) {

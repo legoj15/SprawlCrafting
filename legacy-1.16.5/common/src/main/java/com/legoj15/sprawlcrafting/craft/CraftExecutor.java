@@ -8,6 +8,7 @@ import java.util.Map;
 import java.util.Set;
 
 import com.legoj15.solver.ProducedLedger;
+import com.legoj15.solver.SlotAssignment;
 
 import net.minecraft.entity.player.PlayerInventory;
 import net.minecraft.entity.player.ServerPlayerEntity;
@@ -387,13 +388,14 @@ public final class CraftExecutor {
         int[] reserved = new int[MAIN_SLOTS];
         Map<Item, Integer> ledgerTakes = new HashMap<>();
         Set<Item> refusedItems = ledger == null ? null : refusedItems(inventory);
+        Item[] preferred = preferredItems(inventory, ingredients);
         for (int n = 0; n < slots.length; n++) {
             Ingredient ingredient = ingredients.get(n);
             if (ingredient == null || ingredient.isEmpty()) {
                 slots[n] = -1;
                 continue;
             }
-            int slot = findMatchingSlot(inventory, ingredient, reserved, ledger, ledgerTakes);
+            int slot = findMatchingSlot(inventory, ingredient, preferred[n], reserved, ledger, ledgerTakes);
             if (slot < 0) {
                 return new Assignment(slots, ledgerTakes, ingredient);
             }
@@ -445,8 +447,53 @@ public final class CraftExecutor {
         }
     }
 
-    private static int findMatchingSlot(PlayerInventory inventory, Ingredient ingredient, int[] reserved,
-                                        ProducedLedger<Item> ledger, Map<Item, Integer> ledgerTakes) {
+    /**
+     * Per ingredient, the item {@link SlotAssignment} picks for it from the usable stacks of the 36
+     * main slots (null for a blank cell or when nothing usable fits). The solver plans every craft
+     * with the same rule over the same slot lists ({@link CraftPlanner#slotAlternatives}) and counts,
+     * so each craft takes what the plan counted on, not whichever stack sits first in the inventory.
+     */
+    private static Item[] preferredItems(PlayerInventory inventory, List<Ingredient> ingredients) {
+        Map<Item, Integer> stock = new HashMap<>();
+        for (int i = 0; i < MAIN_SLOTS; i++) {
+            ItemStack stack = inventory.getItem(i);
+            if (!stack.isEmpty() && usableAsIngredient(stack)) {
+                stock.merge(stack.getItem(), stack.getCount(), Integer::sum);
+            }
+        }
+        List<List<Item>> slots = new ArrayList<>();
+        List<Integer> cells = new ArrayList<>();
+        for (int n = 0; n < ingredients.size(); n++) {
+            Ingredient ingredient = ingredients.get(n);
+            if (ingredient != null && !ingredient.isEmpty()) {
+                slots.add(CraftPlanner.slotAlternatives(ingredient));
+                cells.add(n);
+            }
+        }
+        List<Item> chosen = SlotAssignment.assign(slots, stock);
+        Item[] preferred = new Item[ingredients.size()];
+        for (int s = 0; s < cells.size(); s++) {
+            preferred[cells.get(s)] = chosen.get(s);
+        }
+        return preferred;
+    }
+
+    /**
+     * A stack of {@code preferred} ({@link #preferredItems}) when one matches; otherwise the first
+     * match in inventory order, then (with a ledger) a refused stack the ledger admits.
+     */
+    private static int findMatchingSlot(PlayerInventory inventory, Ingredient ingredient, Item preferred,
+                                        int[] reserved, ProducedLedger<Item> ledger,
+                                        Map<Item, Integer> ledgerTakes) {
+        if (preferred != null) {
+            for (int i = 0; i < MAIN_SLOTS; i++) {
+                ItemStack stack = inventory.getItem(i);
+                if (!stack.isEmpty() && stack.getItem() == preferred && stack.getCount() - reserved[i] > 0
+                        && usableAsIngredient(stack) && ingredient.test(stack)) {
+                    return i;
+                }
+            }
+        }
         for (int i = 0; i < MAIN_SLOTS; i++) {
             ItemStack stack = inventory.getItem(i);
             if (!stack.isEmpty() && stack.getCount() - reserved[i] > 0

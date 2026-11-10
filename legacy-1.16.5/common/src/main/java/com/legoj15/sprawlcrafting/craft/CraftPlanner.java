@@ -325,6 +325,19 @@ public final class CraftPlanner {
         return item.hasCraftingRemainingItem() ? item.getCraftingRemainingItem() : null;
     }
 
+    /**
+     * One solver slot: the ingredient's distinct items in its own order (empty when it resolves to
+     * nothing). {@code CraftExecutor} builds its {@code SlotAssignment} input with this too, so the
+     * executor fills slots from exactly the lists the plan was made with.
+     */
+    static List<Item> slotAlternatives(Ingredient ingredient) {
+        LinkedHashSet<Item> distinct = new LinkedHashSet<>();
+        for (ItemStack option : ingredient.getItems()) {
+            distinct.add(option.getItem());
+        }
+        return new ArrayList<>(distinct);
+    }
+
     /** A crafting recipe reduced to the solver's view, or null if it cannot be planned. */
     private static final class McRecipe implements RecipeGraphSolver.RecipeInfo<ResourceLocation, Item> {
         private final ResourceLocation id;
@@ -384,14 +397,11 @@ public final class CraftPlanner {
                 if (ingredient.isEmpty()) {
                     continue; // blank slot in a shaped recipe's grid
                 }
-                LinkedHashSet<Item> distinct = new LinkedHashSet<>();
-                for (ItemStack option : ingredient.getItems()) {
-                    distinct.add(option.getItem());
-                }
-                if (distinct.isEmpty()) {
+                List<Item> alternatives = slotAlternatives(ingredient);
+                if (alternatives.isEmpty()) {
                     return null; // unresolvable ingredient (e.g. empty tag)
                 }
-                slots.add(new ArrayList<>(distinct));
+                slots.add(alternatives);
             }
             if (slots.isEmpty()) {
                 return null;

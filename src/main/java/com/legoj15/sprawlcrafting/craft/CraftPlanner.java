@@ -315,6 +315,22 @@ public final class CraftPlanner {
         //?}
     }
 
+    /**
+     * One solver slot: the ingredient's distinct items in its own order (empty when it resolves to
+     * nothing). {@code CraftExecutor} builds its {@code SlotAssignment} input with this too, so the
+     * executor fills slots from exactly the lists the plan was made with.
+     */
+    static List<Item> slotAlternatives(Ingredient ingredient) {
+        //? if >=1.21.11 {
+        /*return ingredient.items().map(net.minecraft.core.Holder::value).distinct().toList();*/
+        //?} else {
+        return Arrays.stream(ingredient.getItems())
+                .map(ItemStack::getItem)
+                .distinct()
+                .toList();
+        //?}
+    }
+
     /** A crafting recipe reduced to the solver's view, or null if it cannot be planned. */
     private record McRecipe(ResourceLocation id, List<List<Item>> ingredientSlots,
                             Item result, int resultCount, ItemStack resultStack,
@@ -343,14 +359,7 @@ public final class CraftPlanner {
                 if (ingredient.isEmpty()) {
                     continue; // blank slot in a shaped recipe's grid
                 }
-                //? if >=1.21.11 {
-                /*List<Item> alternatives = ingredient.items().map(net.minecraft.core.Holder::value).distinct().toList();*/
-                //?} else {
-                List<Item> alternatives = Arrays.stream(ingredient.getItems())
-                        .map(ItemStack::getItem)
-                        .distinct()
-                        .toList();
-                //?}
+                List<Item> alternatives = slotAlternatives(ingredient);
                 if (alternatives.isEmpty()) {
                     return null; // unresolvable ingredient (e.g. empty tag)
                 }
