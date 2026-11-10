@@ -447,10 +447,9 @@ public final class RecipeGraphSolver<R, K> {
     }
 
     /**
-     * Whether {@link #solve} would succeed holding {@code held} (long counts). Runs the same two
-     * passes with a scratch step list, so the same {@link Integer#MAX_VALUE} per-step batch cap
-     * applies: a list is never verified by a plan {@link #solve} could not emit. Keep the cap when
-     * merging plan/validation rewrites (issue #11, review_final low 2).
+     * Whether {@link #solve} would succeed holding {@code held} (long counts): the same validated
+     * {@code plan} path, with the same {@link Integer#MAX_VALUE} per-step batch cap, so a gather list is
+     * never verified by a plan {@link #solve} could not emit.
      */
     private boolean feasible(RecipeInfo<R, K> target, Map<K, Long> held) {
         return plan(target, held, true).steps != null;
