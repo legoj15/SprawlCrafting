@@ -712,8 +712,9 @@ class RecipeGraphSolverTest {
     @Test
     void shortfallExpandsTwoCycleMemberThroughItsRecipeFromRaws() {
         // Issue #11 (Infinity Matter Dominator Sword: Reborn): crystal <-> crystal_block is a storage
-        // 2-cycle, but crystal ALSO has a recipe from raws. The uncraft sorts first (by id), which
-        // used to make the walk stop at crystal and crystal_block; it must reach diamond and gold.
+        // 2-cycle, but crystal ALSO has a recipe from raws. The uncraft is listed first (as
+        // CraftPlanner's id sort puts it), which used to make the walk stop at crystal and
+        // crystal_block; it must reach diamond and gold.
         recipes.add(TestRecipe.of("crystal_from_block", "crystal", 9, "crystal_block"));
         recipes.add(TestRecipe.of("crystal_recipe", "crystal", 1,
                 "diamond", "diamond", "diamond", "diamond", "gold", "gold", "gold", "gold"));
@@ -728,7 +729,7 @@ class RecipeGraphSolverTest {
 
     @Test
     void shortfallExpandsThreeCycleMemberThroughItsRecipeFromRaws() {
-        // block <-> ingot <-> nugget, with ingot also made from a raw (sorted last). Every member's
+        // block <-> ingot <-> nugget, with ingot also made from a raw (listed last). Every member's
         // demand must bottom out at the raw: 9 (block) + 1 (nugget, 8 spare) + 1 (ingot) = 11.
         recipes.add(TestRecipe.of("ingot_from_block", "ingot", 9, "block"));
         recipes.add(TestRecipe.of("ingot_from_nuggets", "ingot", 1, nine("nugget")));
@@ -751,5 +752,23 @@ class RecipeGraphSolverTest {
         recipes.add(TestRecipe.of("block_from_ingots", "block", 1, nine("ingot")));
         TestRecipe thing = TestRecipe.of("thing", "thing", 1, "block", "nugget");
         assertEquals(inv("block", 1, "nugget", 1), solver().shortfall(thing, inv()).demands());
+    }
+
+    @Test
+    void shortfallDiscardedCycleBranchDoesNotFlagExactListApproximate() {
+        // x's first recipe needs y (a chain deeper than maxDepth, so that branch hits the depth
+        // limit) and c, which loops back to x: that whole branch is undone and x comes from r. The
+        // depth hit lived only in the discarded branch, so the list is exact and must not be flagged
+        // (an approximate flag also skips the feasibility check).
+        recipes.add(TestRecipe.of("x_via_cycle", "x", 1, "y", "c"));
+        recipes.add(TestRecipe.of("y_from_z", "y", 1, "z"));
+        recipes.add(TestRecipe.of("z_from_w", "z", 1, "w"));
+        recipes.add(TestRecipe.of("w_from_v", "w", 1, "v"));
+        recipes.add(TestRecipe.of("c_from_x", "c", 1, "x"));
+        recipes.add(TestRecipe.of("x_from_r", "x", 1, "r"));
+        TestRecipe target = TestRecipe.of("t", "t", 1, "x");
+        RecipeGraphSolver.ShortfallResult<String> r = solver(2, 4096).shortfall(target, inv());
+        assertEquals(inv("r", 1), r.demands());
+        assertFalse(r.approximate(), "the depth hit was in an undone branch");
     }
 }

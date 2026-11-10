@@ -19,8 +19,7 @@ From the repo root, on a JDK 21 host (`export JAVA_HOME="/c/Program Files/Java/j
 
     ./gradlew -p solver-core build publishToMavenLocal
 
-`build` runs the JUnit 5 suite (52 tests: `RecipeGraphSolverTest` 49, `ProducedLedgerTest` 3). The
-solver suite runs ONLY here now; the mod builds no longer compile or run it. It is still on the
+`build` runs the JUnit 5 suite (`RecipeGraphSolverTest`, `ProducedLedgerTest`). The solver suite runs ONLY here now; the mod builds no longer compile or run it. It is still on the
 release gate: the root `fullTestSuite` task depends on the included build's `:check`, and
 `release/Invoke-Release.ps1`'s Test stage runs `./gradlew -p solver-core build` first.
 

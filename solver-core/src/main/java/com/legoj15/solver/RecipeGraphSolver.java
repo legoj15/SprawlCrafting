@@ -355,7 +355,8 @@ public final class RecipeGraphSolver<R, K> {
     /**
      * Whether {@link #solve} would succeed holding {@code held} (long counts). Runs the same two
      * passes with a scratch step list, so the same {@link Integer#MAX_VALUE} per-step batch cap
-     * applies: a list is never verified by a plan {@link #solve} could not emit.
+     * applies: a list is never verified by a plan {@link #solve} could not emit. Keep the cap when
+     * merging plan/validation rewrites (issue #11, review_final low 2).
      */
     private boolean feasible(RecipeInfo<R, K> target, Map<K, Long> held) {
         List<PlannedStep<R>> scratch = new ArrayList<>();
@@ -405,7 +406,11 @@ public final class RecipeGraphSolver<R, K> {
         int expandLeft = maxAttempts;
         boolean budgetHit = false;
         final Set<K> missing = new LinkedHashSet<>();
-        /** Set by the shortfall walk when the depth/expansion budget forced an early leaf. */
+        /**
+         * Set by the shortfall walk when the depth/expansion budget forced an early leaf in a branch
+         * that was kept; undoing a branch restores it. ({@link #budgetHit} stays sticky: the stock
+         * search budget is not refunded.)
+         */
         boolean approximate = false;
         private final Map<RecipeInfo<R, K>, List<Group<K>>> groupCache = new IdentityHashMap<>();
 
@@ -713,6 +718,7 @@ public final class RecipeGraphSolver<R, K> {
                 int virtualMark = virtual.mark();
                 int shortfallMark = shortfall.mark();
                 int altsMark = alts.mark();
+                boolean approximateMark = approximate;
                 Set<K> itemHits = require(item, left, group.alternatives, crafting, depth);
                 if (itemHits.isEmpty()) {
                     return itemHits; // crafted (or listed) without looping back up the chain
@@ -720,6 +726,7 @@ public final class RecipeGraphSolver<R, K> {
                 virtual.rollback(virtualMark);
                 shortfall.rollback(shortfallMark);
                 alts.rollback(altsMark);
+                approximate = approximateMark; // a depth/budget leaf in an undone branch is gone too
                 hits = withAll(hits, itemHits);
             }
             if (hits != null) {
@@ -792,6 +799,7 @@ public final class RecipeGraphSolver<R, K> {
                     int virtualMark = virtual.mark();
                     int shortfallMark = shortfall.mark();
                     int altsMark = alts.mark();
+                    boolean approximateMark = approximate;
                     Set<K> producerHits = null;
                     for (Group<K> group : groups(producer)) {
                         Set<K> groupHits = requireSlot(group, satMul(crafts, group.count), crafting, depth + 1);
@@ -811,6 +819,8 @@ public final class RecipeGraphSolver<R, K> {
                     virtual.rollback(virtualMark);
                     shortfall.rollback(shortfallMark);
                     alts.rollback(altsMark);
+                    // Expansion budget is not refunded, so a later expandable item still flags.
+                    approximate = approximateMark;
                     hits = withAll(hits, producerHits);
                 }
             } finally {
