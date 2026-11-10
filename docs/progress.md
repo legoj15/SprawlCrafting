@@ -47,3 +47,4 @@ One line per delegation: agent, lane, outcome, escalations. Used to tune the mod
   - impl (Sonnet): #19 -> no change, false positive (early return before the scan; holdForRetry resets progressTicks); reviewer PASS. review_final's static low was wrong.
   - Escalation implementers were blocked from writing to the first implementer's worktree twice and made their own; brief now allows that.
   - Orchestrator merged all three: feasible() resolved to the validated capped plan path (plan(target, held, true)); executors take the SlotAssignment-preferred stack first, then LedgerTally admission. solver-core suite 62 green after the solver merge.
+- reviewer (Haiku) on the three hand-merges: FAIL on my docs/solver-library.md resolution (script truncated the file before reading it); code resolutions verified correct. Restored; filed #25 (1.12.2 direct-craft gates still first-match).
