@@ -18,15 +18,15 @@ main `e39879c`. Local only, NOT pushed, NOT merged to main.
   progress.md).
 
 ## Not done / next
-1. Collect the review_fast on d825b8f..HEAD (group `solver-exec-fixes-20261109-195006-b6a5`) and the
-   Haiku review of the three hand-merges; fix anything real, re-gate the final sha.
+1. Reviews are complete: final fix commit re-gated (glm-flash approve). Remaining review lead filed as
+   #26 (executor slot rule vs ledger-admitted altered intermediates).
 2. Merge this branch to main (user's call), then `done` the fixed issues, then push (user's go-ahead).
 3. In-game: #8 (1.12.2 playtest, now also covers #4's bubble and #20), #3 (26.3 untakeable result,
    re-check), and the executor change from #10/#18/#13 on at least one modern node (no unit harness
    covers the Minecraft side of assign()).
 4. #14 production matrix legs (new nodes, modless connect, Fabric two-mod solver dedupe). Do not run
    the release tooling before this.
-5. Open follow-ups: #20 #21 #22 #23 #24. #2 is ON HOLD (owner undecided; design rule: every source
+5. Open follow-ups: #20 #21 #22 #23 #24 #25 #26. #2 is ON HOLD (owner undecided; design rule: every source
    item visible in the open screen).
 
 ## Uncommitted changes
