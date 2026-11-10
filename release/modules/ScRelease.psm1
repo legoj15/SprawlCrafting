@@ -205,7 +205,7 @@ function Get-ScNodes {
                 HasJei        = $true
                 NeedsMixinBooter = $true                # the 1.12.2 client hard-stops without MixinBooter
                 BuildDir      = $lfDir
-                VerifyTasks   = @('test', (Get-ScProp $lf 'buildTask' 'reobfJar'))
+                VerifyTasks   = @((Get-ScProp $lf 'buildTask' 'reobfJar'))   # no 'test': the solver suite runs in solver-core (step 0)
                 BuildTasks    = @(Get-ScProp $lf 'buildTask' 'reobfJar')
                 JavaHome      = Get-ScProp $lf 'javaHome' ''
                 JarRel        = 'build/libs/sprawlcrafting-{version}.jar'   # no '+mc<mc>-<loader>' tag on this build

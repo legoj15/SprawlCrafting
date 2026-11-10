@@ -176,7 +176,7 @@ if ((Want 'Test') -and -not $SkipTests) {
                 Pop-Location
                 $env:JAVA_HOME = $savedJavaHome
             }
-            Write-ScOk "Legacy $($ln.McVersion) verified (unit tests + production jars)."
+            Write-ScOk "Legacy $($ln.McVersion) verified (production jars built)."
         }
         # 2. Modern tree: per-node unit tests (via buildAndCollect) + the boot/connect matrix.
         Write-ScStep 'Verify modern tree (./gradlew fullTestSuite)'

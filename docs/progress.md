@@ -39,3 +39,4 @@ One line per delegation: agent, lane, outcome, escalations. Used to tune the mod
   - All worktree lanes started at a stale base (4bcbd34) and had to ff-merge the session branch first; brief now says so up front.
   - Follow-ups filed: #20 (1.12.2 confirm click swallowed), #21 (1.12.2 gather title clamp), #22 (shared solver-core/build).
 - Orchestrator: full rebuild of 3da577e green (solver-core, 14 root nodes, legacy-1.16.5, forge-1.12.2); no fernflower txt in any Forge jar.
+- third-party review_fast on c90e178..d825b8f: shop26 approve (3 notes), glm-flash request-changes. Its medium (fullTestSuite names the included build wrong) REFUTED by running ./gradlew fullTestSuite -m (graph resolves); shop26's 'RecipeList returns a backing list' doubt REFUTED from 1.12.2 source (fresh ArrayList per call). Fixed its low: 1.12.2 release verify ran an empty 'test' task and claimed unit tests. Fabric two-mod dedupe boot test folded into #14.
