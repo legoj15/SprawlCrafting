@@ -270,19 +270,15 @@ public final class CraftExecutor {
         if (holder == null || !(holder.value() instanceof CraftingRecipe recipe)) {
             return new FillOutcome.RecipeGone();
         }
-        // Vanilla parity: the recipe book only auto-fills recipes the player has unlocked.
+        // Vanilla parity: the recipe book only auto-fills recipes the player has unlocked. Applied below
+        // only to recipe-book grids; a grid with no recipe book (crafting upgrade, AE2 terminal) is laid
+        // out by placeFromLedger, which never consults it.
         //? if >=1.21.11 {
-        /*if (!player.getRecipeBook().contains(holder.id())) {
-            return new FillOutcome.Fallback();
-        }*/
+        /*boolean locked = !player.getRecipeBook().contains(holder.id());*/
         //?} else if >=1.20.2 {
-        if (!player.getRecipeBook().contains(holder)) {
-            return new FillOutcome.Fallback();
-        }
+        boolean locked = !player.getRecipeBook().contains(holder);
         //?} else {
-        /*if (!player.getRecipeBook().contains(holder.id())) {
-            return new FillOutcome.Fallback();
-        }*/
+        /*boolean locked = !player.getRecipeBook().contains(holder.id());*/
         //?}
         ItemStack expected = RecipeIds.resultOf(recipe, player.registryAccess());
         if (expected.isEmpty()) {
@@ -291,7 +287,7 @@ public final class CraftExecutor {
 
         net.minecraft.world.inventory.AbstractContainerMenu menu = player.containerMenu;
         CraftingGrids.Grid grid = CraftingGrids.find(menu);
-        if (grid == null || !grid.visible()) {
+        if (grid == null || !grid.visible() || (locked && grid.recipeBookPlacement())) {
             return new FillOutcome.Fallback();
         }
         List<Ingredient> cells = gridLayout(recipe, grid.width(), grid.height());
@@ -449,6 +445,7 @@ public final class CraftExecutor {
         int[] slots = assignment.slots();
         Item[] stationItems = assignment.stationItems();
         int cell = 0;
+        ItemStack inventoryItemInFlight = ItemStack.EMPTY; // shrunk from the inventory, not yet in its cell
         try {
             for (; cell < slots.length; cell++) {
                 ItemStack one;
@@ -461,10 +458,12 @@ public final class CraftExecutor {
                     if (stack.isEmpty()) {
                         inventory.setItem(slots[cell], ItemStack.EMPTY);
                     }
+                    inventoryItemInFlight = one;
                 } else {
                     continue; // a blank cell
                 }
                 inputs.get(cell).set(one); // can run mod recipe code (the menu recomputes its result)
+                inventoryItemInFlight = ItemStack.EMPTY;
             }
         } catch (Throwable t) {
             // As in craftOnce: the drawn share is real. Cells before the failing one hold their items
@@ -479,6 +478,15 @@ public final class CraftExecutor {
                     } catch (Throwable giveBackFailure) {
                         t.addSuppressed(giveBackFailure);
                     }
+                }
+            }
+            // The failing cell's item, if it came from the inventory (already shrunk) and never landed,
+            // goes back to the inventory (else the feet); later inventory cells were not touched yet.
+            if (!inventoryItemInFlight.isEmpty() && cell < slots.length && inputs.get(cell).getItem().isEmpty()) {
+                try {
+                    insertIntoMainInventory(player, inventoryItemInFlight, null);
+                } catch (Throwable giveBackFailure) {
+                    t.addSuppressed(giveBackFailure);
                 }
             }
             throw t;

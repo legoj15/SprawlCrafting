@@ -31,11 +31,10 @@ public final class StationStorages {
 
         /**
          * Whether {@code menu} is one of this provider's station menus (by class), on either side. This
-         * marks stations whose grid is not a {@link CraftingGrids} grid: they need the final-grid
-         * hand-off skipped ({@code CraftQueueManager.canHandOff}) and their own recipe-viewer transfer
-         * handlers ({@link #menus}). A provider whose grid is a CraftingGrids grid — the Sophisticated
-         * crafting upgrade, laid out by the shared hand-off and already fronted by its own JEI
-         * handler — returns false.
+         * marks stations whose screen needs its own recipe-viewer transfer handlers ({@link #menus}): the
+         * AE2 Crafting Terminal. It does not gate the final-grid hand-off: any station whose grid is a
+         * {@link CraftingGrids} grid takes it. A provider whose screen already has a fronted handler —
+         * the Sophisticated crafting upgrade — returns false.
          */
         boolean isStationMenu(AbstractContainerMenu menu);
 
@@ -122,7 +121,7 @@ public final class StationStorages {
      * and {@code GridContext.current}): an open but offline terminal behaves like no station at all, so a
      * job needing a grid pauses and a plan sees only the inventory, rather than starting work the station
      * could not feed. {@link #isStationMenu} stays a pure class check, for places that must recognise the
-     * menu whatever its state (the final-grid hand-off, recipe-viewer registration).
+     * menu whatever its state (recipe-viewer registration).
      */
     public static boolean hasUsableStation(ServerPlayer player) {
         return open(player) != null;
