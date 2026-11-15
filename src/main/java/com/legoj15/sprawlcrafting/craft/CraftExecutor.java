@@ -18,6 +18,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.player.Inventory;
+import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.crafting.CraftingRecipe;
@@ -48,9 +49,6 @@ public final class CraftExecutor {
 
     private CraftExecutor() {
     }
-
-    /** The crafting result slot is index 0 in both InventoryMenu (2×2) and CraftingMenu (3×3). */
-    private static final int RESULT_SLOT = 0;
 
     public sealed interface CraftResult {
         /**
@@ -245,8 +243,8 @@ public final class CraftExecutor {
      * inventory by this point) so vanilla computes the result for the player to grab —
      * a genuine, takeable craft rather than a faked result.
      *
-     * <p>This drives vanilla's own recipe-book auto-fill ({@code handlePlacement} →
-     * {@code ServerPlaceRecipe}), so it "behaves like vanilla": it relocates anything
+     * <p>For a vanilla menu this drives vanilla's own recipe-book auto-fill ({@code handlePlacement}
+     * → {@code ServerPlaceRecipe}), so it "behaves like vanilla": it relocates anything
      * already in the grid back to the inventory, lays out the recipe, and silently does
      * nothing when the grid can't be cleared into a full inventory. Like vanilla it only
      * fills recipes the player has unlocked. Whenever a clean fill isn't possible it
@@ -258,10 +256,13 @@ public final class CraftExecutor {
      * <p>Vanilla's placement counts only undamaged, unenchanted, unnamed stacks, so when the
      * recipe needs an intermediate the job crafted that has since been altered (see
      * {@link ProducedLedger}), the grid is laid out here instead, from the same assignment
-     * {@link #craftOnce} would consume.
+     * {@link #craftOnce} would consume. The same manual layout is the only path for a grid that is
+     * not a recipe-book menu (a crafting upgrade: {@link CraftingGrids.Grid#recipeBookPlacement()} is
+     * false, there is no {@code handlePlacement}), and a grid that is not on screen
+     * ({@link CraftingGrids.Grid#visible()}) is never filled.
      *
      * <p>The caller guarantees {@code player.containerMenu} is the open crafting grid and
-     * fits the recipe (see {@code CraftQueueManager}); this re-checks the menu type defensively.
+     * fits the recipe (see {@code CraftQueueManager}); this re-resolves the grid defensively.
      */
     public static FillOutcome tryFillFinalGrid(ServerPlayer player, ResourceLocation recipeId,
                                                ProducedLedger<Item> ledger) {
@@ -289,14 +290,18 @@ public final class CraftExecutor {
         }
 
         net.minecraft.world.inventory.AbstractContainerMenu menu = player.containerMenu;
-        int[] grid = gridSize(menu);
-        if (grid == null) {
+        CraftingGrids.Grid grid = CraftingGrids.find(menu);
+        if (grid == null || !grid.visible()) {
             return new FillOutcome.Fallback();
         }
-        List<Ingredient> cells = gridLayout(recipe, grid[0], grid[1]);
-        if (cells != null && assign(player.getInventory(), cells, null).missing() != null
-                && assign(player.getInventory(), cells, ledger).missing() == null) {
-            return placeFromLedger(player, menu, cells, expected, ledger);
+        List<Ingredient> cells = gridLayout(recipe, grid.width(), grid.height());
+        boolean needsLedger = cells != null && assign(player.getInventory(), cells, null).missing() != null
+                && assign(player.getInventory(), cells, ledger).missing() == null;
+        if (needsLedger || !grid.recipeBookPlacement()) {
+            // No handlePlacement outside a recipe-book menu, so the layout is ours; a recipe that does
+            // not fit the grid has nothing to lay out there (vanilla's own no-op falls through below).
+            return cells == null ? new FillOutcome.Fallback()
+                    : placeFromLedger(player, menu, grid, cells, expected, ledger);
         }
         //? if >=1.21.11 {
         /*if (!(menu instanceof net.minecraft.world.inventory.AbstractCraftingMenu craftingMenu)) {
@@ -319,7 +324,7 @@ public final class CraftExecutor {
         // finishPlacingRecipe (inside handlePlacement) already recomputed + synced the result
         // slot. Confirm OUR output landed; a no-op (full inventory) or a leftover player recipe
         // leaves a different/empty result, so we fall back to auto-crafting.
-        ItemStack result = menu.getSlot(RESULT_SLOT).getItem();
+        ItemStack result = grid.result().getItem();
         if (result.isEmpty() || !ItemStack.isSameItem(result, expected)) {
             return new FillOutcome.Fallback();
         }
@@ -353,28 +358,30 @@ public final class CraftExecutor {
             return;
         }
         net.minecraft.world.inventory.AbstractContainerMenu menu = player.containerMenu;
-        int[] grid = gridSize(menu);
+        CraftingGrids.Grid grid = CraftingGrids.find(menu);
         if (grid != null) {
-            returnGridToInventory(player, menu, grid[0] * grid[1]);
+            returnGridToInventory(player, menu, grid);
         }
     }
 
     /**
      * Moves the grid's contents into the main inventory, or leaves them all in place when they
      * would not all fit (vanilla {@code testClearGrid} semantics: never drops items to the world
-     * here). Grid input cells are menu slots 1..gridSlots (result is slot 0) in both InventoryMenu
-     * (2×2) and CraftingMenu (3×3) on every version.
+     * here). The cells are {@code grid.inputs()}: menu slots 1..w*h in a vanilla menu, the upgrade's own
+     * slots in a crafting upgrade.
      *
      * @return true when the grid is empty afterwards
      */
     private static boolean returnGridToInventory(ServerPlayer player,
                                                  net.minecraft.world.inventory.AbstractContainerMenu menu,
-                                                 int gridSlots) {
+                                                 CraftingGrids.Grid grid) {
         List<ItemStack> contents = new ArrayList<>();
-        for (int i = 1; i <= gridSlots; i++) {
-            ItemStack stack = menu.getSlot(i).getItem();
+        List<Slot> filled = new ArrayList<>();
+        for (Slot slot : grid.inputs()) {
+            ItemStack stack = slot.getItem();
             if (!stack.isEmpty()) {
                 contents.add(stack.copy());
+                filled.add(slot);
             }
         }
         if (contents.isEmpty()) {
@@ -383,8 +390,8 @@ public final class CraftExecutor {
         if (!fitsInMainInventory(player.getInventory(), contents)) {
             return false;
         }
-        for (int i = 1; i <= gridSlots; i++) {
-            menu.getSlot(i).set(ItemStack.EMPTY);
+        for (Slot slot : filled) {
+            slot.set(ItemStack.EMPTY);
         }
         for (ItemStack stack : contents) {
             insertIntoMainInventory(player, stack);
@@ -400,11 +407,15 @@ public final class CraftExecutor {
      */
     private static FillOutcome placeFromLedger(ServerPlayer player,
                                                net.minecraft.world.inventory.AbstractContainerMenu menu,
+                                               CraftingGrids.Grid grid,
                                                List<Ingredient> cells, ItemStack expected,
                                                ProducedLedger<Item> ledger) {
-        if (!returnGridToInventory(player, menu, cells.size())) {
+        if (!returnGridToInventory(player, menu, grid)) {
             return new FillOutcome.Fallback();
         }
+        // One Slot.set per cell: it is what makes the menu recompute its result (a write to a wrapped
+        // inventory underneath would leave the result slot stale).
+        List<Slot> inputs = grid.inputs();
         Inventory inventory = player.getInventory();
         Assignment assignment = assign(inventory, cells, ledger);
         if (assignment.missing() != null) {
@@ -421,12 +432,12 @@ public final class CraftExecutor {
             if (stack.isEmpty()) {
                 inventory.setItem(slots[cell], ItemStack.EMPTY);
             }
-            menu.getSlot(RESULT_SLOT + 1 + cell).set(one);
+            inputs.get(cell).set(one);
         }
         inventory.setChanged();
-        ItemStack result = menu.getSlot(RESULT_SLOT).getItem();
+        ItemStack result = grid.result().getItem();
         if (result.isEmpty() || !ItemStack.isSameItem(result, expected)) {
-            returnGridToInventory(player, menu, cells.size());
+            returnGridToInventory(player, menu, grid);
             menu.broadcastFullState();
             return new FillOutcome.Fallback();
         }
@@ -485,20 +496,6 @@ public final class CraftExecutor {
             cells.set(cell++, ingredient);
         }
         return cells;
-    }
-
-    /** {width, height} of the open crafting grid, or null when the menu has none. */
-    private static int[] gridSize(net.minecraft.world.inventory.AbstractContainerMenu menu) {
-        //? if >=1.21.11 {
-        /*if (menu instanceof net.minecraft.world.inventory.AbstractCraftingMenu craftingMenu) {
-            return new int[] {craftingMenu.getGridWidth(), craftingMenu.getGridHeight()};
-        }*/
-        //?} else {
-        if (menu instanceof net.minecraft.world.inventory.RecipeBookMenu<?, ?> recipeBookMenu) {
-            return new int[] {recipeBookMenu.getGridWidth(), recipeBookMenu.getGridHeight()};
-        }
-        //?}
-        return null;
     }
 
     /** Non-mutating check that every stack would fit into the 36 main inventory slots together. */

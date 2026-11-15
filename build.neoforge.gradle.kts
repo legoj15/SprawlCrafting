@@ -31,6 +31,19 @@ val hasRei = project.findProperty("rei_version") != null
 val ae2Version = project.findProperty("ae2_version") as String?
 val hasAe2 = ae2Version != null
 
+// Sophisticated Core/Storage/Backpacks compat (compat/sophisticated): official NeoForge builds exist for 1.21.1
+// and 26.x; a node opts in by pinning sophisticated_core_version (+ the storage / backpacks pins).
+val sophisticatedCoreVersion = project.findProperty("sophisticated_core_version") as String?
+val sophisticatedStorageVersion = project.findProperty("sophisticated_storage_version") as String?
+val sophisticatedBackpacksVersion = project.findProperty("sophisticated_backpacks_version") as String?
+// All three pins or none: the package compiles against all three, and stonecutter.gradle.kts derives the
+// `sophisticated` constant from the same rule, so the gated call sites and the exclusion never disagree.
+val hasSophisticated = sophisticatedCoreVersion != null && sophisticatedStorageVersion != null
+        && sophisticatedBackpacksVersion != null
+// -Psc.sophisticated=true: run the dev client/server with Sophisticated Core/Storage/Backpacks. Core declares a
+// minimum JEI newer than the build's compile pin, so that runtime uses sophisticated_jei_version instead.
+val sophisticatedRuntime = hasSophisticated && project.findProperty("sc.sophisticated") == "true"
+
 // ─── Stonecutter source replacements ─────────────────────────────────────────────────────────
 // The forward-port regex tiers (ResourceLocation -> Identifier, Minecraft.screen -> gui.screen(),
 // RenderPipeline -> renderpearl, ...) are defined ONCE for every node in the controller,
@@ -66,11 +79,10 @@ repositories {
     maven("https://maven.blamejared.com")   // JEI
     maven("https://maven.shedaniel.me/")     // REI
     maven("https://maven.parchmentmc.org")
-    // Modrinth's maven (AE2 and its GuideME runtime dependency), scoped to its own group so no other
-    // dependency is ever looked up there.
-    exclusiveContent {
-        forRepository { maven("https://api.modrinth.com/maven") }
-        filter { includeGroup("maven.modrinth") }
+    // Modrinth's maven (AE2, Sophisticated Core/Storage/Backpacks; artifact = project id), scoped to its own group
+    // so no other dependency is ever looked up there.
+    maven("https://api.modrinth.com/maven") {
+        content { includeGroup("maven.modrinth") }
     }
     mavenCentral()
 }
@@ -138,7 +150,9 @@ dependencies {
     compileOnly("mezz.jei:jei-$minecraftVersion-common-api:$jeiVersion")
     compileOnly("mezz.jei:jei-$minecraftVersion-neoforge-api:$jeiVersion")
     if (viewer == "jei" || viewer == "both") {
-        runtimeOnly("mezz.jei:jei-$minecraftVersion-neoforge:$jeiVersion")
+        val jeiRuntimeVersion =
+            if (sophisticatedRuntime) (project.findProperty("sophisticated_jei_version") as String?) ?: jeiVersion else jeiVersion
+        runtimeOnly("mezz.jei:jei-$minecraftVersion-neoforge:$jeiRuntimeVersion")
     }
 
     if (hasRei) {
@@ -163,6 +177,20 @@ dependencies {
         if ((project.findProperty("sc.ae2") as String?) == "true") {
             runtimeOnly("maven.modrinth:ae2:$ae2Version")
             runtimeOnly("maven.modrinth:guideme:${property("guideme_version")}")
+        }
+    }
+
+    // Sophisticated Core (nmoqTijg), Storage (hMlaZH8f), Backpacks (TyCTlI4b): compile-only, the player
+    // supplies them. -Psc.sophisticated=true also puts all three on the dev runtime (runClient/runServer)
+    // so the crafting-upgrade integration can be exercised in game. Their POMs declare no dependencies.
+    if (hasSophisticated) {
+        compileOnly("maven.modrinth:nmoqTijg:$sophisticatedCoreVersion")
+        compileOnly("maven.modrinth:hMlaZH8f:$sophisticatedStorageVersion")
+        compileOnly("maven.modrinth:TyCTlI4b:$sophisticatedBackpacksVersion")
+        if (sophisticatedRuntime) {
+            runtimeOnly("maven.modrinth:nmoqTijg:$sophisticatedCoreVersion")
+            runtimeOnly("maven.modrinth:hMlaZH8f:$sophisticatedStorageVersion")
+            runtimeOnly("maven.modrinth:TyCTlI4b:$sophisticatedBackpacksVersion")
         }
     }
 
@@ -203,6 +231,10 @@ tasks.withType<JavaCompile>().configureEach {
     // yet; it keeps the two scripts' rule identical for the day a node drops JEI.
     if (project.findProperty("jei_version") == null) {
         exclude("**/compat/ae2/jei/**")
+    }
+
+    if (!hasSophisticated) {
+        exclude("**/compat/sophisticated/**")
     }
     // Surface the full cross-cliff error set during the 26.x port (javac caps at 100 by default).
     options.compilerArgs.addAll(listOf("-Xmaxerrs", "2000", "-Xmaxwarns", "200"))

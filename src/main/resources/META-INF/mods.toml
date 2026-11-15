@@ -40,3 +40,19 @@ description = '''${description}''' #mandatory (Supports multiline text)
     versionRange = "${jei_version_range}"
     ordering = "AFTER"
     side = "CLIENT"<% } %>
+<% if (has_sophisticated) { %># Sophisticated Storage / Backpacks (emitted only on nodes that ship compat/sophisticated): soft dependencies, here
+# only for load order. JEI keeps the LAST transfer handler registered per menu class, in mod-list order, and ours
+# (a wrapper around theirs that adds the deferred-craft button) must come after the mods' own.
+[[dependencies.${mod_id}]]
+    modId = "sophisticatedstorage"
+    mandatory = false
+    versionRange = "[0,)"
+    ordering = "AFTER"
+    side = "CLIENT"
+[[dependencies.${mod_id}]]
+    modId = "sophisticatedbackpacks"
+    mandatory = false
+    versionRange = "[0,)"
+    ordering = "AFTER"
+    side = "CLIENT"
+<% } %>

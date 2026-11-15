@@ -43,6 +43,17 @@ stonecutter parameters {
     // REI ships compatible builds on the 1.20.1 and 1.21.1 lines only (no 26.x release, no Forge build),
     // so its compat layer is gated on the MC version here and excluded by the Forge scripts.
     constants["rei"] = current.version == "1.21.1" || current.version == "1.20.1"
+    // The Sophisticated Core/Storage/Backpacks compat (compat/sophisticated) is compiled on exactly the nodes
+    // whose gradle.properties pin all three Sophisticated versions: the NeoForge nodes (1.21.1, 26.x) and
+    // 1.20.1-forge (the only Forge line with a build; the NeoForge-only 1.21.1 / 26.x Forge nodes pin nothing).
+    // build.neoforge.gradle.kts and build.forge.gradle.kts derive `hasSophisticated` from the same three pins
+    // and exclude the package without them, and the Fabric scripts exclude it always (no Fabric build exists,
+    // so no Fabric node pins them), so shared code that calls into it is gated on the same fact.
+    constants["sophisticated"] = java.util.Properties().run {
+        rootProject.file("versions/${current.project}/gradle.properties").inputStream().use { load(it) }
+        listOf("sophisticated_core_version", "sophisticated_storage_version", "sophisticated_backpacks_version")
+                .all { containsKey(it) }
+    }
 
     // ─── Source replacements (forward-port the 1.21.1-canonical source to 26.x) ──────────────────
     // ONE copy for every node and loader (it used to be duplicated in each per-node script). The shared

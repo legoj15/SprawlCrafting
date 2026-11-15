@@ -7,7 +7,7 @@ import com.legoj15.sprawlcrafting.client.DeferredClickState;
 import com.legoj15.sprawlcrafting.client.DeferredCraftableCache;
 import com.legoj15.sprawlcrafting.client.MissingIngredients;
 import com.legoj15.sprawlcrafting.client.MissingIngredientsView;
-import com.legoj15.sprawlcrafting.compat.jei.DeferredCraftingTransferHandler;
+import com.legoj15.sprawlcrafting.compat.jei.DeferredTransfers;
 import com.legoj15.sprawlcrafting.config.SprawlConfig;
 import com.legoj15.sprawlcrafting.craft.CraftPlanner.Craftability;
 import com.legoj15.sprawlcrafting.craft.GridContext;
@@ -81,7 +81,7 @@ public class StationTransferHandler<C extends AbstractContainerMenu>
                 DeferredClickState.sendStartPacket(recipe);
                 return null;
             }
-            return craftability == Craftability.DEFERRED ? DeferredCraftingTransferHandler.DEFERRED_AVAILABLE : null;
+            return craftability == Craftability.DEFERRED ? DeferredTransfers.DEFERRED_AVAILABLE : null;
         }
         if (craftability == Craftability.UNSOLVABLE && SprawlConfig.get().needsSystem()) {
             if (doTransfer) {
@@ -90,7 +90,7 @@ public class StationTransferHandler<C extends AbstractContainerMenu>
                         () -> MissingIngredientsView.open(recipe, grid));
                 return null;
             }
-            return DeferredCraftingTransferHandler.gatherListError(recipe);
+            return DeferredTransfers.gatherListError(recipe);
         }
         return helper.createUserErrorWithTooltip(Component.translatable("jei.tooltip.error.recipe.transfer.missing"));
     }

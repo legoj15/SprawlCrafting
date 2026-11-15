@@ -20,5 +20,12 @@ public class CommonClass {
                 solver.getName(), version != null ? version : "(version not in manifest)");
         // Crafting stations from optional mods (AE2's Crafting Terminal), only when that mod is loaded.
         StationStorages.bootstrap();
+
+        // Optional integrations (never a hard dependency: nothing below loads without the mod present).
+        //? if sophisticated {
+        /*if (Services.PLATFORM.isModLoaded(com.legoj15.sprawlcrafting.compat.sophisticated.SophisticatedCompat.CORE_MOD_ID)) {
+            com.legoj15.sprawlcrafting.compat.sophisticated.SophisticatedCompat.init();
+        }*/
+        //?}
     }
 }
