@@ -259,6 +259,38 @@ than a full exponential search — see "Known limitations".
   input) and auto-resumes; 2×2 steps craft anywhere. The reach scan skips empty chunk
   sections via the block palette, so a 64-block reach doesn't cost millions of lookups.
 
+## Crafting stations: the AE2 Crafting Terminal (issue #2)
+
+Rule: every item a craft draws from must be visible in the open screen. The AE2 Crafting
+Terminal shows its ME network, so while one is open **and usable** (link connected / powered)
+the network's plain items count as craft material. Nothing off-screen counts: no plain ME
+terminal, no adjacent storage. Shipped on `1.21.1-neoforge` (AE2 19.x) and 1.12.2 (rv6 and
+AE2-UEL, see the 1.12.2 section); other lines are follow-ups #27 (1.20.1), #28 (26.x, needs
+`DeferredCraftSync` to fold the network in), #29 (1.16.5).
+
+- **Seam.** Shared code talks only to `craft/StationStorage` (counts, extract, insert) through
+  `craft/StationStorages`; the AE2 provider lives in `compat/ae2`, compiled only on nodes that
+  set `ae2_version` and loaded reflectively after `isModLoaded("ae2")`.
+- **Classification and planning.** The client reads the terminal's client repo (no energy
+  view); the server counts what a simulated powered extraction would deliver. A plan uses the
+  inventory alone first and only falls back to the network when that fails.
+- **Execution.** Network items are drawn all-or-nothing per craft (`StationDraw`, unit-tested):
+  a short or throwing draw gives everything back (network, then inventory, then feet). Results
+  and remainders go to the inventory; overflow goes into the network before the feet. The
+  terminal counts as a 3x3 grid while usable; the final-step grid hand-off is off there.
+- **Lifecycle.** A job is station-dependent when its plan needed the network, or once a craft
+  drew from it or stored overflow in it. Such a job pauses (`PAUSED_STATION`, "Paused — open
+  station") when the station is closed or unusable; a genuine shortfall while usable cancels.
+  `PAUSED_STATION` is sent only to clients registering the `progress_states_v2` marker; older
+  clients get `PAUSED`.
+- **Entry points.** The terminal has no recipe book. JEI (AE2 19.x has no JEI module): green and
+  yellow start the engine, red opens the gather list. REI: only yellow and red-gather are ours;
+  green falls through to AE2's own grid fill. An offline terminal classifies as the 2x2
+  inventory (JEI) or is left to AE2 entirely (REI).
+- **Accepted limits.** A connected but power-starved network can still cancel a job (counts are
+  simulated per item, not in aggregate; no item loss). Items in the terminal's own 3x3 grid are
+  not counted. A paused job has no player cancel yet (#31).
+
 ## Client craftability across versions
 
 Whether the client can compute "is this yellow?" itself depends on the version:
