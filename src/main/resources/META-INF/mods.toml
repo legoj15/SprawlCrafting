@@ -56,3 +56,14 @@ description = '''${description}''' #mandatory (Supports multiline text)
     ordering = "AFTER"
     side = "CLIENT"
 <% } %>
+<% if (has_ae2) { %># AE2 (emitted only on nodes that ship compat/ae2): a soft dependency, here only for load order.
+# AE2 15 ships its own JEI crafting-terminal transfer handler; JEI keeps the LAST handler registered per menu
+# class, in mod-list order, and ours (which fronts AE2's to add the deferred-craft paths) must come after it.
+# NeoForge AE2 19 has no JEI module, so neoforge.mods.toml needs no such ordering.
+[[dependencies.${mod_id}]]
+    modId = "ae2"
+    mandatory = false
+    versionRange = "[0,)"
+    ordering = "AFTER"
+    side = "CLIENT"
+<% } %>

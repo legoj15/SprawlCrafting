@@ -284,8 +284,9 @@ tasks.withType<JavaCompile>().configureEach {
         exclude("**/compat/rei/**")
         exclude("**/*ReiPlugin*")
     }
-    // AE2 Crafting Terminal station (issue #2): compiled only where a node pins ae2_version (none on
-    // Forge yet; the compileOnly AE2 dependency above is wired, so opting in is the property).
+    // AE2 Crafting Terminal station (issue #2): compiled only where a node pins ae2_version — 1.20.1-forge
+    // (issue #27, AE2 15.4.12, its last MinecraftForge line). The 1.21.1 / 26.x Forge nodes pin none (AE2
+    // ships no MinecraftForge build above 1.20.1); the compileOnly AE2 dependency above resolves the pin.
     if (project.findProperty("ae2_version") == null) {
         exclude("**/compat/ae2/**")
     }
@@ -318,7 +319,10 @@ tasks.processResources {
         "jei_version_range" to jeiVersionRange,
         "has_jei" to hasJei,
         // Optional AFTER dependencies on sophisticatedstorage / sophisticatedbackpacks (load order only).
-        "has_sophisticated" to hasSophisticated
+        "has_sophisticated" to hasSophisticated,
+        // Optional AFTER dependency on ae2 (load order only: AE2 15 ships its own JEI transfer handler,
+        // and JEI keeps the LAST one registered per menu class, so ours must be registered after it).
+        "has_ae2" to (project.findProperty("ae2_version") != null)
     )
     inputs.properties(replaceProperties)
     filesMatching("META-INF/mods.toml") { expand(replaceProperties) }

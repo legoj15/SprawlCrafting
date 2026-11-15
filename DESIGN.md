@@ -286,8 +286,9 @@ than a full exponential search — see "Known limitations".
 Rule: every item a craft draws from must be visible in the open screen. The AE2 Crafting
 Terminal shows its ME network, so while one is open **and usable** (link connected / powered)
 the network's plain items count as craft material. Nothing off-screen counts: no plain ME
-terminal, no adjacent storage. Shipped on `1.21.1-neoforge` (AE2 19.x) and 1.12.2 (rv6 and
-AE2-UEL, see the 1.12.2 section); other lines are follow-ups #27 (1.20.1), #28 (26.x, needs
+terminal, no adjacent storage. Shipped on `1.21.1-neoforge` (AE2 19.x), `1.20.1-forge` (AE2 15.x,
+#27) and 1.12.2 (rv6 and AE2-UEL, see the 1.12.2 section); other lines are follow-ups #27
+(1.20.1-fabric), #28 (26.x, needs
 `DeferredCraftSync` to fold the network in), #29 (1.16.5).
 
 - **Seam.** Shared code talks only to `craft/StationStorage` (counts, extract, insert) through
@@ -308,7 +309,13 @@ AE2-UEL, see the 1.12.2 section); other lines are follow-ups #27 (1.20.1), #28 (
 - **Entry points.** The terminal has no recipe book. JEI (AE2 19.x has no JEI module): green and
   yellow start the engine, red opens the gather list. REI: only yellow and red-gather are ours;
   green falls through to AE2's own grid fill. An offline terminal classifies as the 2x2
-  inventory (JEI) or is left to AE2 entirely (REI).
+  inventory (JEI) or is left to AE2 entirely (REI). AE2 15.x (1.20.1) ships its own JEI handler:
+  ours registers after it (optional `AFTER ae2` in mods.toml; JEI keeps the last per menu class)
+  and fronts it like REI does: yellow and red-gather are ours, green, an offline terminal and red
+  with the needs helper off go to AE2's (`compat/ae2/jei/Ae2JeiStock`). The busy gate applies to
+  green too. AE2 15 has no link status: "usable" is its power check (`updatePowerStatus` mirror;
+  a wireless terminal without an actionable node is unusable), and "plain" is the exact
+  `AEItemKey.of(item)` key, since a tag-less key can still carry capability data.
 - **Accepted limits.** A connected but power-starved network can still cancel a job (counts are
   simulated per item, not in aggregate; no item loss). Items in the terminal's own 3x3 grid are
   not counted. A paused job has no player cancel yet (#31). A newer 1.21.1 client on an older

@@ -10,11 +10,18 @@ import com.legoj15.sprawlcrafting.craft.StationStorage;
 import com.legoj15.sprawlcrafting.craft.StationStorages;
 
 import appeng.api.config.Actionable;
+//? if <1.20.5 {
+/*import appeng.api.config.PowerMultiplier;
+import appeng.api.networking.IGridNode;
+import appeng.api.networking.energy.IEnergyService;*/
+//?}
 import appeng.api.networking.energy.IEnergySource;
 import appeng.api.networking.security.IActionSource;
 import appeng.api.stacks.AEItemKey;
 import appeng.api.stacks.AEKey;
+//? if >=1.20.5 {
 import appeng.api.storage.ITerminalHost;
+//?}
 import appeng.api.storage.MEStorage;
 import appeng.api.storage.StorageHelper;
 import appeng.menu.me.common.GridInventoryEntry;
@@ -37,9 +44,11 @@ import net.minecraft.world.item.ItemStack;
  *
  * <p>Reached only through {@link StationStorages#bootstrap()}, by reflection, after the loader reports
  * "ae2" loaded; this package is compiled only on nodes that pin {@code ae2_version}. Verified against
- * the decompiled AE2 19.2.17 / 19.2.19 jar:
+ * the decompiled AE2 19.2.17 / 19.2.19 jar (and, for the 1.20.1 line, javap on AE2 15.4.12):
  * <ul>
- *   <li>{@code CraftingTermMenu extends MEStorageMenu}; {@code getEnergySource()} is public on it.</li>
+ *   <li>{@code CraftingTermMenu extends MEStorageMenu}; {@code getEnergySource()} is public on it.
+ *       AE2 15 has no such getter: the energy source is {@code MEStorageMenu}'s own
+ *       {@code powerSource} field there, read reflectively like {@code storage} below.</li>
  *   <li>{@code MEStorageMenu.storage} is {@code protected final MEStorage}, assigned once from
  *       {@code host.getInventory()} (which must not be called again), so it is read reflectively.</li>
  *   <li>{@code AEBaseMenu.getActionSource()} is the menu's own {@code PlayerSource(player, actionHost)},
@@ -52,6 +61,12 @@ import net.minecraft.world.item.ItemStack;
  *   <li>{@code MEStorageMenu.getLinkStatus()} is a copy refreshed once per menu tick
  *       ({@code broadcastChanges -> updateLinkStatus}) and pushed to the client; the live value is
  *       {@code getHost().getLinkStatus()} ({@code ITerminalHost}).</li>
+ *   <li>AE2 15 (the 1.20.1 line, issue #27) has none of the link-status API above: "connected" there is
+ *       the menu's power status — server side the live check AE2's own {@code updatePowerStatus} makes
+ *       ({@code getNetworkNode()} active, else the energy service / energy source), client side the
+ *       synced {@code isPowered()} flag. AE2's {@code canInteractWithGrid} on that line is
+ *       {@code storage != null && powerSource != null && isPowered()}, mirrored below. Its
+ *       "plain" there is the exact {@code AEItemKey.of(item)} key ({@code plain}), since a tag-less key can still carry capability data.</li>
  *   <li>{@code StorageHelper.poweredExtraction} caps an extraction at what the energy source can pay
  *       for (one power unit per item), so a connected but power-starved network delivers less than it
  *       stores.</li>
@@ -59,15 +74,21 @@ import net.minecraft.world.item.ItemStack;
  *       {@code IClientRepo.getAllEntries()} gives {@code GridInventoryEntry}s with the key and stored
  *       amount the server synced (already filtered by the menu's view).</li>
  * </ul>
- * Only plain {@link AEItemKey}s (no component patch) count, matching {@link StationStorage}'s contract.
+ * Only plain {@link AEItemKey}s (no component patch; no NBT tag, on AE2 15) count, matching
+ * {@link StationStorage}'s contract.
  *
  * <p>"Usable" (the {@link StationStorages.Provider} contract) means the terminal is open and its link
  * is connected. Server side that is asked live; the client mirror can only see the synced copy. An
- * unusable terminal counts as no station at all: no counts, no draws.
+ * unusable terminal counts as no station at all: no counts, no draws. On AE2 15 (1.20.1), which has no
+ * link-status API, the online check is the menu's power status instead: the live node/energy state
+ * server side, the synced {@code isPowered()} flag client side.
  */
 public final class Ae2Station implements StationStorages.Provider {
 
     private static final Field STORAGE_FIELD = storageField();
+    //? if <1.20.5 {
+    /*private static final Field POWER_FIELD = powerField();*/
+    //?}
 
     private Ae2Station() {
     }
@@ -87,6 +108,18 @@ public final class Ae2Station implements StationStorages.Provider {
         }
     }
 
+    //? if <1.20.5 {
+    /*private static Field powerField() {
+        try {
+            Field field = MEStorageMenu.class.getDeclaredField("powerSource");
+            field.setAccessible(true);
+            return field;
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException("AE2 MEStorageMenu.powerSource not found; unsupported AE2 version", e);
+        }
+    }*/
+    //?}
+
     @Override
     public boolean isStationMenu(AbstractContainerMenu menu) {
         return menu instanceof CraftingTermMenu;
@@ -94,12 +127,54 @@ public final class Ae2Station implements StationStorages.Provider {
 
     /**
      * Server side: whether {@code menu}'s network is online right now. Asks the host, not the menu's
-     * per-tick copy, so a network that lost power this tick is already unusable.
+     * per-tick copy, so a network that lost power this tick is already unusable. (AE2 15, the 1.20.1
+     * line, has no link-status API: the live power check stands in, mirroring AE2's own
+     * {@code updatePowerStatus}.)
      */
     private static boolean usable(CraftingTermMenu menu) {
+        //? if >=1.20.5 {
         ITerminalHost host = menu.getHost();
         return host != null && host.getLinkStatus().connected();
+        //?} else {
+        /*MEStorage storage;
+        IEnergySource powerSource;
+        try {
+            storage = (MEStorage) STORAGE_FIELD.get(menu);
+            powerSource = (IEnergySource) POWER_FIELD.get(menu);
+        } catch (IllegalAccessException e) {
+            return false;
+        }
+        // AE2 15's own canInteractWithGrid: no storage or energy source means no grid at all.
+        return storage != null && powerSource != null && powered(menu, powerSource);*/
+        //?}
     }
+
+    //? if <1.20.5 {
+    /*// AE2 15's live power status, what its own updatePowerStatus writes into the per-tick synced flag:
+    // an inactive grid node covers "out of power" and "no channel" alike. A wireless terminal's
+    // getNetworkNode() is its host's actionable node, null when out of access-point range or the access
+    // point is down: no station then (AE2 closes the menu a tick later anyway), never the charge-only check.
+    private static boolean powered(CraftingTermMenu menu, IEnergySource powerSource) {
+        IGridNode node = menu.getNetworkNode();
+        if (node != null) {
+            return node.isActive();
+        }
+        if (menu instanceof WirelessCraftingTermMenu) {
+            return false;
+        }
+        if (powerSource instanceof IEnergyService service) {
+            return service.isNetworkPowered();
+        }
+        return powerSource.extractAEPower(1, Actionable.SIMULATE, PowerMultiplier.CONFIG) > 0.8;
+    }
+
+    // "Plain" on AE2 15 is the exact key extract()/available() build (AEItemKey.of(item)): its keys also
+    // carry capability data that hasTag() does not report, and such a key is a separate stored entry the
+    // plain-key extraction can never reach, so a tag-less test alone would over-count it.
+    private static boolean plain(AEItemKey key) {
+        return key.equals(AEItemKey.of(key.getItem()));
+    }*/
+    //?}
 
     @Override
     public StationStorage open(ServerPlayer player) {
@@ -107,18 +182,35 @@ public final class Ae2Station implements StationStorages.Provider {
             return null;
         }
         MEStorage storage;
+        //? if >=1.20.5 {
         try {
             storage = (MEStorage) STORAGE_FIELD.get(menu);
         } catch (IllegalAccessException e) {
             return null;
         }
         return storage == null ? null : new NetworkStorage(menu, storage, menu.getEnergySource(), menu.getActionSource());
+        //?} else {
+        /*IEnergySource energy;
+        try {
+            storage = (MEStorage) STORAGE_FIELD.get(menu);
+            energy = (IEnergySource) POWER_FIELD.get(menu);
+        } catch (IllegalAccessException e) {
+            return null;
+        }
+        return storage == null || energy == null
+                ? null : new NetworkStorage(menu, storage, energy, menu.getActionSource());*/
+        //?}
     }
 
     @Override
     public Map<Item, Long> clientCounts(AbstractContainerMenu menu) {
-        // The client only has the synced copy of the link status; a disconnected terminal has no counts.
+        // The client only has the synced online copy (the link status, or AE2 15's power flag); a
+        // disconnected terminal has no counts.
+        //? if >=1.20.5 {
         if (!(menu instanceof CraftingTermMenu terminal) || !terminal.getLinkStatus().connected()) {
+        //?} else {
+        /*if (!(menu instanceof CraftingTermMenu terminal) || !terminal.isPowered()) {*/
+        //?}
             return null;
         }
         IClientRepo repo = terminal.getClientRepo();
@@ -127,7 +219,11 @@ public final class Ae2Station implements StationStorages.Provider {
         }
         Map<Item, Long> counts = new HashMap<>();
         for (GridInventoryEntry entry : repo.getAllEntries()) {
+            //? if >=1.20.5 {
             if (entry.getWhat() instanceof AEItemKey key && !key.hasComponents() && entry.getStoredAmount() > 0) {
+            //?} else {
+            /*if (entry.getWhat() instanceof AEItemKey key && plain(key) && entry.getStoredAmount() > 0) {*/
+            //?}
                 counts.merge(key.getItem(), entry.getStoredAmount(), Ae2Station::saturatingAdd);
             }
         }
@@ -173,8 +269,13 @@ public final class Ae2Station implements StationStorages.Provider {
                 return counts;
             }
             for (Object2LongMap.Entry<AEKey> entry : storage.getAvailableStacks()) {
+                //? if >=1.20.5 {
                 if (entry.getKey() instanceof AEItemKey key && !key.hasComponents() && entry.getLongValue() > 0
                         && menu.isKeyVisible(key) && CraftExecutor.usableAsIngredient(key.toStack())) {
+                //?} else {
+                /*if (entry.getKey() instanceof AEItemKey key && plain(key) && entry.getLongValue() > 0
+                        && menu.isKeyVisible(key) && CraftExecutor.usableAsIngredient(key.toStack())) {*/
+                //?}
                     long deliverable = deliverable(key, entry.getLongValue());
                     if (deliverable > 0) {
                         counts.merge(key.getItem(), deliverable, Ae2Station::saturatingAdd);
@@ -206,7 +307,11 @@ public final class Ae2Station implements StationStorages.Provider {
             // Only component-less stacks go in: counts()/extract() only ever see plain keys, so anything
             // carrying components (damage, enchantments, a name, potion contents...) stored here could
             // never be drawn again. Those fall through to the player's inventory, then the feet.
+            //? if >=1.20.5 {
             if (key == null || key.hasComponents() || !menu.isKeyVisible(key)) {
+            //?} else {
+            /*if (key == null || !plain(key) || !menu.isKeyVisible(key)) {*/
+            //?}
                 return stack;
             }
             long inserted = StorageHelper.poweredInsert(energy, storage, key, stack.getCount(), source,
