@@ -69,16 +69,33 @@ public final class CraftExecutor {
         private CraftResult() {
         }
 
-        /** {@code crafted} is a display copy of what was produced. */
+        /**
+         * {@code crafted} is a display copy of what was produced. {@code usedChest} / {@code usedNetwork}
+         * say whether this craft actually consumed from a station's connected chest / a network
+         * terminal's network, so the job learns it depends on that source even if it was not visible
+         * when the job started.
+         */
         public static final class Success extends CraftResult {
             private final ItemStack crafted;
+            private final boolean usedChest;
+            private final boolean usedNetwork;
 
-            public Success(ItemStack crafted) {
+            public Success(ItemStack crafted, boolean usedChest, boolean usedNetwork) {
                 this.crafted = crafted;
+                this.usedChest = usedChest;
+                this.usedNetwork = usedNetwork;
             }
 
             public ItemStack crafted() {
                 return crafted;
+            }
+
+            public boolean usedChest() {
+                return usedChest;
+            }
+
+            public boolean usedNetwork() {
+                return usedNetwork;
             }
         }
 
@@ -129,48 +146,82 @@ public final class CraftExecutor {
         }
 
         // Phase 1b: pull every network item this craft needs out of the network up front, all or
-        // nothing, so phase 2 below can never fail half way through (the player's own slots are
-        // decremented in place and cannot fail; a network extraction can — power, a concurrent
-        // export bus). If the network hands over less than was counted, everything it did hand
-        // over goes straight back and the craft reports the item as missing.
+        // nothing, so the network can no longer come up short once phase 2 starts consuming (a
+        // network extraction can fail — power, a concurrent export bus — where the player's own slots,
+        // decremented in place, cannot). If the network hands over less than was counted, everything
+        // it did hand over goes straight back and the craft reports the item as missing.
         ItemStack networkShort = prepareNetwork(player, sources, chosen);
         if (!networkShort.isEmpty()) {
             return new CraftResult.MissingIngredient(networkShort.getDisplayName());
         }
 
-        // Phase 2: apply — consume, collect remainders, insert the result into the player only.
-        List<ItemStack> remainders = new ArrayList<ItemStack>();
-        boolean touchedExternal = false;
-        for (int idx : chosen) {
-            if (idx < 0) {
-                continue;
+        // Phase 2: apply — consume, collect remainders, insert the result into the player only. It
+        // is not failure-free (a modded item's getContainerItem or an insert can throw), so anything
+        // taken from the network and not yet consumed is put back before the error propagates.
+        try {
+            List<ItemStack> remainders = new ArrayList<ItemStack>();
+            boolean touchedExternal = false;
+            boolean usedChest = false;
+            boolean usedNetwork = false;
+            for (int idx : chosen) {
+                if (idx < 0) {
+                    continue;
+                }
+                Source source = sources.get(idx);
+                // One item, as in a real grid cell: peek() of a network source is the whole network's
+                // count, and a mod may read (or mutate) the stack it is asked about.
+                ItemStack one = source.peek().copy();
+                one.setCount(1);
+                Item item = one.getItem();
+                if (item.hasContainerItem(one)) {
+                    ItemStack remainder = item.getContainerItem(one);
+                    if (!remainder.isEmpty()) {
+                        remainders.add(remainder);
+                    }
+                }
+                source.consumeOne();
+                touchedExternal |= source.isExternal();
+                usedChest |= source.isChest();
+                usedNetwork |= source instanceof NetworkSource;
             }
-            Source source = sources.get(idx);
-            ItemStack stack = source.peek();
-            Item item = stack.getItem();
-            if (item.hasContainerItem(stack)) {
-                ItemStack remainder = item.getContainerItem(stack);
-                if (!remainder.isEmpty()) {
-                    remainders.add(remainder);
+            assignment.chargeTo(ledger);
+            for (ItemStack remainder : remainders) {
+                insertIntoMainInventory(player, remainder);
+            }
+            ItemStack crafted = result.copy();
+            insertIntoMainInventory(player, result);
+            ledger.produced(ledgerKey(crafted), crafted.getCount());
+            inventory.markDirty();
+            if (touchedExternal) {
+                // Push the depleted chest back to any open station GUI viewing it (the same sync
+                // clearOpenCraftingGrid performs after it moves grid contents).
+                player.openContainer.detectAndSendChanges();
+            }
+            return new CraftResult.Success(crafted, usedChest, usedNetwork);
+        } catch (Throwable failure) {
+            returnPreparedNetworkItems(player, sources, failure);
+            throw failure;
+        }
+    }
+
+    /**
+     * Puts every network item {@link #prepareNetwork} extracted and phase 2 had not consumed yet back
+     * into the network (what it refuses goes to the player, see {@link NetworkSource#refund}). Runs on
+     * the failure path only, so a failing refund is attached to {@code failure} as suppressed instead
+     * of replacing it, and never stops the other sources from being returned. Items phase 2 already
+     * consumed (decremented) before the failure are not restored.
+     */
+    private static void returnPreparedNetworkItems(EntityPlayer player, Iterable<? extends Source> sources,
+                                                   Throwable failure) {
+        for (Source source : sources) {
+            if (source instanceof NetworkSource) {
+                try {
+                    ((NetworkSource) source).refund(player);
+                } catch (Throwable refundFailure) {
+                    failure.addSuppressed(refundFailure);
                 }
             }
-            source.consumeOne();
-            touchedExternal |= source.isExternal();
         }
-        assignment.chargeTo(ledger);
-        for (ItemStack remainder : remainders) {
-            insertIntoMainInventory(player, remainder);
-        }
-        ItemStack crafted = result.copy();
-        insertIntoMainInventory(player, result);
-        ledger.produced(ledgerKey(crafted), crafted.getCount());
-        inventory.markDirty();
-        if (touchedExternal) {
-            // Push the depleted chest back to any open station GUI viewing it (the same sync
-            // clearOpenCraftingGrid performs after it moves grid contents).
-            player.openContainer.detectAndSendChanges();
-        }
-        return new CraftResult.Success(crafted);
     }
 
     /**
@@ -374,18 +425,24 @@ public final class CraftExecutor {
             }
         }
         List<NetworkSource> prepared = new ArrayList<NetworkSource>();
-        for (Map.Entry<NetworkSource, Integer> entry : needed.entrySet()) {
-            NetworkSource source = entry.getKey();
-            int want = entry.getValue();
-            int got = source.network.extract(source.template, want, false);
-            source.prepared = got;
-            prepared.add(source);
-            if (got < want) {
-                for (NetworkSource undo : prepared) {
-                    undo.refund(player);
+        try {
+            for (Map.Entry<NetworkSource, Integer> entry : needed.entrySet()) {
+                NetworkSource source = entry.getKey();
+                int want = entry.getValue();
+                int got = source.network.extract(source.template, want, false);
+                source.prepared = got;
+                prepared.add(source);
+                if (got < want) {
+                    for (NetworkSource undo : prepared) {
+                        undo.refund(player);
+                    }
+                    return source.template;
                 }
-                return source.template;
             }
+        } catch (Throwable failure) {
+            // A later extraction threw after earlier ones succeeded: those items go back too.
+            returnPreparedNetworkItems(player, prepared, failure);
+            throw failure;
         }
         return ItemStack.EMPTY;
     }
@@ -589,6 +646,9 @@ public final class CraftExecutor {
         void consumeOne();
 
         boolean isExternal();
+
+        /** A station's connected side inventory (its chest), as opposed to the crafting grid or the player. */
+        boolean isChest();
     }
 
     private static final class PlayerSource implements Source {
@@ -618,6 +678,11 @@ public final class CraftExecutor {
         public boolean isExternal() {
             return false;
         }
+
+        @Override
+        public boolean isChest() {
+            return false;
+        }
     }
 
     private static final class ExternalSource implements Source {
@@ -640,6 +705,13 @@ public final class CraftExecutor {
         @Override
         public boolean isExternal() {
             return true;
+        }
+
+        @Override
+        public boolean isChest() {
+            // The pool also holds the grid's own matrix slots (loose leftovers); only the side
+            // inventory makes a job depend on its station being open.
+            return ExternalSlots.isExternal(slot);
         }
     }
 
@@ -692,7 +764,14 @@ public final class CraftExecutor {
             ItemStack back = template.copy();
             back.setCount(prepared);
             prepared = 0;
-            ItemStack leftover = network.insert(back);
+            ItemStack leftover;
+            try {
+                leftover = network.insert(back);
+            } catch (RuntimeException e) {
+                // The network cannot take it back right now: the player gets it, never the void.
+                LogManager.getLogger("SprawlCrafting").warn("Could not return {} to the network", back, e);
+                leftover = back;
+            }
             if (!leftover.isEmpty()) {
                 insertIntoMainInventory(player, leftover);
             }
@@ -700,6 +779,11 @@ public final class CraftExecutor {
 
         @Override
         public boolean isExternal() {
+            return false;
+        }
+
+        @Override
+        public boolean isChest() {
             return false;
         }
     }

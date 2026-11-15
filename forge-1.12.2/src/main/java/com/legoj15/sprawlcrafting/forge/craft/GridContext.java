@@ -60,9 +60,20 @@ public enum GridContext {
         return height;
     }
 
-    /** The grid the player is looking at right now, decided by the open container's slots. */
+    /**
+     * The grid the player is looking at right now, decided by the open container's slots. A network
+     * crafting terminal ({@link NetworkTerminals}) is a station like any other here: it grants 3x3
+     * access only while its network is {@link NetworkTerminals#usable usable}. An unpowered terminal
+     * still physically has a grid, but its network is unreachable and its screen shows none, so it
+     * neither lets a 3x3 step run nor counts as the crafter a planned 3x3 chain needs; a job that
+     * depends on the network pauses there instead of cancelling (see {@code CraftQueueManager}).
+     */
     public static GridContext current(EntityPlayer player) {
-        return isThreeByThreeCrafter(player.openContainer) ? CRAFTING_TABLE : INVENTORY;
+        Container open = player.openContainer;
+        if (NetworkTerminals.isTerminal(open)) {
+            return NetworkTerminals.usable(player) ? CRAFTING_TABLE : INVENTORY;
+        }
+        return isThreeByThreeCrafter(open) ? CRAFTING_TABLE : INVENTORY;
     }
 
     /**
@@ -76,7 +87,9 @@ public enum GridContext {
      * <p>A network crafting terminal ({@link NetworkTerminals}, the AE2 Crafting Terminal) is a 3x3
      * crafter too, although its grid is an item-handler, not an {@code InventoryCrafting}: it is a
      * cable part, not a table block, so treating it as an open crafter is what lets a 3x3 step run
-     * while it is open. {@link ExternalSlots} explicitly refuses to harvest its slots.
+     * while it is open. This is the structural, container-only answer (class based, whether or not the
+     * terminal is powered); {@link #current} is the player-aware one that also requires the terminal
+     * to be usable. {@link ExternalSlots} explicitly refuses to harvest its slots, by class too.
      */
     public static boolean isThreeByThreeCrafter(Container container) {
         if (container == null) {

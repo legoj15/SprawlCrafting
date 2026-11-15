@@ -48,7 +48,8 @@ final class Ae2ClientRepo {
     private static Field listField;
     private static boolean broken;
 
-    private static Object signedList;
+    /** Weak: the list belongs to the terminal screen, and a closed terminal's whole item list must not stay reachable from here. */
+    private static WeakReference<Object> signedList = new WeakReference<Object>(null);
     private static long signedAt = Long.MIN_VALUE;
     private static int signature;
 
@@ -67,7 +68,7 @@ final class Ae2ClientRepo {
         if (list == null) {
             return 2;
         }
-        if (list == signedList && worldTime >= signedAt && worldTime - signedAt < SIGNATURE_INTERVAL_TICKS) {
+        if (list == signedList.get() && worldTime >= signedAt && worldTime - signedAt < SIGNATURE_INTERVAL_TICKS) {
             return signature;
         }
         int hash = 3;
@@ -80,7 +81,7 @@ final class Ae2ClientRepo {
                     + (int) (count ^ (count >>> 32));
             hash += entry * 31 + (stored.hasTagCompound() ? stored.getDefinition().getTagCompound().hashCode() : 0);
         }
-        signedList = list;
+        signedList = new WeakReference<Object>(list);
         signedAt = worldTime;
         signature = hash;
         return hash;

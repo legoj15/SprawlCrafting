@@ -88,12 +88,19 @@ public final class CraftJob {
     /** The crafting table the last passing reach scan found; the cheap per-tick re-check watches it. */
     private BlockPos reachTable;
     /**
-     * True if this job was started with a connected station inventory (a Crafting Station's chest)
-     * available, so its plan may rely on chest items. When set, a step that can't find an ingredient
-     * while the station is closed PAUSES (the materials may be in the unseen chest) instead of
-     * cancelling — see {@code CraftQueueManager}.
+     * True once this job relies on a connected station inventory (a Crafting Station's chest): it was
+     * planned with one in the pool, or a craft has since consumed from it. When set, a step that can't
+     * find an ingredient while no station chest is open PAUSES (the materials may be in the unseen
+     * chest) instead of cancelling — see {@code CraftQueueManager}. Kept apart from
+     * {@link #networkDependent} so each source is judged by its own visibility.
      */
-    private boolean externalDependent;
+    private boolean chestDependent;
+    /**
+     * Same for an open network crafting terminal's network (AE2): planned with it in the pool, or a
+     * craft has since consumed from it. A job started with the terminal closed can still become
+     * dependent mid-job, the first time a craft draws network stock.
+     */
+    private boolean networkDependent;
 
     public CraftJob(ResourceLocation targetRecipe, ItemStack targetResult, List<CraftStep> steps) {
         if (steps.isEmpty()) {
@@ -118,12 +125,25 @@ public final class CraftJob {
         return targetRecipe;
     }
 
-    public boolean externalDependent() {
-        return externalDependent;
+    public boolean chestDependent() {
+        return chestDependent;
     }
 
-    public void setExternalDependent(boolean externalDependent) {
-        this.externalDependent = externalDependent;
+    public void setChestDependent(boolean chestDependent) {
+        this.chestDependent = chestDependent;
+    }
+
+    public boolean networkDependent() {
+        return networkDependent;
+    }
+
+    public void setNetworkDependent(boolean networkDependent) {
+        this.networkDependent = networkDependent;
+    }
+
+    /** Whether the job relies on any station-side source, i.e. its pauses point the player back to a station. */
+    public boolean stationDependent() {
+        return chestDependent || networkDependent;
     }
 
     /** The final output, for chat/HUD display. Do not mutate. */

@@ -158,7 +158,16 @@ public final class CraftQueueManager {
             }
             CraftExecutor.CraftResult result = CraftExecutor.craftOnce(player, job.currentStep().recipeId(), job.produced());
             if (result instanceof CraftExecutor.CraftResult.Success) {
-                lastCrafted = ((CraftExecutor.CraftResult.Success) result).crafted();
+                CraftExecutor.CraftResult.Success success = (CraftExecutor.CraftResult.Success) result;
+                // Dependence can be learned mid-job: a craft that actually drew from the chest or the
+                // network makes the job depend on it, whatever was visible when it started.
+                if (success.usedChest()) {
+                    job.setChestDependent(true);
+                }
+                if (success.usedNetwork()) {
+                    job.setNetworkDependent(true);
+                }
+                lastCrafted = success.crafted();
                 boolean stepDone = job.onCraftPerformed();
                 if (job.isFinished()) {
                     ACTIVE.remove(player.getUniqueID());
@@ -182,11 +191,13 @@ public final class CraftQueueManager {
                 // A chest-dependent job whose station is currently closed can't see the connected
                 // inventory; the missing item may be sitting in it, so wait for the player to reopen
                 // the station rather than cancelling. (With the station open the chest IS visible, so a
-                // genuine shortfall — e.g. a hopper drained it — still cancels, as before.) A network
-                // crafting terminal (AE2) follows the same rule: closed, its network is invisible, so
-                // wait; open, the network was a source, so a miss is genuine and cancels.
-                if (job.externalDependent() && !ExternalSlots.present(player)
-                        && !NetworkTerminals.isOpen(player)) {
+                // genuine shortfall — e.g. a hopper drained it — still cancels, as before.) A network-
+                // dependent job follows the same rule for its network crafting terminal (AE2): with the
+                // terminal closed or unpowered the network is invisible, so wait; open and usable, the
+                // network was a source, so a miss is genuine and cancels. Each source is judged on its
+                // own: a job planned at a chest does not stop waiting because some terminal is open.
+                if ((job.chestDependent() && !ExternalSlots.present(player))
+                        || (job.networkDependent() && !NetworkTerminals.usable(player))) {
                     job.holdForRetry();
                     sync(player, job, CraftProgressMessage.State.PAUSED_STATION, ItemStack.EMPTY);
                     return;
@@ -252,21 +263,23 @@ public final class CraftQueueManager {
      * step runnable: it covers a Tinkers' Construct Crafting Station, which {@link CraftingTableReach}
      * (it scans only for the vanilla table block) cannot see, so a chain started at a station no longer
      * wedges forever on a base with no vanilla table. An open AE2 Crafting Terminal counts too (a cable
-     * part, not a table block; {@link GridContext#isThreeByThreeCrafter}). Cheap (a walk of the open
-     * container's slots), so the burst ticks between table scans use it as-is.
+     * part, not a table block; {@link GridContext#current}) — but only while its network is usable: an
+     * unpowered terminal is no crafter for a 3x3 step, the same station semantics as its pause gate.
+     * Cheap (a walk of the open container's slots), so the burst ticks between table scans use it as-is.
      */
     private static boolean hasOpenCrafter(EntityPlayerMP player) {
         return GridContext.current(player) == GridContext.CRAFTING_TABLE;
     }
 
     /**
-     * Which pause to report: a job started at a Crafting Station points the player back to it
-     * ("open station" — its grid and its chest both live there), otherwise the classic "need table".
-     * Without this a station-only base, where the resolution is to reopen the station rather than
-     * place a vanilla table, would show a misleading hint and look wedged.
+     * Which pause to report: a job that depends on a station (a Crafting Station's chest or a network
+     * terminal's network) points the player back to it ("open station" — its grid and its material
+     * both live there), otherwise the classic "need table". Without this a station-only base, where
+     * the resolution is to reopen the station rather than place a vanilla table, would show a
+     * misleading hint and look wedged.
      */
     private static CraftProgressMessage.State pausedState(CraftJob job) {
-        return job.externalDependent()
+        return job.stationDependent()
                 ? CraftProgressMessage.State.PAUSED_STATION
                 : CraftProgressMessage.State.PAUSED;
     }

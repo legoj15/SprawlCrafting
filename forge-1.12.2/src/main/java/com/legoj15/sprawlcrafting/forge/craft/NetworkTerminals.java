@@ -53,6 +53,15 @@ public final class NetworkTerminals {
         View view(EntityPlayer player);
 
         /**
+         * Whether the player's open terminal can reach its network right now: powered and, on the
+         * server, wired up. The same conditions {@link #view} requires, minus anything that merely
+         * reflects client-side screen state (the client's mirror of the network can be unreadable
+         * while the terminal is perfectly usable), so client and server agree on it. The caller has
+         * already checked {@link #isTerminal} for the open container.
+         */
+        boolean usable(EntityPlayer player);
+
+        /**
          * Client only: a cheap value that changes when the open terminal's displayed network
          * contents change (0 when no terminal is open). May lag the screen by a few ticks so a busy
          * network does not rebuild the planning session every frame.
@@ -94,9 +103,29 @@ public final class NetworkTerminals {
         return current != null && container != null && current.isTerminal(container);
     }
 
-    /** Whether the player's open container is a network crafting terminal. */
+    /** Whether any provider is registered, i.e. whether this side can count a network at all. */
+    public static boolean hasProvider() {
+        return provider != null;
+    }
+
+    /**
+     * Whether the player's open container is a network crafting terminal, <em>whether or not its
+     * network is reachable</em>: a class check. Use {@link #usable} for "can I draw from it now".
+     */
     public static boolean isOpen(EntityPlayer player) {
         return isTerminal(player.openContainer);
+    }
+
+    /**
+     * Whether the player has a terminal open whose network is reachable right now (powered, wired
+     * up): the open terminal exists as a station <em>and</em> its network is material. An open but
+     * unpowered terminal is {@link #isOpen} yet not usable; it shows an empty screen, so for jobs it
+     * is the same as a closed one. Agrees with {@link #view} on the server ({@code usable} iff the
+     * view is non-null); on the client it does not depend on the mirror of the network being readable.
+     */
+    public static boolean usable(EntityPlayer player) {
+        Provider current = provider;
+        return current != null && current.isTerminal(player.openContainer) && current.usable(player);
     }
 
     /** The open terminal's network, or null (no terminal open, no provider, network unusable). */

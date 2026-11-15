@@ -47,8 +47,13 @@ final class Ae2TerminalProvider implements NetworkTerminals.Provider {
         return container instanceof ContainerCraftingTerm;
     }
 
-    @Override
-    public NetworkTerminals.View view(EntityPlayer player) {
+    /**
+     * The player's open terminal when its network is reachable right now, else null: powered (both
+     * sides; synced to the client by GuiSync) and, on the server, a valid container with a cell
+     * inventory, power source and action source. Shared by {@link #usable} and {@link #view} so the
+     * two can never disagree.
+     */
+    private static ContainerCraftingTerm reachable(EntityPlayer player) {
         if (!(player.openContainer instanceof ContainerCraftingTerm)) {
             return null;
         }
@@ -56,18 +61,31 @@ final class Ae2TerminalProvider implements NetworkTerminals.Provider {
         if (!terminal.isPowered()) {
             return null;
         }
+        if (!player.world.isRemote
+                && (!terminal.isValidContainer() || terminal.getCellInventory() == null
+                        || terminal.getPowerSource() == null || terminal.getActionSource() == null)) {
+            return null;
+        }
+        return terminal;
+    }
+
+    @Override
+    public boolean usable(EntityPlayer player) {
+        return reachable(player) != null;
+    }
+
+    @Override
+    public NetworkTerminals.View view(EntityPlayer player) {
+        ContainerCraftingTerm terminal = reachable(player);
+        if (terminal == null) {
+            return null;
+        }
         if (player.world.isRemote) {
             return Ae2ClientRepo.view(terminal);
-        }
-        if (!terminal.isValidContainer()) {
-            return null;
         }
         IMEInventoryHandler<IAEItemStack> cell = terminal.getCellInventory();
         IEnergySource energy = terminal.getPowerSource();
         IActionSource source = terminal.getActionSource();
-        if (cell == null || energy == null || source == null) {
-            return null;
-        }
         return new Ae2NetworkView(channel(), cell, energy, source);
     }
 

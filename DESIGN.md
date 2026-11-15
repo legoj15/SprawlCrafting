@@ -318,8 +318,12 @@ Design points specific to it:
   grid placer and final-step hand-off refuse at the terminal (the last craft lands in the
   inventory). JEI: direct recipes keep AE2's own "+", deferred go to the engine, unsolvable
   to the gather screen; a server without the network capability (hello capability byte)
-  gets AE2's handler for everything. Closing the terminal pauses a network-started job
-  ("open station"). Wireless crafting terminals are out (different container families).
+  gets AE2's handler for everything. A job that uses the network (planned with it, or having
+  drawn from it) pauses ("open station") when a later step needs network items while the
+  terminal is closed or unpowered; steps that can run from the inventory keep running. A
+  chest-dependent and a network-dependent job are tracked separately, so one source being
+  visible never cancels a job waiting on the other. Wireless crafting terminals are out
+  (different container families).
 - **One deliberate cosmetic cut:** the recipe book's variant-overlay ("alternates") bubble
   isn't given the yellow deferred styling — a fragile SRG-named inner-class hook for a
   rarely-seen bit of UI.

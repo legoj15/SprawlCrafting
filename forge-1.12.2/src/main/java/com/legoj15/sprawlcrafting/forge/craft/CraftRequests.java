@@ -79,11 +79,13 @@ public final class CraftRequests {
     private static StartOutcome finish(EntityPlayerMP player, PlanOutcome outcome) {
         if (outcome instanceof PlanOutcome.Planned) {
             CraftJob job = ((PlanOutcome.Planned) outcome).job();
-            // Remember whether a station chest was in the pool at plan time, so a later step that
-            // can't be satisfied while the station is closed waits for it to reopen instead of
-            // cancelling on a chest item it simply can't currently see. A network crafting terminal
-            // (AE2) is the same case: its network is material only while it is open.
-            job.setExternalDependent(ExternalSlots.present(player) || NetworkTerminals.isOpen(player));
+            // Remember what was in the pool at plan time, so a later step that can't be satisfied
+            // once that source is gone waits for it instead of cancelling on an item it simply can't
+            // currently see: a station chest (open station) and, separately, a network terminal's
+            // network (AE2; only a terminal whose network is reachable put anything in the plan).
+            // A job can also become dependent later (CraftQueueManager flags what a craft consumed).
+            job.setChestDependent(ExternalSlots.present(player));
+            job.setNetworkDependent(NetworkTerminals.usable(player));
             CraftQueueManager.start(player, job);
             return new StartOutcome.Started(job);
         }

@@ -1,6 +1,7 @@
 package com.legoj15.sprawlcrafting.forge.network;
 
 import com.legoj15.sprawlcrafting.forge.client.ServerPresence;
+import com.legoj15.sprawlcrafting.forge.craft.NetworkTerminals;
 
 import io.netty.buffer.ByteBuf;
 import net.minecraftforge.fml.common.network.simpleimpl.IMessage;
@@ -10,10 +11,12 @@ import net.minecraftforge.fml.relauncher.Side;
 import net.minecraftforge.fml.relauncher.SideOnly;
 
 /**
- * S2C, empty payload, on the v2 channel: "this server speaks SprawlCrafting v2." Sent once at
- * login so the client knows it may use server-backed paths (the {@link PlaceRecipeMessage} grid
- * fill) instead of their client-only fallbacks. The mod is deliberately joinable in every mixed
- * setup ({@code acceptableRemoteVersions="*"}), so capability can never be assumed: a vanilla or
+ * S2C on the v2 channel: "this server speaks SprawlCrafting v2", plus one optional trailing
+ * capability byte (see {@link #CAP_NETWORK_TERMINALS}; absent from a pre-capability server, which
+ * reads as no capabilities). Sent once at login so the client knows it may use server-backed paths
+ * (the {@link PlaceRecipeMessage} grid fill) instead of their client-only fallbacks. The mod is
+ * deliberately joinable in every mixed setup ({@code acceptableRemoteVersions="*"}), so capability
+ * can never be assumed: a vanilla or
  * pre-v2 server never sends this (client keeps the fallbacks), and a vanilla or pre-v2 client
  * receiving it drops the unknown-channel payload without harm — which is precisely why this lives
  * on its own channel (see the version-skew invariant on {@code SprawlNetwork}). The handler
@@ -33,9 +36,12 @@ public class ServerHelloMessage implements IMessage {
      * Optional trailing capability byte. Backward compatible both ways, verified against FML's
      * decoder ({@code FMLIndexedMessageToMessageCodec.decode} hands {@code fromBytes} a slice and
      * never checks for unread bytes): a pre-capability client ignores the extra byte, and a payload
-     * from a pre-capability server is empty, which reads as "no capabilities".
+     * from a pre-capability server is empty, which reads as "no capabilities". The server-side
+     * instance advertises what this install can actually do: the network bit is set only when a
+     * {@link NetworkTerminals} provider is registered (AE2 present). A received instance's value is
+     * replaced by {@link #fromBytes}.
      */
-    private int capabilities = CAP_NETWORK_TERMINALS;
+    private int capabilities = NetworkTerminals.hasProvider() ? CAP_NETWORK_TERMINALS : 0;
 
     @Override
     public void toBytes(ByteBuf buf) {
