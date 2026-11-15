@@ -87,8 +87,8 @@ public final class CraftJob {
     /**
      * Whether the job relies on a crafting station's storage (AE2 Crafting Terminal, see
      * {@link StationStorages}): set at start when the plan could not be made from the inventory alone
-     * ({@code CraftRequests}), and later the first time a craft actually draws from the station
-     * ({@code CraftQueueManager}), e.g. because the player moved items out of the inventory mid-job.
+     * ({@code CraftRequests}), and later the first time a craft actually draws from the station or
+     * stores overflow in it ({@code CraftQueueManager}), e.g. because the player moved items out of the inventory mid-job.
      * Such a job pauses instead of cancelling when an ingredient is missing while the station is
      * closed or unusable: the item may be in the storage the player can no longer reach. A job that
      * never needed the station keeps the plain cancel. (1.12.2's {@code CraftJob.externalDependent}.)

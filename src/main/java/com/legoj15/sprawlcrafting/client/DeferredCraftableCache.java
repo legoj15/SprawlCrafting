@@ -54,6 +54,7 @@ public final class DeferredCraftableCache {
         Minecraft minecraft = Minecraft.getInstance();
         LocalPlayer player = minecraft.player;
         if (player == null || minecraft.level == null) {
+            stationUsable = false;
             return Map.of();
         }
         AbstractContainerMenu menu = player.containerMenu;
@@ -173,6 +174,7 @@ public final class DeferredCraftableCache {
         sessionStation = null;
         stationMenu = null;
         stationCounts = Map.of();
+        stationUsable = false;
         deferredOnly.clear();
     }
 

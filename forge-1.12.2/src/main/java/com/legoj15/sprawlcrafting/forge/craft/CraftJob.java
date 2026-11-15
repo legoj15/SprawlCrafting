@@ -97,8 +97,9 @@ public final class CraftJob {
     private boolean chestDependent;
     /**
      * Same for an open network crafting terminal's network (AE2): planned with it in the pool, or a
-     * craft has since consumed from it. A job started with the terminal closed can still become
-     * dependent mid-job, the first time a craft draws network stock.
+     * craft has since consumed from it or stored overflow in it. A job started with the terminal
+     * closed can still become dependent mid-job, the first time a craft draws network stock or
+     * parks an item there.
      */
     private boolean networkDependent;
 

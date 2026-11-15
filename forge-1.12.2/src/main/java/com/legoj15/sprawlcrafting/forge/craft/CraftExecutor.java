@@ -72,7 +72,7 @@ public final class CraftExecutor {
         /**
          * {@code crafted} is a display copy of what was produced. {@code usedChest} / {@code usedNetwork}
          * say whether this craft actually consumed from a station's connected chest / a network
-         * terminal's network, so the job learns it depends on that source even if it was not visible
+         * terminal's network (or, for the network, stored overflow in it), so the job learns it depends on that source even if it was not visible
          * when the job started.
          */
         public static final class Success extends CraftResult {
@@ -890,9 +890,8 @@ public final class CraftExecutor {
      *
      * <p>With a network crafting terminal open, overflow goes into the network before anything is
      * dropped: the player is looking at that network, and an item on the floor beside a terminal is
-     * lost far more easily than one in storage.
+     * lost far more easily than one in storage. Returns whether the network took any of it.
      */
-    /** Returns whether the open terminal's network took any of the overflow. */
     static boolean insertIntoMainInventory(EntityPlayer player, ItemStack stack) {
         InventoryPlayer inventory = player.inventory;
         for (int i = 0; i < MAIN && !stack.isEmpty(); i++) {

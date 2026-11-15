@@ -55,7 +55,7 @@ public final class CraftExecutor {
     public sealed interface CraftResult {
         /**
          * {@code crafted} is a display copy of what was produced; {@code usedStation} is whether this craft
-         * drew any ingredient from an open crafting station's storage (see {@link StationStorages}).
+         * drew any ingredient from, or stored overflow in, an open crafting station's storage (see {@link StationStorages}).
          */
         record Success(ItemStack crafted, boolean usedStation) implements CraftResult {}
 
