@@ -307,6 +307,19 @@ Design points specific to it:
   ids are frozen.
 - **Chest sourcing.** Grid placement can also draw from a modded station's bound chest (e.g.
   a TConstruct Crafting Station), matching those stations' own JEI behavior.
+- **AE2 Crafting Terminal (issue #2).** Rule: every item a craft draws from must be visible
+  in the open screen. While an AE2 Crafting Terminal (`ContainerCraftingTerm` or a subclass;
+  rv6 and the UEL fork alike) is open, its ME network is material after the player's 36
+  slots: planning, the client highlight cache and execution count it through one core seam
+  (`craft/NetworkTerminals`, provider in `compat/ae2`, loaded only when AE2 is). The
+  terminal counts as an open 3x3 crafter but contributes no slot material (its output and
+  view-cell slots would be harvested otherwise). Network picks are extracted all-or-nothing
+  before a craft consumes anything; overflow that would drop goes into the network. The
+  grid placer and final-step hand-off refuse at the terminal (the last craft lands in the
+  inventory). JEI: direct recipes keep AE2's own "+", deferred go to the engine, unsolvable
+  to the gather screen; a server without the network capability (hello capability byte)
+  gets AE2's handler for everything. Closing the terminal pauses a network-started job
+  ("open station"). Wireless crafting terminals are out (different container families).
 - **One deliberate cosmetic cut:** the recipe book's variant-overlay ("alternates") bubble
   isn't given the yellow deferred styling — a fragile SRG-named inner-class hook for a
   rarely-seen bit of UI.

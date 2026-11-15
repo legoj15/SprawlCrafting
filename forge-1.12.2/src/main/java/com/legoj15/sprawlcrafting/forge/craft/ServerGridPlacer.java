@@ -93,6 +93,12 @@ public final class ServerGridPlacer {
      */
     public static boolean placeRecipe(EntityPlayerMP player, IRecipe recipe, boolean maxTransfer) {
         Container container = player.openContainer;
+        if (NetworkTerminals.isTerminal(container)) {
+            // An AE2 Crafting Terminal's direct "+" stays AE2's own (it fills from the network);
+            // this placer neither counts nor pulls network items. Grid.of would refuse anyway (the
+            // grid is an item handler, not an InventoryCrafting) — this makes the skip explicit.
+            return false;
+        }
         Grid grid = Grid.of(container);
         if (grid == null || !recipe.canFit(grid.width(), grid.height())) {
             return false;
@@ -145,6 +151,10 @@ public final class ServerGridPlacer {
             return HandOffResult.FALLBACK;
         }
         Container container = player.openContainer;
+        if (NetworkTerminals.isTerminal(container)) {
+            // No hand-off into a network terminal's grid (see CraftQueueManager.handOffCandidate).
+            return HandOffResult.FALLBACK;
+        }
         Grid grid = Grid.of(container);
         if (grid == null || !recipe.canFit(grid.width(), grid.height())
                 || !canReturnGridToInventory(player, grid)) {

@@ -79,7 +79,7 @@ public final class ExternalSlots {
         if (container == null) {
             return Collections.emptyList();
         }
-        boolean station = GridContext.isThreeByThreeCrafter(container);
+        boolean station = harvestsSideInventory(container);
         // A non-empty result slot means the grid currently holds a COMPLETE, takeable craft — a
         // recipe the server-side placer just staged (JEI "+", READY_IN_GRID hand-off) or the
         // player laid out by hand. That is deliberate arrangement, not loose material: excluding
@@ -100,6 +100,18 @@ public final class ExternalSlots {
         return slots == null ? Collections.<Slot>emptyList() : slots;
     }
 
+    /**
+     * Whether {@code container}'s non-player, non-grid slots are craft material: a recognised 3x3
+     * crafter that is NOT a network terminal. A terminal ({@link NetworkTerminals}, the AE2 Crafting
+     * Terminal) reads as a 3x3 crafter, but every one of its slots is AE2's: they are item-handler
+     * backed, so {@link #isExternal} would accept them all — including the crafting OUTPUT slot,
+     * where taking the stack performs a craft, and the view-cell configuration slots. Its material
+     * is the network itself, which only {@link NetworkTerminals#view} supplies.
+     */
+    private static boolean harvestsSideInventory(Container container) {
+        return GridContext.isThreeByThreeCrafter(container) && !NetworkTerminals.isTerminal(container);
+    }
+
     /** Whether the container's craft-result slot currently shows an output (grid matches a recipe). */
     private static boolean hasCompleteCraft(Container container) {
         for (Slot slot : container.inventorySlots) {
@@ -118,7 +130,7 @@ public final class ExternalSlots {
      */
     public static List<Slot> of(EntityPlayer player) {
         Container container = player.openContainer;
-        if (container == null || !GridContext.isThreeByThreeCrafter(container)) {
+        if (container == null || !harvestsSideInventory(container)) {
             return Collections.emptyList();
         }
         List<Slot> external = null;
@@ -136,7 +148,7 @@ public final class ExternalSlots {
     /** True if the player currently has a recognised station open that exposes a connected inventory. */
     public static boolean present(EntityPlayer player) {
         Container container = player.openContainer;
-        if (container == null || !GridContext.isThreeByThreeCrafter(container)) {
+        if (container == null || !harvestsSideInventory(container)) {
             return false;
         }
         for (Slot slot : container.inventorySlots) {

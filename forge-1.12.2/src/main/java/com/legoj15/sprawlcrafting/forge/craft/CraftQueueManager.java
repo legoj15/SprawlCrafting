@@ -182,8 +182,11 @@ public final class CraftQueueManager {
                 // A chest-dependent job whose station is currently closed can't see the connected
                 // inventory; the missing item may be sitting in it, so wait for the player to reopen
                 // the station rather than cancelling. (With the station open the chest IS visible, so a
-                // genuine shortfall — e.g. a hopper drained it — still cancels, as before.)
-                if (job.externalDependent() && !ExternalSlots.present(player)) {
+                // genuine shortfall — e.g. a hopper drained it — still cancels, as before.) A network
+                // crafting terminal (AE2) follows the same rule: closed, its network is invisible, so
+                // wait; open, the network was a source, so a miss is genuine and cancels.
+                if (job.externalDependent() && !ExternalSlots.present(player)
+                        && !NetworkTerminals.isOpen(player)) {
                     job.holdForRetry();
                     sync(player, job, CraftProgressMessage.State.PAUSED_STATION, ItemStack.EMPTY);
                     return;
@@ -223,6 +226,12 @@ public final class CraftQueueManager {
         if (!ClientCraftingView.capable(player.getUniqueID())) {
             return null;
         }
+        // A network crafting terminal (AE2) never gets the hand-off: its grid is AE2's item handler,
+        // not an InventoryCrafting the placer can verify, and AE2 refills it from the network as the
+        // result is taken. The final craft completes into the inventory instead.
+        if (NetworkTerminals.isOpen(player)) {
+            return null;
+        }
         IRecipe recipe = CraftingManager.getRecipe(job.currentStep().recipeId());
         if (recipe == null) {
             return null;
@@ -242,8 +251,9 @@ public final class CraftQueueManager {
      * Whether a 3x3 crafter is open this instant. Alongside a vanilla table in reach this makes a 3x3
      * step runnable: it covers a Tinkers' Construct Crafting Station, which {@link CraftingTableReach}
      * (it scans only for the vanilla table block) cannot see, so a chain started at a station no longer
-     * wedges forever on a base with no vanilla table. Cheap (a walk of the open container's slots), so
-     * the burst ticks between table scans use it as-is.
+     * wedges forever on a base with no vanilla table. An open AE2 Crafting Terminal counts too (a cable
+     * part, not a table block; {@link GridContext#isThreeByThreeCrafter}). Cheap (a walk of the open
+     * container's slots), so the burst ticks between table scans use it as-is.
      */
     private static boolean hasOpenCrafter(EntityPlayerMP player) {
         return GridContext.current(player) == GridContext.CRAFTING_TABLE;

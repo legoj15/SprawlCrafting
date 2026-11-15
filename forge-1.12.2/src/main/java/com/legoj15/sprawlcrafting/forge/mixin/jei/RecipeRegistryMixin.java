@@ -3,6 +3,7 @@ package com.legoj15.sprawlcrafting.forge.mixin.jei;
 import com.google.common.collect.ImmutableTable;
 import com.legoj15.sprawlcrafting.forge.compat.jei.DeferredHandlerRegistry;
 import com.legoj15.sprawlcrafting.forge.craft.GridContext;
+import com.legoj15.sprawlcrafting.forge.craft.NetworkTerminals;
 
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -40,6 +41,14 @@ public class RecipeRegistryMixin {
         if (rowKey instanceof Class && "minecraft.crafting".equals(columnKey)) {
             Class<?> containerClass = (Class<?>) rowKey;
             Object ourHandler = DeferredHandlerRegistry.findHandler(containerClass);
+            if (ourHandler instanceof DeferredHandlerRegistry.FrontHandler) {
+                // A front handler (AE2 Crafting Terminal) delegates to whatever JEI's own table holds
+                // for this exact class — AE2's handler — so pass it over on every lookup. It is never
+                // in that table itself, so this can never hand it back to itself.
+                Object original = table.get(rowKey, columnKey);
+                ((DeferredHandlerRegistry.FrontHandler) ourHandler)
+                        .setOriginal(original == ourHandler ? null : original);
+            }
             if (ourHandler == null) {
                 ourHandler = sprawlcrafting$structuralFallback(containerClass);
             }
@@ -72,8 +81,12 @@ public class RecipeRegistryMixin {
             return null;
         }
         Container open = player.openContainer;
+        // A network crafting terminal (AE2) reads as a 3x3 crafter but is never handed the generic
+        // fallback: it has its own front handler, and the generic one would try to place into a grid
+        // that is not an InventoryCrafting. Without that registration it keeps its mod's own handler.
         if (open != null && open.getClass() == containerClass
-                && GridContext.isThreeByThreeCrafter(open)) {
+                && GridContext.isThreeByThreeCrafter(open)
+                && !NetworkTerminals.isTerminal(open)) {
             return fallback;
         }
         return null;

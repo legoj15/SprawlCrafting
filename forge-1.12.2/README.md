@@ -22,6 +22,9 @@ runs in `../solver-core` on a Java 8 runtime. The runtime has been **playtested 
   station counts), `ServerGridPlacer` (atomic
   vanilla-style placement for the JEI "+" and the final-step grid hand-off), `ExternalSlots`
   (sources a modded station's bound chest alongside the player inventory).
+- **Applied Energistics 2 Crafting Terminal** (`forge.compat.ae2`, optional): while one is open,
+  the ME network it shows is crafting material too, on original AE2 rv6 and the AE2 Unofficial
+  Extended Life fork alike.
 - **Item identity is `(Item, metadata)`** (`ItemKey`), not `Item` — 1.12.2 packs distinct
   craftables into one `Item` via metadata (all six planks are `minecraft:planks`).
 - **Triggers:**
@@ -108,6 +111,7 @@ older Gradle and is no longer updated (last release 2023).
 | Forge            | 14.23.5.2847 (recommended; RFG pulls it for 1.12.2) |
 | MCP mappings     | `stable_39`                                    |
 | JEI              | `mezz.jei:jei_1.12.2:4.16.1.1013` (`compileOnly` — soft dep) |
+| AE2              | AE2-UEL v0.56.7 via CurseMaven (`compileOnly` — soft dep; also runs on rv6) |
 | Mixin loader     | `zone.rong:mixinbooter:11.0` (ships the Mixin runtime) |
 | Mixin AP         | `org.spongepowered:mixin:0.8.5:processor` (refmap generation) |
 
@@ -127,6 +131,7 @@ Run the wrapper on **JDK 25** (`JAVA_HOME` must point at a 25.x JDK; the machine
 ./gradlew setupDecompWorkspace   # one-time: decompile/deobf the 1.12.2 client (~2 min, large download)
 ./gradlew build                  # compile the mod (+ the solver library) and reobf the jar
 ./gradlew runClient              # launch a dev client with the mod
+./gradlew runClient -Psc.ae2=<path to an AE2 1.12.2 jar>   # same, with that AE2 loaded
 ```
 
 `./gradlew tasks` works without any decompile and is enough to confirm the build configures.

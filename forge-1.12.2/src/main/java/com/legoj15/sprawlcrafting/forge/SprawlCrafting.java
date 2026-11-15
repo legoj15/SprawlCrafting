@@ -3,6 +3,7 @@ package com.legoj15.sprawlcrafting.forge;
 import com.legoj15.sprawlcrafting.forge.craft.CraftQueueManager;
 import com.legoj15.sprawlcrafting.forge.network.SprawlNetwork;
 
+import net.minecraftforge.fml.common.Loader;
 import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.fml.common.SidedProxy;
 import net.minecraftforge.fml.common.event.FMLPreInitializationEvent;
@@ -52,6 +53,12 @@ public class SprawlCrafting {
         logger = event.getModLog();
         SprawlNetwork.initCommon();
         proxy.preInit();
+        // AE2 is optional: compat.ae2 is the only code naming an appeng type, so it is touched only
+        // once FML confirms the mod is present (rv6 and the UEL fork share this modid).
+        if (Loader.isModLoaded("appliedenergistics2")) {
+            com.legoj15.sprawlcrafting.forge.compat.ae2.Ae2Compat.init();
+            logger.info("{}: AE2 Crafting Terminal support enabled.", MOD_NAME);
+        }
         logger.info("{} {} loaded on Minecraft 1.12.2 (Forge).", MOD_NAME, BuildInfo.VERSION);
     }
 

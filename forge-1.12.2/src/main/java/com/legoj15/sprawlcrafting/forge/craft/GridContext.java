@@ -72,6 +72,11 @@ public enum GridContext {
      * the rare crafter that uses a different grid inventory. False for the 2x2 player inventory grid
      * and for non-crafting menus (a plain chest has no {@code InventoryCrafting}, so it is never
      * mistaken for a crafter — which is what gates {@link ExternalSlots} chest harvesting safely).
+     *
+     * <p>A network crafting terminal ({@link NetworkTerminals}, the AE2 Crafting Terminal) is a 3x3
+     * crafter too, although its grid is an item-handler, not an {@code InventoryCrafting}: it is a
+     * cable part, not a table block, so treating it as an open crafter is what lets a 3x3 step run
+     * while it is open. {@link ExternalSlots} explicitly refuses to harvest its slots.
      */
     public static boolean isThreeByThreeCrafter(Container container) {
         if (container == null) {
@@ -81,6 +86,9 @@ public enum GridContext {
             return true;
         }
         if (hasThreeByThreeMatrix(container)) {
+            return true;
+        }
+        if (NetworkTerminals.isTerminal(container)) {
             return true;
         }
         return hasWhitelistedClass(container);

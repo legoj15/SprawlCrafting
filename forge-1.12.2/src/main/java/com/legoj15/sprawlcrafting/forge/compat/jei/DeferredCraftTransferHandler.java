@@ -15,6 +15,7 @@ import com.legoj15.sprawlcrafting.forge.mixin.jei.RecipeLayoutAccessor;
 import com.legoj15.sprawlcrafting.forge.craft.CraftPlanner;
 import com.legoj15.sprawlcrafting.forge.craft.GridContext;
 import com.legoj15.sprawlcrafting.forge.craft.ItemKey;
+import com.legoj15.sprawlcrafting.forge.craft.NetworkTerminals;
 import com.legoj15.sprawlcrafting.forge.network.SprawlNetwork;
 
 import mezz.jei.api.gui.IGuiIngredient;
@@ -205,6 +206,10 @@ public class DeferredCraftTransferHandler<C extends Container> implements IRecip
         for (Slot slot : ExternalSlots.materialSlots(player)) {
             accumulate(pool, slot.getStack());
         }
+        // An open AE2 Crafting Terminal's network is part of the solver's pool, so it is part of this one.
+        for (ItemStack stack : NetworkTerminals.stacks(player)) {
+            accumulate(pool, stack);
+        }
         List<Integer> outOfStock = new ArrayList<Integer>();
         List<Integer> unobtainable = new ArrayList<Integer>();
         for (int jeiSlot = 1; jeiSlot <= 9; jeiSlot++) {
@@ -253,7 +258,8 @@ public class DeferredCraftTransferHandler<C extends Container> implements IRecip
         }
         ItemKey key = ItemKey.of(stack);
         Integer current = pool.get(key);
-        pool.put(key, Integer.valueOf((current == null ? 0 : current.intValue()) + stack.getCount()));
+        pool.put(key, Integer.valueOf(NetworkTerminals.saturatedAdd(
+                current == null ? 0 : current.intValue(), stack.getCount())));
     }
 
     /**
@@ -457,7 +463,7 @@ public class DeferredCraftTransferHandler<C extends Container> implements IRecip
     }
 
     /** The crafting category's output is GUI ingredient slot 0; fall back to the first output slot. */
-    private static ItemStack outputStack(IRecipeLayout layout) {
+    static ItemStack outputStack(IRecipeLayout layout) {
         Map<Integer, ? extends IGuiIngredient<ItemStack>> ingredients =
                 layout.getItemStacks().getGuiIngredients();
         IGuiIngredient<ItemStack> output = ingredients.get(Integer.valueOf(0));
@@ -512,7 +518,7 @@ public class DeferredCraftTransferHandler<C extends Container> implements IRecip
      * items JEI is displaying. Returns null if no match is found (the caller falls back to
      * result-based resolution).
      */
-    private static IRecipe findRecipe(IRecipeLayout layout, ItemStack result) {
+    static IRecipe findRecipe(IRecipeLayout layout, ItemStack result) {
         IRecipe exact = recipeFromLayout(layout);
         if (exact != null) {
             return exact;
