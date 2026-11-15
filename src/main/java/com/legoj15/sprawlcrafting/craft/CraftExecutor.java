@@ -239,8 +239,8 @@ public final class CraftExecutor {
 
     /**
      * Hands the final craft off to the crafting grid the player has open, instead of
-     * auto-crafting it: lays out this recipe's ingredients (already real items in the
-     * inventory by this point) so vanilla computes the result for the player to grab —
+     * auto-crafting it: lays out this recipe's ingredients (from the inventory, plus an open
+     * station's storage for what it lacks) so vanilla computes the result for the player to grab —
      * a genuine, takeable craft rather than a faked result.
      *
      * <p>For a vanilla menu this drives vanilla's own recipe-book auto-fill ({@code handlePlacement}

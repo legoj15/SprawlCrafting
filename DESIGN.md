@@ -416,10 +416,8 @@ anywhere, and the last craft is handed to the upgrade's grid.
   identical instance of that Core handler. Direct transfers are therefore exactly the mods' own (their packet,
   their rules); a user-facing "missing items" error becomes the yellow / orange state through `DeferredTransfers`, the same decision the vanilla table
   handler makes. A menu with no crafting upgrade gets the mod's internal error back, passed through.
-- **Source of ingredients.** Planning and execution read only the player's 36 main slots, as ever. The mods'
-  direct JEI transfer also draws from the open storage's contents, so a recipe whose items sit in the chest
-  transfers directly, while a deferred craft does not look in the chest (the same "every source item
-  visible in the open screen" question as issue #2, which is on hold).
+- **Source of ingredients.** The mods' direct JEI transfer draws from the open storage's contents, and since
+  #33 so does a deferred craft (see "Ingredient sourcing" below).
 - **Verification.** In-game on `1.21.1-neoforge` (Storage barrel and Backpack: yellow button, direct transfer
   untouched, gather list, 3×3 step with no table in reach and the pause when the screen is closed, hand-off
   into the grid, inventory fallback with the tab closed, no Sophisticated on the runtime) and `26.1.2-neoforge`
@@ -445,8 +443,9 @@ anywhere, and the last craft is handed to the upgrade's grid.
   station makes `GridContext.current` claim a 3×3. `isStationMenu` stays false: the upgrade is a
   `CraftingGrids` grid with the normal hand-off and its own JEI handler. Draws and inserts go slot by
   slot, because Core's whole-handler extract asks the slot tracker and `ISlotTracker.Noop` returns
-  nothing. The final-grid hand-off lays out from the inventory only: when the final ingredients sit in
-  the storage it falls back to auto-crafting (drawing from the storage). Draws loop per slot (one
+  nothing. The final-grid hand-off draws from the storage too (since #27's station-aware
+  `placeFromLedger`): inventory first, then the storage for what it lacks, all-or-nothing with give-back on
+  failure, as for the AE2 terminal. Draws loop per slot (one
   1.20.1/1.21.1 `extractItem` call yields at most a vanilla stack, though a stack-upgraded slot holds
   more), and blocked slots (`isSlotAccessible`) neither count nor give. Overflow offered to the storage
   obeys its upgrades: a Void upgrade set to void overflow of that item voids it, as it would a
