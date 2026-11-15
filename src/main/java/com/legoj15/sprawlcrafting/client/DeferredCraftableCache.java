@@ -39,6 +39,7 @@ public final class DeferredCraftableCache {
     private static AbstractContainerMenu stationMenu;
     private static long stationTick = Long.MIN_VALUE;
     private static Map<Item, Long> stationCounts = Map.of();
+    private static boolean stationUsable;
 
     /**
      * The plain-item counts of the crafting station the player has open (an AE2 Crafting Terminal's
@@ -59,6 +60,7 @@ public final class DeferredCraftableCache {
         long tick = minecraft.level.getGameTime();
         if (menu != stationMenu || tick != stationTick) {
             Map<Item, Long> counts = StationStorages.clientCounts(menu);
+            stationUsable = counts != null;
             Map<Item, Long> next = counts == null ? Map.of() : counts;
             if (!next.equals(stationCounts)) {
                 stationCounts = next;
@@ -67,6 +69,15 @@ public final class DeferredCraftableCache {
             stationTick = tick;
         }
         return stationCounts;
+    }
+
+    /**
+     * Whether the open menu is a usable crafting station (an offline AE2 terminal is not), from the same
+     * once-per-tick cache as {@link #stationCounts()}: recipe-viewer handlers ask this per evaluation.
+     */
+    public static boolean stationUsable() {
+        stationCounts();
+        return stationUsable;
     }
 
     //? if >=1.21.11 {

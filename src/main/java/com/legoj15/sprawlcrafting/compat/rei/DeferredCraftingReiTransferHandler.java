@@ -51,7 +51,7 @@ public class DeferredCraftingReiTransferHandler implements TransferHandler {
             grid = GridContext.CRAFTING_TABLE;
         } else if (context.getMenu() instanceof InventoryMenu) {
             grid = GridContext.INVENTORY;
-        } else if (StationStorages.clientCounts(context.getMenu()) != null) {
+        } else if (StationStorages.isStationMenu(context.getMenu()) && DeferredCraftableCache.stationUsable()) {
             // A crafting station (AE2 Crafting Terminal): a 3×3 grid whose storage counts as material.
             // Only the yellow (deferred) and orange (gather) cases are ours; a direct craft returns
             // NotApplicable below, so the station mod's own handler (AE2's UseCraftingRecipeTransfer,
