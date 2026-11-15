@@ -27,10 +27,10 @@ public final class DeferredCraftSync {
 
     /**
      * Debounce key per player: a hash of (open-menu identity, grid, main-inventory contents,
-     * RecipeManager identity). Recompute only when one of those changes — opening/closing a
-     * grid, gaining/losing/moving an item, or a datapack reload (which swaps the server's
-     * RecipeManager and reassigns every RecipeDisplayId, so the client's synced set must be
-     * replaced) — not every tick. The inventory is hashed by contents, not via
+     * open-station storage counts, RecipeManager identity). Recompute only when one of those
+     * changes — opening/closing a grid, gaining/losing/moving an item, or a datapack reload (which
+     * swaps the server's RecipeManager and reassigns every RecipeDisplayId, so the client's synced
+     * set must be replaced) — not every tick. The inventory is hashed by contents, not via
      * {@code getTimesChanged()}: that counter is not bumped by item pickup / {@code /give}
      * on the server (see {@link #maybeSync}), so keying on it would miss gathered materials.
      */
@@ -74,6 +74,11 @@ public final class DeferredCraftSync {
         if (ClientCraftingView.open(player) == null) {
             return;
         }
+        // The open station's storage (issue #2, the AE2 terminal; #33, a Sophisticated screen with its
+        // crafting upgrade) joins the pool the classification plans against — the same fold the 1.21.1
+        // client's local solve makes (DeferredCraftableCache.stationCounts).
+        StationStorage station = StationStorages.open(player);
+        Map<net.minecraft.world.item.Item, Long> stationCounts = station == null ? Map.of() : station.counts();
         GridContext grid = CraftingGrids.isFullGrid(openGrid) ? GridContext.CRAFTING_TABLE : GridContext.INVENTORY;
         // /reload swaps MinecraftServer.resources (a fresh RecipeManager instance) and
         // reallocates all display ids, so the manager's identity must be part of the key.
@@ -90,9 +95,10 @@ public final class DeferredCraftSync {
         key = (key ^ grid.ordinal()) * 1099511628211L;
         key = (key ^ System.identityHashCode(recipes)) * 1099511628211L;
         key = (key ^ inventorySignature(player.getInventory())) * 1099511628211L;
+        key = (key ^ stationCounts.hashCode()) * 1099511628211L;
         Long prev = LAST_SYNC.get(player.getUUID());
         if (prev != null && prev == key) {
-            return; // (menu, grid, inventory contents, recipes) unchanged since the last push
+            return; // (menu, grid, inventory contents, station storage, recipes) unchanged since the last push
         }
         // Coalesce bursts (see SYNC_THROTTLE_TICKS). The key still differs from prev, so a change
         // deferred here re-fires on a later tick once the window passes — never dropped.
@@ -110,10 +116,8 @@ public final class DeferredCraftSync {
         if (!Services.PLATFORM.canReceive(player, DeferredCraftableSyncPayload.TYPE.id())) {
             return; // vanilla/modless client — record nothing, so we retry if it can ever receive
         }
-        // Station storage (issue #2) would join here: pass StationStorages.open(player).counts() as the
-        // session's station map, and hash those counts into the maybeSync debounce key.
         CraftPlanner.Session session = CraftPlanner.session(recipes, player.registryAccess(),
-                player.getInventory(), grid);
+                player.getInventory(), grid, stationCounts);
         java.util.Set<Integer> displayIds = new java.util.HashSet<>();
         java.util.Set<net.minecraft.resources.ResourceLocation> recipeIds = new java.util.HashSet<>();
         for (net.minecraft.world.item.crafting.RecipeHolder<net.minecraft.world.item.crafting.CraftingRecipe> holder
@@ -193,7 +197,13 @@ public final class DeferredCraftSync {
             // click, and so the preview plan below reflects the freed grid items.
             CraftExecutor.clearOpenCraftingGrid(player);
             GridContext grid = GridContext.current(player);
-            if (CraftPlanner.plan(player, info.parent(), grid) instanceof CraftPlanner.PlanOutcome.Planned planned) {
+            // Planned as CraftRequests will start it: the inventory first, then with the open station's storage.
+            CraftPlanner.PlanOutcome outcome = CraftPlanner.plan(player, info.parent(), grid);
+            StationStorage station = outcome instanceof CraftPlanner.PlanOutcome.Planned ? null : StationStorages.open(player);
+            if (station != null) {
+                outcome = CraftPlanner.plan(player, info.parent(), grid, station.counts());
+            }
+            if (outcome instanceof CraftPlanner.PlanOutcome.Planned planned) {
                 lines = CraftPreview.lines(planned.job(), recipes, player.registryAccess());
             }
         }

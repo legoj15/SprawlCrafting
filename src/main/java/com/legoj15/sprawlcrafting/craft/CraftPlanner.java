@@ -94,14 +94,17 @@ public final class CraftPlanner {
      * The raw materials the player still needs to make {@code targetHolder} (see
      * {@link Session#shortfall}). The gather list is informational, so callers pass
      * {@link GridContext#CRAFTING_TABLE} to cost the full 3×3 chain regardless of which grid the
-     * query came from. Returns {@link ShortfallView#unavailable()} for unplannable recipes.
+     * query came from. The open station's storage counts as material already gathered (issue #33),
+     * as in {@link #plan(ServerPlayer, RecipeHolder, GridContext, Map)}. Returns
+     * {@link ShortfallView#unavailable()} for unplannable recipes.
      */
     public static ShortfallView shortfall(ServerPlayer player, RecipeHolder<?> targetHolder, GridContext grid) {
         if (McRecipe.of(targetHolder, player.registryAccess()) == null) {
             return ShortfallView.unavailable();
         }
+        StationStorage station = StationStorages.open(player);
         return session(player.level().getServer().getRecipeManager(), player.registryAccess(),
-                player.getInventory(), grid).shortfall(targetHolder);
+                player.getInventory(), grid, station == null ? Map.of() : station.counts()).shortfall(targetHolder);
     }
 
     /**
