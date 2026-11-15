@@ -1,7 +1,6 @@
 # JitPack publishes ONLY the solver library (solver-core/, com.legoj15:solver), not the mod builds.
-# UNVERIFIED: no tag has been built on jitpack.io yet, so the coordinates JitPack serves it under
-# (JitPack normally rewrites the group to com.github.<user>...) are unconfirmed; read the tag's build
-# log on jitpack.io before pointing a consumer at it. See docs/solver-library.md.
+# Verified 2026-11-14: JitPack serves it as com.github.legoj15:SprawlCrafting:<tag-or-commit>, not
+# com.legoj15:solver. See docs/solver-library.md before nesting it from JitPack.
 jdk:
   - openjdk21
 install:

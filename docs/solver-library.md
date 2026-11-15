@@ -35,9 +35,10 @@ release gate: the root `fullTestSuite` task depends on the included build's `:ch
 `release/Invoke-Release.ps1`'s Test stage runs `./gradlew -p solver-core build` first.
 
 JitPack: `jitpack.yml` at the repo root publishes just this library (`-p solver-core publishToMavenLocal`
-on JDK 21). UNVERIFIED: no tag has been built on jitpack.io yet. JitPack normally serves artifacts
-under its own `com.github.<user>...` group, so the exact coordinates are unknown until a tag's build
-log on jitpack.io shows them; check that before pointing a consumer at it.
+on JDK 21). Verified 2026-11-14 on commit 610f536: the build finds `com.legoj15:solver:1.0.1` but JitPack
+serves it RENAMED as `com.github.legoj15:SprawlCrafting:<tag-or-commit>` (POM, jar and Gradle module all
+carry that group/artifact; the jar holds `com/legoj15/solver/*`). Any tag or commit hash works as the
+version; JitPack builds on first request.
 
 ## How the SprawlCrafting builds consume it
 
@@ -115,9 +116,10 @@ a composite build. Then, per loader:
   `jarJar.configure("jarJar"("com.legoj15:solver:1.0.1")!!) { setRange("[1.0.1,2.0.0)") }`.
 - Never shade it on a JarJar-era loader (see above). Use the same group/artifact (`com.legoj15:solver`)
   in jar-in-jar metadata as SprawlCrafting does, or the selector sees two different libraries and
-  loads both (a split package again). A JitPack build would likely carry a `com.github...` group
-  (unverified, see above), so prefer the composite or Maven Local coordinates for anything that ships
-  alongside SprawlCrafting.
+  loads both (a split package again). A JitPack build carries `com.github.legoj15:SprawlCrafting` (verified,
+  see above), so a consumer resolving from JitPack must not nest it under those coordinates: either
+  use the composite or Maven Local coordinates, or map JitPack's module onto `com.legoj15:solver`
+  with a Gradle `dependencySubstitution`/capability rule before jar-in-jar metadata is generated.
 
 ## Version-bump rule
 

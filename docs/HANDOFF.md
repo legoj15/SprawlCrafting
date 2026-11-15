@@ -1,7 +1,11 @@
 # Handoff (2026-11-09, end of session)
 
+Update 2026-11-14: the branch below is merged to main and main is pushed (610f536). JitPack build of
+that commit verified (coordinates in docs/solver-library.md). MegaBlockBot#2 closed. Item 2 below is done
+apart from `done`-ing the fixed issues.
+
 Branch `claude/sprawlcrafting-bot-mod-prep-e681d0` (worktree `version-26-3-testing-26ac36`), on top of
-main `e39879c`. Local only, NOT pushed, NOT merged to main.
+main `e39879c`.
 
 ## Done
 - **Solver library (MegaBlockBot#2):** `solver-core/` is now the standalone plain-Java library
