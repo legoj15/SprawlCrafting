@@ -300,7 +300,10 @@ terminal, no adjacent storage. Shipped on `1.21.1-neoforge` (AE2 19.x), `1.20.1-
 - **Execution.** Network items are drawn all-or-nothing per craft (`StationDraw`, unit-tested):
   a short or throwing draw gives everything back (network, then inventory, then feet). Results
   and remainders go to the inventory; overflow goes into the network before the feet. The
-  terminal counts as a 3x3 grid while usable; the final-step grid hand-off is off there.
+  terminal counts as a 3x3 grid while usable: its grid is a registered `CraftingGrids` provider
+  for as long as the terminal is usable, so the final-step hand-off lays the last craft into it
+  (through `Slot.set`; the terminal has no recipe book), drawing from the network what the
+  inventory lacks, and job start clears the terminal grid into the inventory like any grid.
 - **Lifecycle.** A job is station-dependent when its plan needed the network, or once a craft
   drew from it or stored overflow in it. Such a job pauses (`PAUSED_STATION`, "Paused — open
   station") when the station is closed or unusable; a genuine shortfall while usable cancels.
@@ -349,7 +352,9 @@ Whether the client can compute "is this yellow?" itself depends on the version:
   is laid into the open grid as a real, takeable result — matching what vanilla "+"/
   recipe-book placement would do — rather than auto-inserting to the inventory. A crafting-upgrade
   grid gets the same hand-off while its tab is open (laid out through `Slot.set`, since no
-  `handlePlacement` exists there); behind a closed tab the last craft goes to the inventory.
+  `handlePlacement` exists there); behind a closed tab the last craft goes to the inventory. An
+  AE2 Crafting Terminal's grid gets it too while the terminal is usable, drawing from its network
+  what the inventory lacks (see "Crafting stations").
 - **Config.** `sound_effects`, `jei_integration`, `rei_integration`, `needs_system`, all
   defaulting on; a client config file plus an in-game screen (Mod Menu on Fabric, the
   mod-config screen on NeoForge, Forge's mod-list Config button on 1.12.2 — which drops the

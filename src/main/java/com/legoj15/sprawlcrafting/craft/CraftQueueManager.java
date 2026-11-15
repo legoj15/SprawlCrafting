@@ -230,13 +230,11 @@ public final class CraftQueueManager {
      * server's view of the open menu ({@link GridContext#current}), be on screen
      * ({@link CraftingGrids.Grid#visible}: a crafting upgrade behind a closed tab is not), and be
      * large enough for the step (a full-grid recipe needs a 3×3 table, not the 2×2 inventory grid).
+     * That includes a usable crafting station's own grid (the AE2 Crafting Terminal's, a registered
+     * {@link CraftingGrids.Provider} while the terminal is usable): the executor lays the recipe out
+     * through {@code Slot.set}, so no vanilla slot layout is assumed.
      */
     private static boolean canHandOff(ServerPlayer player, CraftStep step) {
-        // A crafting station's grid (AE2 Crafting Terminal) does not have the vanilla slot layout the
-        // hand-off assumes (0 = result, 1..9 = grid), so its final craft completes into the inventory.
-        if (StationStorages.isStationMenu(player.containerMenu)) {
-            return false;
-        }
         GridContext open = ClientCraftingView.open(player);
         if (open == null || GridContext.current(player) != open) {
             return false;

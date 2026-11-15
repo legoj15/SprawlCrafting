@@ -402,8 +402,19 @@ public final class CraftExecutor {
 
     /**
      * Lays one craft into the open grid from {@link #assign}'s choice of slots, ledger-admitted
-     * stacks included, after returning whatever the grid held. Puts everything back and returns
-     * {@link FillOutcome.Fallback} unless the result slot then shows {@code expected}.
+     * stacks included, after returning whatever the grid held. With a usable crafting station open
+     * ({@link StationStorages} — its own grid, the AE2 Crafting Terminal), the assignment follows
+     * {@link #craftOnce}'s inventory-first rule (there is no {@code stationPlanned} here: it is that
+     * rule for a job not planned on the station, and harmless for one that was): the inventory alone,
+     * and only when that falls short the inventory plus the station, whose share is drawn
+     * all-or-nothing before anything is placed ({@link #drawFromStation}; a short draw has been given
+     * back and nothing was placed).
+     *
+     * <p>Puts everything back and returns {@link FillOutcome.Fallback} unless the result slot then
+     * shows {@code expected}. The station's share goes back first ({@link #giveBack}: station, else
+     * inventory, else feet); the rest goes to the main inventory, all of it or none
+     * ({@link #returnGridToInventory} semantics), so inventory items that do not fit stay in the grid —
+     * visible, never voided or duplicated.
      */
     private static FillOutcome placeFromLedger(ServerPlayer player,
                                                net.minecraft.world.inventory.AbstractContainerMenu menu,
@@ -417,26 +428,66 @@ public final class CraftExecutor {
         // inventory underneath would leave the result slot stale).
         List<Slot> inputs = grid.inputs();
         Inventory inventory = player.getInventory();
+        // Phase 1: match every cell to an inventory slot without mutating; an open station joins the
+        // pool only for what the inventory lacks, exactly as craftOnce assigns a non-station-planned job.
+        StationStorage station = StationStorages.open(player);
         Assignment assignment = assign(inventory, cells, ledger);
+        if (assignment.missing() != null && station != null) {
+            assignment = assign(inventory, cells, ledger, station);
+        }
         if (assignment.missing() != null) {
             return new FillOutcome.Fallback();
         }
+        // Phase 2a: the station's share first, all or nothing. A short draw was given back (station,
+        // else inventory, else feet) and nothing was placed, so a plain Fallback loses nothing.
+        Map<Item, Integer> stationTakes = assignment.stationTakes();
+        if (!stationTakes.isEmpty() && drawFromStation(player, station, stationTakes) != null) {
+            return new FillOutcome.Fallback();
+        }
+        // Phase 2b: place — every cell exactly one item. The inventory's stacks are shrunk as always;
+        // the station's share (drawn above, held by nothing since) goes straight into its cells.
         int[] slots = assignment.slots();
-        for (int cell = 0; cell < slots.length; cell++) {
-            if (slots[cell] < 0) {
-                continue;
+        Item[] stationItems = assignment.stationItems();
+        int cell = 0;
+        try {
+            for (; cell < slots.length; cell++) {
+                ItemStack one;
+                if (slots[cell] == STATION_CELL) {
+                    one = new ItemStack(stationItems[cell]);
+                } else if (slots[cell] >= 0) {
+                    ItemStack stack = inventory.getItem(slots[cell]);
+                    one = stack.copyWithCount(1);
+                    stack.shrink(1);
+                    if (stack.isEmpty()) {
+                        inventory.setItem(slots[cell], ItemStack.EMPTY);
+                    }
+                } else {
+                    continue; // a blank cell
+                }
+                inputs.get(cell).set(one); // can run mod recipe code (the menu recomputes its result)
             }
-            ItemStack stack = inventory.getItem(slots[cell]);
-            ItemStack one = stack.copyWithCount(1);
-            stack.shrink(1);
-            if (stack.isEmpty()) {
-                inventory.setItem(slots[cell], ItemStack.EMPTY);
+        } catch (Throwable t) {
+            // As in craftOnce: the drawn share is real. Cells before the failing one hold their items
+            // (visible in the grid); the station's share for the failing cell and every later one is
+            // still in hand, so it goes back (station, else inventory, else feet) before rethrowing.
+            for (int rest = cell; rest < slots.length; rest++) {
+                if (slots[rest] == STATION_CELL) {
+                    giveBack(player, station, stationItems[rest], 1);
+                }
             }
-            inputs.get(cell).set(one);
+            throw t;
         }
         inventory.setChanged();
         ItemStack result = grid.result().getItem();
         if (result.isEmpty() || !ItemStack.isSameItem(result, expected)) {
+            // The station's share goes back where it came from first (station, else inventory, else feet),
+            // so it never strands in the grid where the fallback auto-craft could not see it.
+            for (int c = 0; c < slots.length; c++) {
+                if (slots[c] == STATION_CELL) {
+                    inputs.get(c).set(ItemStack.EMPTY);
+                    giveBack(player, station, stationItems[c], 1);
+                }
+            }
             returnGridToInventory(player, menu, grid);
             menu.broadcastFullState();
             return new FillOutcome.Fallback();
@@ -577,6 +628,7 @@ public final class CraftExecutor {
     private static Assignment assign(Inventory inventory, List<Ingredient> ingredients, ProducedLedger<Item> ledger,
                                      StationStorage station) {
         int[] slots = new int[ingredients.size()];
+        Item[] stationItems = new Item[ingredients.size()];
         int[] reserved = new int[Inventory.INVENTORY_SIZE];
         LedgerTally<Item> tally = new LedgerTally<>();
         Map<Item, Integer> ledgerTakes = tally.refusedTakes();
@@ -614,13 +666,14 @@ public final class CraftExecutor {
             }
             if (fromStation != null) {
                 slots[n] = STATION_CELL;
+                stationItems[n] = fromStation;
                 if (ledger != null) {
                     tally.picked(fromStation, false);
                 }
                 continue;
             }
             if (slot < 0) {
-                return new Assignment(slots, tally, ingredient, pool == null ? Map.of() : pool.taken);
+                return new Assignment(slots, tally, ingredient, pool == null ? Map.of() : pool.taken, stationItems);
             }
             reserved[slot]++;
             slots[n] = slot;
@@ -629,7 +682,7 @@ public final class CraftExecutor {
                 tally.picked(stack.getItem(), !usableAsIngredient(stack));
             }
         }
-        return new Assignment(slots, tally, null, pool == null ? Map.of() : pool.taken);
+        return new Assignment(slots, tally, null, pool == null ? Map.of() : pool.taken, stationItems);
     }
 
     /**
@@ -678,10 +731,12 @@ public final class CraftExecutor {
 
     /**
      * {@code stationTakes}: plain items per kind the station supplies to this craft (cells marked
-     * {@link #STATION_CELL}), empty without a station.
+     * {@link #STATION_CELL}), empty without a station. {@code stationItems}: the item each of those
+     * cells gets (null elsewhere) — {@link #craftOnce} consumes by kind, but the grid hand-off places
+     * the station's share into its cells one by one.
      */
     private record Assignment(int[] slots, LedgerTally<Item> tally, Ingredient missing,
-                              Map<Item, Integer> stationTakes) {
+                              Map<Item, Integer> stationTakes, Item[] stationItems) {
         void chargeTo(ProducedLedger<Item> ledger) {
             tally.chargeTo(ledger);
         }

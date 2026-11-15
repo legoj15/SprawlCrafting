@@ -1,11 +1,13 @@
 package com.legoj15.sprawlcrafting.compat.ae2;
 
 import java.lang.reflect.Field;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
 import com.legoj15.sprawlcrafting.craft.CraftExecutor;
+import com.legoj15.sprawlcrafting.craft.CraftingGrids;
 import com.legoj15.sprawlcrafting.craft.StationStorage;
 import com.legoj15.sprawlcrafting.craft.StationStorages;
 
@@ -29,9 +31,12 @@ import appeng.menu.me.common.IClientRepo;
 import appeng.menu.me.common.MEStorageMenu;
 import appeng.menu.me.items.CraftingTermMenu;
 import appeng.menu.me.items.WirelessCraftingTermMenu;
+import appeng.menu.slot.CraftingMatrixSlot;
+import appeng.menu.slot.CraftingTermSlot;
 import it.unimi.dsi.fastutil.objects.Object2LongMap;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.inventory.AbstractContainerMenu;
+import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 
@@ -66,7 +71,7 @@ import net.minecraft.world.item.ItemStack;
  *       ({@code getNetworkNode()} active, else the energy service / energy source), client side the
  *       synced {@code isPowered()} flag. AE2's {@code canInteractWithGrid} on that line is
  *       {@code storage != null && powerSource != null && isPowered()}, mirrored below. Its
- *       "plain" there is the exact {@code AEItemKey.of(item)} key ({@code plain}), since a tag-less key can still carry capability data.</li>
+ *       "plain" there is the exact key of a fresh stack ({@code canonical}: a new damageable item already carries {@code Damage:0}), since a tag-less key can still carry capability data and a pristine tool is never tag-less.</li>
  *   <li>{@code StorageHelper.poweredExtraction} caps an extraction at what the energy source can pay
  *       for (one power unit per item), so a connected but power-starved network delivers less than it
  *       stores.</li>
@@ -74,7 +79,8 @@ import net.minecraft.world.item.ItemStack;
  *       {@code IClientRepo.getAllEntries()} gives {@code GridInventoryEntry}s with the key and stored
  *       amount the server synced (already filtered by the menu's view).</li>
  * </ul>
- * Only plain {@link AEItemKey}s (no component patch; no NBT tag, on AE2 15) count, matching
+ * Only plain {@link AEItemKey}s (the key of a fresh stack: no component patch, or on AE2 15 at most
+ * the {@code Damage:0} a new damageable stack carries; see {@code canonical}) count, matching
  * {@link StationStorage}'s contract.
  *
  * <p>"Usable" (the {@link StationStorages.Provider} contract) means the terminal is open and its link
@@ -82,6 +88,14 @@ import net.minecraft.world.item.ItemStack;
  * unusable terminal counts as no station at all: no counts, no draws. On AE2 15 (1.20.1), which has no
  * link-status API, the online check is the menu's power status instead: the live node/energy state
  * server side, the synced {@code isPowered()} flag client side.
+ *
+ * <p>The terminal's own 3×3 crafting grid is a {@link CraftingGrids} provider (registered by
+ * {@link #init()} alongside the station), so the final craft of a job is laid into it for the player
+ * to take. The same usable check gates it, on the side that asks — server the live link, client the
+ * synced copy — because {@code GridContext.current} plans an offline terminal as the 2×2 inventory.
+ * Its slots are picked out of {@code menu.slots} by class, never by index or reflection: the nine
+ * {@link CraftingMatrixSlot}s in slot order and the one {@link CraftingTermSlot}, and any other
+ * layout is no grid.
  */
 public final class Ae2Station implements StationStorages.Provider {
 
@@ -96,6 +110,7 @@ public final class Ae2Station implements StationStorages.Provider {
     /** Entry point, invoked reflectively by {@link StationStorages#bootstrap()}. */
     public static void init() {
         StationStorages.register(new Ae2Station());
+        CraftingGrids.register(new TerminalGrids());
     }
 
     private static Field storageField() {
@@ -168,12 +183,34 @@ public final class Ae2Station implements StationStorages.Provider {
         return powerSource.extractAEPower(1, Actionable.SIMULATE, PowerMultiplier.CONFIG) > 0.8;
     }
 
-    // "Plain" on AE2 15 is the exact key extract()/available() build (AEItemKey.of(item)): its keys also
+    // "Plain" on AE2 15 is the exact key extract()/available() build (canonical(item)): its keys also
     // carry capability data that hasTag() does not report, and such a key is a separate stored entry the
-    // plain-key extraction can never reach, so a tag-less test alone would over-count it.
+    // canonical-key extraction can never reach, so a tag-less test alone would over-count it.
     private static boolean plain(AEItemKey key) {
-        return key.equals(AEItemKey.of(key.getItem()));
+        return key.equals(canonical(key.getItem()));
     }*/
+    //?}
+
+    /**
+     * The key of a freshly made, untouched stack of {@code item}: the only key the station counts, draws
+     * and stores. On 1.20.1 a new stack of a damageable item already carries a {@code Damage:0} tag
+     * ({@code ItemStack(ItemLike, int)} calls {@code setDamageValue}), so a pristine tool sits in the
+     * network under that tagged key, not under {@code AEItemKey.of(item)}; keying on a fresh stack
+     * matches it, while worn, enchanted or renamed copies stay distinct keys and are never touched. On
+     * 1.21.1 a fresh stack has no component patch, so this is exactly {@code AEItemKey.of(item)}.
+     */
+    private static AEItemKey canonical(Item item) {
+        //? if >=1.20.5 {
+        return AEItemKey.of(item);
+        //?} else {
+        /*// Memoized: plain() asks for every network entry on every count (client side up to once per
+        // tick), and a fresh stack's key serializes its capabilities. It never changes for an item.
+        return CANONICAL.computeIfAbsent(item, i -> AEItemKey.of(new ItemStack(i)));*/
+        //?}
+    }
+
+    //? if <1.20.5 {
+    /*private static final Map<Item, AEItemKey> CANONICAL = new java.util.concurrent.ConcurrentHashMap<>();*/
     //?}
 
     @Override
@@ -202,15 +239,25 @@ public final class Ae2Station implements StationStorages.Provider {
         //?}
     }
 
+    /**
+     * Client side of "usable": the synced online copy, refreshed once per menu tick and pushed to the
+     * client (the link status, or AE2 15's power flag) — the client cannot ask the live network. The
+     * one check every client-side view of the terminal ({@link #clientCounts}, the grid provider's
+     * {@code find}) counts by.
+     */
+    private static boolean clientOnline(CraftingTermMenu menu) {
+        //? if >=1.20.5 {
+        return menu.getLinkStatus().connected();
+        //?} else {
+        /*return menu.isPowered();*/
+        //?}
+    }
+
     @Override
     public Map<Item, Long> clientCounts(AbstractContainerMenu menu) {
         // The client only has the synced online copy (the link status, or AE2 15's power flag); a
         // disconnected terminal has no counts.
-        //? if >=1.20.5 {
-        if (!(menu instanceof CraftingTermMenu terminal) || !terminal.getLinkStatus().connected()) {
-        //?} else {
-        /*if (!(menu instanceof CraftingTermMenu terminal) || !terminal.isPowered()) {*/
-        //?}
+        if (!(menu instanceof CraftingTermMenu terminal) || !clientOnline(terminal)) {
             return null;
         }
         IClientRepo repo = terminal.getClientRepo();
@@ -237,6 +284,75 @@ public final class Ae2Station implements StationStorages.Provider {
                 new StationStorages.StationMenu(WirelessCraftingTermMenu.class, WirelessCraftingTermMenu.TYPE));
     }
 
+    /**
+     * The terminal's 3×3 grid as a {@link CraftingGrids.Provider} (the template: the Sophisticated
+     * crafting upgrade), so the final-step hand-off lays the last craft into it. Only while the
+     * terminal is usable on the asking side — server the live check ({@link #usable}), client the
+     * synced copy ({@link #clientOnline}) — keeping this in lockstep with {@code GridContext.current},
+     * which plans an offline terminal as the 2×2 inventory: an offline terminal must not be a grid.
+     */
+    private static final class TerminalGrids implements CraftingGrids.Provider {
+
+        @Override
+        public CraftingGrids.Grid find(AbstractContainerMenu menu) {
+            if (!(menu instanceof CraftingTermMenu terminal)) {
+                return null;
+            }
+            // AEBaseMenu exposes the player inventory on both sides; its level says which side is asking.
+            boolean usableHere = terminal.getPlayerInventory().player.level().isClientSide()
+                    ? clientOnline(terminal)
+                    : usable(terminal);
+            if (!usableHere) {
+                return null;
+            }
+            List<Slot> inputs = new ArrayList<>(9);
+            Slot result = null;
+            int results = 0;
+            for (Slot slot : menu.slots) {
+                // The term slot is not a matrix slot, but testing it first keeps a class-hierarchy
+                // surprise from ever counting the result cell as an input.
+                if (slot instanceof CraftingTermSlot) {
+                    results++;
+                    result = slot;
+                } else if (slot instanceof CraftingMatrixSlot) {
+                    inputs.add(slot);
+                }
+            }
+            if (inputs.size() != 9 || results != 1) {
+                return null; // not the slot layout this adapter was written against
+            }
+            return new TerminalGrid(List.copyOf(inputs), result);
+        }
+    }
+
+    /**
+     * The terminal's grid: always 3×3, on screen whenever the menu is, and never a recipe-book menu,
+     * so the executor lays a recipe into it through {@link Slot#set} — whose {@code setChanged} makes
+     * the menu recompute the result slot — rather than {@code handlePlacement}.
+     */
+    private record TerminalGrid(List<Slot> inputs, Slot result) implements CraftingGrids.Grid {
+
+        @Override
+        public int width() {
+            return 3;
+        }
+
+        @Override
+        public int height() {
+            return 3;
+        }
+
+        @Override
+        public boolean recipeBookPlacement() {
+            return false;
+        }
+
+        @Override
+        public boolean visible() {
+            return true;
+        }
+    }
+
     private static long saturatingAdd(long a, long b) {
         long sum = a + b;
         return sum < 0 ? Long.MAX_VALUE : sum;
@@ -248,7 +364,7 @@ public final class Ae2Station implements StationStorages.Provider {
 
         /** A plain item the terminal is allowed to show (a portable cell's key-type filter), or null. */
         private AEItemKey key(Item item) {
-            AEItemKey key = AEItemKey.of(item);
+            AEItemKey key = canonical(item);
             return key != null && menu.isKeyVisible(key) ? key : null;
         }
 
