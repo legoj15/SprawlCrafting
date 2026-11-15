@@ -317,9 +317,11 @@ crafting upgrade").
   ours registers after it (optional `AFTER ae2` in mods.toml; JEI keeps the last per menu class)
   and fronts it like REI does: yellow and red-gather are ours, green, an offline terminal and red
   with the needs helper off go to AE2's (`compat/ae2/jei/Ae2JeiStock`). The busy gate applies to
-  green too. AE2 15 has no link status: "usable" is its power check (`updatePowerStatus` mirror;
+  every hand-off to AE2's handler (green, offline terminal). AE2 15 has no link status: "usable" is its power check (`updatePowerStatus` mirror;
   a wireless terminal without an actionable node is unusable), and "plain" is the exact
-  `AEItemKey.of(item)` key, since a tag-less key can still carry capability data.
+  key of a fresh stack (`canonical`: `AEItemKey.of(new ItemStack(item))` on 1.20.1, where a new
+  damageable stack already carries `Damage:0`; `AEItemKey.of(item)` on 1.21.1), since a tag-less key
+  can still carry capability data and a pristine tool is never tag-less.
 - **Accepted limits.** A connected but power-starved network can still cancel a job (counts are
   simulated per item, not in aggregate; no item loss). Items in the terminal's own 3x3 grid are
   not counted. A paused job has no player cancel yet (#31). A newer 1.21.1 client on an older

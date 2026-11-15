@@ -497,23 +497,58 @@ public final class CraftExecutor {
             // The station's share goes back where it came from first (station, else inventory, else feet),
             // so it never strands in the grid where the fallback auto-craft could not see it.
             // Each cell is emptied before its item goes back, so a cell that will not clear keeps its
-            // item (visible) and gets no second copy.
+            // item (visible) and gets no second copy. A clear can run mod recipe code and throw after the
+            // write landed: the emptiness check still runs (finally), and one cell's failure never stops
+            // the others; the first failure is rethrown once the grid is back in a consistent state.
+            Throwable failure = null;
             for (int c = 0; c < slots.length; c++) {
-                if (slots[c] == STATION_CELL) {
+                if (slots[c] != STATION_CELL) {
+                    continue;
+                }
+                try {
                     inputs.get(c).set(ItemStack.EMPTY);
+                } catch (Throwable clearFailure) {
+                    failure = suppress(failure, clearFailure);
+                } finally {
                     if (inputs.get(c).getItem().isEmpty()) {
-                        giveBack(player, station, stationItems[c], 1);
+                        try {
+                            giveBack(player, station, stationItems[c], 1);
+                        } catch (Throwable giveBackFailure) {
+                            failure = suppress(failure, giveBackFailure);
+                        }
                     }
                 }
             }
-            returnGridToInventory(player, menu, grid);
-            menu.broadcastFullState();
+            try {
+                returnGridToInventory(player, menu, grid);
+                menu.broadcastFullState();
+            } catch (Throwable restoreFailure) {
+                failure = suppress(failure, restoreFailure);
+            }
+            if (failure instanceof RuntimeException runtime) {
+                throw runtime;
+            }
+            if (failure instanceof Error error) {
+                throw error;
+            }
+            if (failure != null) {
+                throw new IllegalStateException("Crafting grid rollback failed", failure);
+            }
             return new FillOutcome.Fallback();
         }
         assignment.chargeTo(ledger);
         // Same reason as the vanilla path: push the grid and a fresh stateId in one packet.
         menu.broadcastFullState();
         return new FillOutcome.Filled(result.copy());
+    }
+
+    /** The first failure, with every later one attached to it as suppressed. */
+    private static Throwable suppress(Throwable first, Throwable next) {
+        if (first == null) {
+            return next;
+        }
+        first.addSuppressed(next);
+        return first;
     }
 
     /**

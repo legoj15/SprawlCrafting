@@ -114,6 +114,11 @@ public class StationTransferHandler<C extends AbstractContainerMenu>
         // An offline terminal is no station: the server plans it as the 2x2 inventory (GridContext.current),
         // so classify the same way rather than offering 3x3 work the server would refuse — and with a stock
         // handler, hand the recipe to AE2 entirely, exactly what a terminal user without us would get.
+        // Busy before any hand-off to AE2 (offline terminal or green): AE2's fill pulls from the inventory
+        // and the network into a grid the running job cannot see. Same click as 1.21.1, where stock is null.
+        if (stock != null && ClientJobTracker.hasActiveJob()) {
+            return helper.createUserErrorWithTooltip(Component.translatable("sprawlcrafting.craft.busy"));
+        }
         boolean usable = DeferredCraftableCache.stationUsable();
         if (!usable && stock != null) {
             return stock.transferRecipe(container, recipe, recipeSlots, player, maxTransfer, doTransfer);
