@@ -55,6 +55,15 @@ public class SprawlCraftingJeiPlugin implements IModPlugin {
                 "slimeknights.tconstruct.tools.common.inventory.ContainerCraftingStation",
                 GridContext.CRAFTING_TABLE);
 
+        // AE2 Crafting Terminal (issue #2): a FRONT handler, registered with our registry only. JEI's
+        // own table keeps AE2's handler for the class; RecipeRegistryMixin hands it to ours, which
+        // delegates direct recipes (and everything, on a server that can't count the network) to it.
+        // Subclasses of ContainerCraftingTerm resolve through the registry's hierarchy walk. AE2-UEL's
+        // ContainerWirelessCraftingTerminal is deliberately not included: it is not a subclass (it
+        // extends the portable-terminal container), and a wireless terminal's reach is range-gated.
+        registerNetworkTerminal(helper, "appliedenergistics2",
+                "appeng.container.implementations.ContainerCraftingTerm");
+
         // Structural fallback: a class-less 3x3 handler the RecipeRegistryMixin hands back for any
         // *open* container that reads as a 3x3 crafter but isn't registered above — an unknown
         // modded station (e.g. a Slab Machines Crafting Station slab). It is never added to JEI's
@@ -75,6 +84,20 @@ public class SprawlCraftingJeiPlugin implements IModPlugin {
             Class<C> containerClass, DeferredCraftTransferHandler<C> handler) {
         transfer.addRecipeTransferHandler(handler, VanillaRecipeCategoryUid.CRAFTING);
         DeferredHandlerRegistry.register(containerClass, handler);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void registerNetworkTerminal(IRecipeTransferHandlerHelper helper, String modId,
+                                                String containerClassName) {
+        if (!Loader.isModLoaded(modId)) {
+            return;
+        }
+        try {
+            Class<Container> cls = (Class<Container>) Class.forName(containerClassName);
+            DeferredHandlerRegistry.register(cls, new NetworkTerminalTransferHandler(cls, helper));
+        } catch (ClassNotFoundException ignored) {
+            // The mod moved its container; the terminal keeps its own handler, untouched.
+        }
     }
 
     @SuppressWarnings({"unchecked", "rawtypes"})

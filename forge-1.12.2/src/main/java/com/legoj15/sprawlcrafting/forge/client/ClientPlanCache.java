@@ -3,6 +3,7 @@ package com.legoj15.sprawlcrafting.forge.client;
 import com.legoj15.sprawlcrafting.forge.craft.CraftPlanner;
 import com.legoj15.sprawlcrafting.forge.craft.ExternalSlots;
 import com.legoj15.sprawlcrafting.forge.craft.GridContext;
+import com.legoj15.sprawlcrafting.forge.craft.NetworkTerminals;
 
 import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.inventory.Slot;
@@ -46,6 +47,10 @@ public final class ClientPlanCache {
         for (Slot slot : ExternalSlots.materialSlots(player)) {
             hash = 31 * hash + stackHash(slot.getStack());
         }
+        // An open network crafting terminal (AE2): the network is material while it is open, so its
+        // displayed contents are part of the key (0 when no terminal is open). The provider throttles
+        // this to a few ticks so a busy network does not rebuild the session every frame.
+        hash = 31 * hash + NetworkTerminals.clientSignature(player);
         return hash;
     }
 

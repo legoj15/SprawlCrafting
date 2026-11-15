@@ -81,8 +81,9 @@ public final class CraftRequests {
             CraftJob job = ((PlanOutcome.Planned) outcome).job();
             // Remember whether a station chest was in the pool at plan time, so a later step that
             // can't be satisfied while the station is closed waits for it to reopen instead of
-            // cancelling on a chest item it simply can't currently see.
-            job.setExternalDependent(ExternalSlots.present(player));
+            // cancelling on a chest item it simply can't currently see. A network crafting terminal
+            // (AE2) is the same case: its network is material only while it is open.
+            job.setExternalDependent(ExternalSlots.present(player) || NetworkTerminals.isOpen(player));
             CraftQueueManager.start(player, job);
             return new StartOutcome.Started(job);
         }

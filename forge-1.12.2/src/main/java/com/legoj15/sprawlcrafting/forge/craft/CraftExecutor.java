@@ -2,8 +2,13 @@ package com.legoj15.sprawlcrafting.forge.craft;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+
+import org.apache.logging.log4j.LogManager;
 
 import com.legoj15.solver.LedgerTally;
 import com.legoj15.solver.ProducedLedger;
@@ -39,7 +44,10 @@ import net.minecraftforge.common.crafting.IShapedRecipe;
  *       Tinkers' Construct Crafting Station's bound chest — see {@link ExternalSlots}). Armor and
  *       offhand are never touched. Results and crafting remainders are always inserted into the 36
  *       main slots, never the chest: consume-from-chest, deposit-to-player is safe and matches
- *       intuition.</li>
+ *       intuition. With a network crafting terminal open ({@link NetworkTerminals}, the AE2 Crafting
+ *       Terminal) the network is a third pool, used after the player's slots; network picks are
+ *       extracted all-or-nothing before anything is consumed, and only overflow that would otherwise
+ *       drop at the player's feet is inserted into the network.</li>
  *   <li>Damaged, enchanted, or renamed stacks are never consumed, matching what the vanilla
  *       recipe book refuses to auto-fill, except up to what the job's {@link ProducedLedger}
  *       says it produced itself (some mods enchant an item on its first inventory tick, after
@@ -104,7 +112,7 @@ public final class CraftExecutor {
         // one entry per ingredient slot (-1 for a gap in the shape) so the simulation below can
         // reconstruct the grid positions.
         InventoryPlayer inventory = player.inventory;
-        Assignment assignment = assign(player, recipe.getIngredients(), ledger);
+        Assignment assignment = assign(player, recipe.getIngredients(), ledger, true);
         if (assignment.missing != null) {
             return new CraftResult.MissingIngredient(describe(assignment.missing));
         }
@@ -118,6 +126,16 @@ public final class CraftExecutor {
         ItemStack result = computeResult(recipe, sources, chosen);
         if (result.isEmpty()) {
             return new CraftResult.RecipeGone();
+        }
+
+        // Phase 1b: pull every network item this craft needs out of the network up front, all or
+        // nothing, so phase 2 below can never fail half way through (the player's own slots are
+        // decremented in place and cannot fail; a network extraction can — power, a concurrent
+        // export bus). If the network hands over less than was counted, everything it did hand
+        // over goes straight back and the craft reports the item as missing.
+        ItemStack networkShort = prepareNetwork(player, sources, chosen);
+        if (!networkShort.isEmpty()) {
+            return new CraftResult.MissingIngredient(networkShort.getDisplayName());
         }
 
         // Phase 2: apply — consume, collect remainders, insert the result into the player only.
@@ -282,12 +300,16 @@ public final class CraftExecutor {
 
     /**
      * The ordered consumable pool: the 36 main slots first, then the open container's other input
-     * slots (its crafting grid and any station side inventory). The grid is normally swept into the
-     * inventory by {@link #clearOpenCraftingGrid} before a job starts, so it is usually empty here;
-     * including it makes execution match planning even when that sweep was a no-op (inventory full),
-     * rather than stalling on a recipe the highlight showed as craftable.
+     * slots (its crafting grid and any station side inventory), then — with a network crafting
+     * terminal open and {@code networkItems} non-null — one source per stored network identity of
+     * those items ({@link NetworkTerminals}). The grid is normally swept into the inventory by
+     * {@link #clearOpenCraftingGrid} before a job starts, so it is usually empty here; including it
+     * makes execution match planning even when that sweep was a no-op (inventory full), rather than
+     * stalling on a recipe the highlight showed as craftable. The network comes last so the player's
+     * own items are always used first, and only the identities the recipe can use are listed (a
+     * network can hold thousands, and this runs once per craft of a burst).
      */
-    private static List<Source> buildSources(EntityPlayer player, InventoryPlayer inventory) {
+    private static List<Source> buildSources(EntityPlayer player, InventoryPlayer inventory, Set<Item> networkItems) {
         List<Source> sources = new ArrayList<Source>();
         for (int i = 0; i < MAIN; i++) {
             sources.add(new PlayerSource(inventory, i));
@@ -295,7 +317,77 @@ public final class CraftExecutor {
         for (Slot slot : ExternalSlots.materialSlots(player)) {
             sources.add(new ExternalSource(slot));
         }
+        if (networkItems != null && !networkItems.isEmpty() && !player.world.isRemote) {
+            NetworkTerminals.View network = NetworkTerminals.view(player);
+            if (network != null) {
+                for (ItemStack stack : network.stacks(networkItems)) {
+                    sources.add(new NetworkSource(network, stack));
+                }
+            }
+        }
         return sources;
+    }
+
+    /** Every item any of {@code ingredients} can match (Ingredient expands wildcards to concrete stacks). */
+    private static Set<Item> ingredientItems(List<Ingredient> ingredients) {
+        Set<Item> items = new HashSet<Item>();
+        for (Ingredient ingredient : ingredients) {
+            if (ingredient == null || ingredient == Ingredient.EMPTY) {
+                continue;
+            }
+            for (ItemStack option : ingredient.getMatchingStacks()) {
+                if (!option.isEmpty()) {
+                    items.add(option.getItem());
+                }
+            }
+        }
+        return items;
+    }
+
+    /**
+     * Extracts, ahead of phase 2, exactly the number of items phase 1 assigned to each network
+     * source. Simulates them all first (no side effects on a shortfall), then extracts for real; if a
+     * real extraction still comes up short (power or a concurrent export between the two calls),
+     * every item already extracted goes back into the network — or, should the network refuse it,
+     * into the player's inventory, never the void. Returns EMPTY on success, else a stack naming the
+     * short item.
+     */
+    private static ItemStack prepareNetwork(EntityPlayer player, List<Source> sources, int[] chosen) {
+        Map<NetworkSource, Integer> needed = null;
+        for (int idx : chosen) {
+            if (idx >= 0 && sources.get(idx) instanceof NetworkSource) {
+                if (needed == null) {
+                    needed = new LinkedHashMap<NetworkSource, Integer>();
+                }
+                NetworkSource source = (NetworkSource) sources.get(idx);
+                Integer have = needed.get(source);
+                needed.put(source, (have == null ? 0 : have) + 1);
+            }
+        }
+        if (needed == null) {
+            return ItemStack.EMPTY;
+        }
+        for (Map.Entry<NetworkSource, Integer> entry : needed.entrySet()) {
+            NetworkSource source = entry.getKey();
+            if (source.network.extract(source.template, entry.getValue(), true) < entry.getValue()) {
+                return source.template;
+            }
+        }
+        List<NetworkSource> prepared = new ArrayList<NetworkSource>();
+        for (Map.Entry<NetworkSource, Integer> entry : needed.entrySet()) {
+            NetworkSource source = entry.getKey();
+            int want = entry.getValue();
+            int got = source.network.extract(source.template, want, false);
+            source.prepared = got;
+            prepared.add(source);
+            if (got < want) {
+                for (NetworkSource undo : prepared) {
+                    undo.refund(player);
+                }
+                return source.template;
+            }
+        }
+        return ItemStack.EMPTY;
     }
 
     /**
@@ -311,7 +403,19 @@ public final class CraftExecutor {
      * choice.
      */
     static Assignment assign(EntityPlayer player, List<Ingredient> ingredients, ProducedLedger<ItemKey> ledger) {
-        List<Source> sources = buildSources(player, player.inventory);
+        return assign(player, ingredients, ledger, false);
+    }
+
+    /**
+     * {@link #assign(EntityPlayer, List, ProducedLedger)} over a pool that, with {@code withNetwork},
+     * also holds the open network terminal's stock. Only {@link #craftOnce} passes true: it is the one
+     * consumer that {@link #prepareNetwork extracts} its network picks before taking them. The grid
+     * placer's {@link Assignment#take} never sees a network source.
+     */
+    private static Assignment assign(EntityPlayer player, List<Ingredient> ingredients,
+                                     ProducedLedger<ItemKey> ledger, boolean withNetwork) {
+        List<Source> sources = buildSources(player, player.inventory,
+                withNetwork ? ingredientItems(ingredients) : null);
         int[] chosen = new int[ingredients.size()];
         int[] reserved = new int[sources.size()];
         LedgerTally<ItemKey> tally = new LedgerTally<ItemKey>();
@@ -410,7 +514,7 @@ public final class CraftExecutor {
             if (!stack.isEmpty() && usableAsIngredient(stack)) {
                 ItemKey key = ItemKey.of(stack);
                 Integer have = stock.get(key);
-                stock.put(key, (have == null ? 0 : have) + stack.getCount());
+                stock.put(key, NetworkTerminals.saturatedAdd(have == null ? 0 : have, stack.getCount()));
             }
         }
         List<List<ItemKey>> slots = new ArrayList<List<ItemKey>>();
@@ -540,6 +644,67 @@ public final class CraftExecutor {
     }
 
     /**
+     * One stored identity of the open network terminal's network ({@link NetworkTerminals}), seen as a
+     * single aggregate stack: {@link #peek} is a private copy holding the network's count (clamped to
+     * an int), and consumption is paid for up front by {@link #prepareNetwork}, which extracts exactly
+     * what phase 1 assigned, so {@link #consumeOne} only hands out an item already taken from the
+     * network. Equality is identity (one source per stored identity per craft), which is what the
+     * preparation map keys on.
+     */
+    private static final class NetworkSource implements Source {
+        private final NetworkTerminals.View network;
+        /** Count-one copy of the identity, for extraction requests. */
+        private final ItemStack template;
+        private final ItemStack view;
+        /** Items extracted by prepareNetwork and not yet consumed. */
+        private int prepared;
+
+        NetworkSource(NetworkTerminals.View network, ItemStack stack) {
+            this.network = network;
+            this.view = stack;
+            this.template = stack.copy();
+            this.template.setCount(1);
+        }
+
+        @Override
+        public ItemStack peek() {
+            return view;
+        }
+
+        @Override
+        public void consumeOne() {
+            if (prepared > 0) {
+                prepared--;
+            } else if (network.extract(template, 1, false) < 1) {
+                // Unreachable by construction: only craftOnce builds network sources, and it prepares
+                // every pick before consuming. Never let a miss pass silently all the same.
+                LogManager.getLogger("SprawlCrafting")
+                        .warn("Network source consumed without a prepared item: {}", template);
+            }
+            view.shrink(1);
+        }
+
+        /** Returns prepared-but-unconsumed items to the network; whatever it refuses goes to the player. */
+        void refund(EntityPlayer player) {
+            if (prepared <= 0) {
+                return;
+            }
+            ItemStack back = template.copy();
+            back.setCount(prepared);
+            prepared = 0;
+            ItemStack leftover = network.insert(back);
+            if (!leftover.isEmpty()) {
+                insertIntoMainInventory(player, leftover);
+            }
+        }
+
+        @Override
+        public boolean isExternal() {
+            return false;
+        }
+    }
+
+    /**
      * Returns the player's open crafting grid contents to the main inventory, so the planner and
      * executor (which read only the 36 main slots) can see items that were sitting in the grid.
      * No-op for a non-crafting menu, an empty grid, or when the contents wouldn't all fit.
@@ -627,6 +792,10 @@ public final class CraftExecutor {
      * any overflow at the player's feet. Deliberately not {@code addItemStackToInventory}, which can
      * stash items into the offhand slot where later steps of the job would not find them.
      * Package-visible: {@link ServerGridPlacer} returns grid contents through the same rules.
+     *
+     * <p>With a network crafting terminal open, overflow goes into the network before anything is
+     * dropped: the player is looking at that network, and an item on the floor beside a terminal is
+     * lost far more easily than one in storage.
      */
     static void insertIntoMainInventory(EntityPlayer player, ItemStack stack) {
         InventoryPlayer inventory = player.inventory;
@@ -651,6 +820,12 @@ public final class CraftExecutor {
             }
         }
         inventory.markDirty();
+        if (!stack.isEmpty() && !player.world.isRemote) {
+            NetworkTerminals.View network = NetworkTerminals.view(player);
+            if (network != null) {
+                stack = network.insert(stack);
+            }
+        }
         if (!stack.isEmpty()) {
             player.dropItem(stack, false);
         }

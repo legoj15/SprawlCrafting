@@ -139,6 +139,12 @@ repositories {
         url = 'https://modmaven.dev'
     }
     maven {
+        // CurseMaven: CurseForge files by project + file id. Only the AE2 compile dependency below.
+        name = 'CurseMaven'
+        url = 'https://cursemaven.com'
+        content { includeGroup 'curse.maven' }
+    }
+    maven {
         // SpongePowered Mixin — for the annotation processor (':processor' classifier). MixinBooter
         // bundles the Mixin runtime but not the dev-time AP that generates the refmap.
         name = 'SpongePowered'
@@ -161,6 +167,18 @@ dependencies {
     // deobfProvided gives compile-time access to the deobfuscated JEI API without bundling
     // JEI into the mod or forcing it at runtime.
     compileOnly rfg.deobf("mezz.jei:jei_1.12.2:${project.jei_version}")
+
+    // --- Applied Energistics 2 integration (compile dependency; optional at runtime) --------
+    // The AE2 Crafting Terminal support (forge.compat.ae2) compiles against AE2 Unofficial Extended
+    // Life (CurseForge project 570458). Every AE2 member it uses was javap/decompile-checked to have
+    // the identical signature in original AE2 rv6-stable-7, which shares the modid and packages, so
+    // the one jar runs on both. Never bundled; the code is only class-loaded when AE2 is present.
+    compileOnly rfg.deobf("curse.maven:ae2-extended-life-570458:${project.ae2_uel_curse_file}")
+    // Dev runs only: -Psc.ae2=<path to an AE2 1.12.2 jar> (e.g. an rv6 jar from a pack's mods folder)
+    // puts that AE2 on the runClient classpath, deobfuscated by RFG. Not part of any published jar.
+    if (project.hasProperty('sc.ae2')) {
+        runtimeOnly rfg.deobf(files(project.property('sc.ae2')))
+    }
 
     // --- Solver library (shaded into the jar below) ----------------------------------------
     shade "com.legoj15:solver:${solverVersion}"

@@ -128,18 +128,29 @@ public final class CraftPlanner {
      * chest — see {@link ExternalSlots#materialSlots}). All pools are keyed by {@link ItemKey} and
      * filtered by the same {@link CraftExecutor#usableAsIngredient} predicate the executor uses, so the
      * plan never counts an item execution would refuse, and no source is held to a different standard.
+     *
+     * <p>With a network crafting terminal open ({@link NetworkTerminals}, the AE2 Crafting Terminal)
+     * the network's stock is added too — the live monitor on the server, the terminal screen's own
+     * mirror on the client — under the same filter and key; sums saturate at
+     * {@link Integer#MAX_VALUE} because a network can hold more than an int of one item.
      */
     private static Map<ItemKey, Integer> snapshotMaterials(EntityPlayer player) {
         Map<ItemKey, Integer> counts = snapshotInventory(player.inventory);
         for (net.minecraft.inventory.Slot slot : ExternalSlots.materialSlots(player)) {
-            ItemStack stack = slot.getStack();
-            if (!stack.isEmpty() && CraftExecutor.usableAsIngredient(stack)) {
-                ItemKey key = ItemKey.of(stack);
-                Integer current = counts.get(key);
-                counts.put(key, (current == null ? 0 : current) + stack.getCount());
-            }
+            addUsable(counts, slot.getStack());
+        }
+        for (ItemStack stack : NetworkTerminals.stacks(player)) {
+            addUsable(counts, stack);
         }
         return counts;
+    }
+
+    private static void addUsable(Map<ItemKey, Integer> counts, ItemStack stack) {
+        if (!stack.isEmpty() && CraftExecutor.usableAsIngredient(stack)) {
+            ItemKey key = ItemKey.of(stack);
+            Integer current = counts.get(key);
+            counts.put(key, NetworkTerminals.saturatedAdd(current == null ? 0 : current, stack.getCount()));
+        }
     }
 
     public static final class Session {

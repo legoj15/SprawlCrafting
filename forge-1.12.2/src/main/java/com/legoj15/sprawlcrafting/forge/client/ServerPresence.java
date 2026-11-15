@@ -13,19 +13,27 @@ import net.minecraftforge.fml.common.network.FMLNetworkEvent;
 public final class ServerPresence {
 
     private static volatile boolean present;
+    private static volatile boolean networkTerminals;
 
     /** True once the server has identified itself as running the mod (integrated server included). */
     public static boolean active() {
         return present;
     }
 
-    public static void markPresent() {
+    /** True when the server's engine also counts an open AE2 Crafting Terminal's network (see the hello's capability byte). */
+    public static boolean networkTerminals() {
+        return present && networkTerminals;
+    }
+
+    public static void markPresent(boolean countsNetworkTerminals) {
+        networkTerminals = countsNetworkTerminals;
         present = true;
     }
 
     @SubscribeEvent
     public void onDisconnect(FMLNetworkEvent.ClientDisconnectionFromServerEvent event) {
         present = false;
+        networkTerminals = false;
         // The HUD flyout mirrors a job on the server we just left; drop it with the connection.
         // Cleared via the main-thread queue, not directly: this event fires on the netty thread,
         // where a progress update delivered just before the disconnect may already sit scheduled —

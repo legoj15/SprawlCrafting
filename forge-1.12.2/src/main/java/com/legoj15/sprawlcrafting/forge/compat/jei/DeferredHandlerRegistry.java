@@ -19,6 +19,18 @@ public final class DeferredHandlerRegistry {
     private static final Map<Class<?>, Object> HANDLERS = new HashMap<>();
 
     /**
+     * A handler that sits in FRONT of another mod's handler for the same container rather than
+     * replacing it (the AE2 Crafting Terminal: SprawlCrafting takes deferred and unsolvable recipes,
+     * AE2 keeps the direct "+"). Such a handler is registered here only, never in JEI's own table, so
+     * the table still holds the other mod's handler; {@code RecipeRegistryMixin} reads it from there on
+     * every lookup and hands it over before returning this handler.
+     */
+    public interface FrontHandler {
+        /** The handler JEI's own table holds for the container being resolved (null when none). */
+        void setOriginal(Object original);
+    }
+
+    /**
      * A single class-less handler returned for containers that are structurally 3x3 crafters but
      * whose class isn't explicitly registered (an unknown modded station). Set once by the JEI
      * plugin when JEI is present; null otherwise. The {@code RecipeRegistryMixin} decides when it
