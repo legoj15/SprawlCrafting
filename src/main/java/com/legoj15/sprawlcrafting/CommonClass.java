@@ -17,5 +17,12 @@ public class CommonClass {
         Constants.LOG.info("SprawlCrafting init on {} ({}); solver library {} {} loaded",
                 Services.PLATFORM.getPlatformName(), Services.PLATFORM.getEnvironmentName(),
                 solver.getName(), version != null ? version : "(version not in manifest)");
+
+        // Optional integrations (never a hard dependency: nothing below loads without the mod present).
+        //? if sophisticated {
+        /*if (Services.PLATFORM.isModLoaded(com.legoj15.sprawlcrafting.compat.sophisticated.SophisticatedCompat.CORE_MOD_ID)) {
+            com.legoj15.sprawlcrafting.compat.sophisticated.SophisticatedCompat.init();
+        }*/
+        //?}
     }
 }

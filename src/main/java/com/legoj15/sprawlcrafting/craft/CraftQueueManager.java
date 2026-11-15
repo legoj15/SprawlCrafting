@@ -79,7 +79,11 @@ public final class CraftQueueManager {
         // second, which is every craft of a paced step); a bulk step bursts every tick in between, so
         // those ticks re-validate just the table the last scan found (cheap) and pause the moment it
         // is gone or out of reach, instead of crafting on for up to half a second after the player left.
-        if (job.currentStep().needsFullGrid()) {
+        // A player with a 3×3 crafting grid open needs no scan, and none of the re-checks: the open menu
+        // IS the table, and it stays open only while the player may use it (vanilla closes a table's menu
+        // past its stillValid reach, a little wider than the scan's; a crafting-upgrade menu is the player's own backpack or a storage in reach). It
+        // is also how a modded grid with no crafting_table block counts at all.
+        if (job.currentStep().needsFullGrid() && !CraftingGrids.isFullGrid(CraftingGrids.find(player.containerMenu))) {
             if (job.reachCheckDue()) {
                 BlockPos table = CraftingTableReach.findInReach(player);
                 if (table == null) {
@@ -200,12 +204,17 @@ public final class CraftQueueManager {
     /**
      * Whether the player has a crafting grid open that the final craft can be handed off to.
      * The grid must be reported open by the client ({@link ClientCraftingView}), agree with the
-     * server's view of the open menu ({@link GridContext#current}), and be large enough for the
-     * step (a full-grid recipe needs a 3×3 table, not the 2×2 inventory grid).
+     * server's view of the open menu ({@link GridContext#current}), be on screen
+     * ({@link CraftingGrids.Grid#visible}: a crafting upgrade behind a closed tab is not), and be
+     * large enough for the step (a full-grid recipe needs a 3×3 table, not the 2×2 inventory grid).
      */
     private static boolean canHandOff(ServerPlayer player, CraftStep step) {
         GridContext open = ClientCraftingView.open(player);
         if (open == null || GridContext.current(player) != open) {
+            return false;
+        }
+        CraftingGrids.Grid grid = CraftingGrids.find(player.containerMenu);
+        if (grid == null || !grid.visible()) {
             return false;
         }
         return !step.needsFullGrid() || open == GridContext.CRAFTING_TABLE;

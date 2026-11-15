@@ -21,9 +21,10 @@ import net.minecraft.world.item.crafting.RecipeHolder;
  * NeoForge, the {@code jei_mod_plugin} entrypoint (fabric.mod.json) on Fabric — so this
  * class never loads when JEI is absent.
  *
- * <p>Scope note: only the crafting table screen's handler is replaced. The player 2×2
- * uses JEI-internal index-trimming logic that isn't API-visible; that grid is already
- * covered by the recipe book integration.
+ * <p>Scope note: the crafting table screen's handler is replaced, and, where Sophisticated Storage /
+ * Backpacks is installed, so is theirs for the crafting upgrade's 3×3 grid
+ * ({@code compat.sophisticated}). The player 2×2 uses JEI-internal index-trimming logic that isn't
+ * API-visible; that grid is already covered by the recipe book integration.
  */
 @JeiPlugin
 public class SprawlCraftingJeiPlugin implements IModPlugin {
@@ -51,6 +52,11 @@ public class SprawlCraftingJeiPlugin implements IModPlugin {
         registration.addRecipeTransferHandler(
                 new DeferredCraftingTransferHandler(helper.createUnregisteredRecipeTransferHandler(tableInfo)),
                 RecipeTypes.CRAFTING);
+        // Sophisticated Storage / Backpacks crafting upgrades. Registered here, after the mods' own handlers
+        // (mod order: our optional AFTER dependencies), because JEI keeps the last handler per menu class.
+        //? if sophisticated {
+        /*com.legoj15.sprawlcrafting.compat.sophisticated.SophisticatedJei.registerTransferHandlers(registration);*/
+        //?}
     }
 
     @Override

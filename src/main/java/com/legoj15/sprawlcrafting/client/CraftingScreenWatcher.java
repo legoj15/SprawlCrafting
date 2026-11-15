@@ -1,16 +1,11 @@
 package com.legoj15.sprawlcrafting.client;
 
+import com.legoj15.sprawlcrafting.craft.CraftingGrids;
 import com.legoj15.sprawlcrafting.network.CraftingScreenStatePayload;
 import com.legoj15.sprawlcrafting.platform.Services;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
-import net.minecraft.world.inventory.AbstractContainerMenu;
-//? if >=1.21.11 {
-/*import net.minecraft.world.inventory.AbstractCraftingMenu;*/
-//?} else {
-import net.minecraft.world.inventory.RecipeBookMenu;
-//?}
 
 /**
  * Client tick watcher (render thread) that tells the server which crafting grid the player
@@ -88,19 +83,13 @@ public final class CraftingScreenWatcher {
         int width = 0;
         int height = 0;
         if (minecraft.screen instanceof AbstractContainerScreen<?> screen) {
-            AbstractContainerMenu menu = screen.getMenu();
-            //? if >=1.21.11 {
-            /*if (menu instanceof AbstractCraftingMenu craftingMenu) {
-                width = craftingMenu.getGridWidth();
-                height = craftingMenu.getGridHeight();
-            }*/
-            //?} else {
-            // RecipeBookMenu also covers furnaces (1×1); the server-side ≥2×2 threshold filters those out.
-            if (menu instanceof RecipeBookMenu<?, ?> craftingMenu) {
-                width = craftingMenu.getGridWidth();
-                height = craftingMenu.getGridHeight();
+            // Any menu showing a crafting grid: a crafting table, the 2×2 inventory, or a modded grid such
+            // as a Sophisticated crafting upgrade (CraftingGrids knows which menus those are).
+            CraftingGrids.Grid grid = CraftingGrids.find(screen.getMenu());
+            if (grid != null) {
+                width = grid.width();
+                height = grid.height();
             }
-            //?}
         }
 
         if (!wasActive || width != lastWidth || height != lastHeight) {

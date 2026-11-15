@@ -38,6 +38,21 @@ type = "optional"
 versionRange = "[16,)"
 ordering = "AFTER"
 side = "CLIENT"
+# Sophisticated Storage / Backpacks: soft dependencies, here only for load order. JEI keeps the LAST transfer
+# handler registered per menu class, in mod-list order, and ours (a wrapper around theirs that adds the
+# deferred-craft button) must come after the mods' own. Harmless on nodes or installs without them.
+[[dependencies.${mod_id}]]
+modId = "sophisticatedstorage"
+type = "optional"
+versionRange = "[0,)"
+ordering = "AFTER"
+side = "CLIENT"
+[[dependencies.${mod_id}]]
+modId = "sophisticatedbackpacks"
+type = "optional"
+versionRange = "[0,)"
+ordering = "AFTER"
+side = "CLIENT"
 
 # Features are specific properties of the game environment, that you may want to declare you require. This example declares
 # that your mod requires GL version 3.2 or higher. Other features will be added. They are side aware so declaring this won't

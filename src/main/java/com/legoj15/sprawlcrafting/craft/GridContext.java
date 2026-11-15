@@ -1,10 +1,6 @@
 package com.legoj15.sprawlcrafting.craft;
 
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraft.world.inventory.RecipeBookMenu;
-//? if >=1.21.11 {
-/*import net.minecraft.world.inventory.AbstractCraftingMenu;*/
-//?}
 
 /**
  * The crafting grid a deferred-craft request was made from. Whole-chain gating
@@ -38,18 +34,10 @@ public enum GridContext {
      * The grid the player is looking at right now, keyed on the open menu's grid size —
      * 3×3 (or larger) is a crafting table, else the 2×2 inventory grid. Matching on grid
      * dimensions rather than {@code CraftingMenu} keeps this in lockstep with the client's
-     * {@code DeferredCraftableCache.gridFor}, including modded crafting-table menus.
+     * {@code DeferredCraftableCache.gridFor}, including modded crafting-table menus and
+     * crafting-upgrade grids ({@link CraftingGrids}).
      */
     public static GridContext current(ServerPlayer player) {
-        //? if >=1.21.11 {
-        /*if (player.containerMenu instanceof AbstractCraftingMenu menu
-                && menu.getGridWidth() >= 3 && menu.getGridHeight() >= 3) {*/
-        //?} else {
-        if (player.containerMenu instanceof RecipeBookMenu<?, ?> menu
-                && menu.getGridWidth() >= 3 && menu.getGridHeight() >= 3) {
-        //?}
-            return CRAFTING_TABLE;
-        }
-        return INVENTORY;
+        return CraftingGrids.isFullGrid(CraftingGrids.find(player.containerMenu)) ? CRAFTING_TABLE : INVENTORY;
     }
 }

@@ -234,6 +234,9 @@ tasks.withType<JavaCompile>().configureEach {
         exclude("**/compat/rei/**")
         exclude("**/*ReiPlugin*")
     }
+    // No Forge build of Sophisticated is wired up (1.21.1 / 26.x are NeoForge-only; the 1.20.1 jar is SRG and
+    // not consumed yet), and the `sophisticated` constant is false on every Forge node.
+    exclude("**/compat/sophisticated/**")
     // Surface the full cross-cliff error set during ports (javac caps at 100 by default).
     options.compilerArgs.addAll(listOf("-Xmaxerrs", "2000", "-Xmaxwarns", "200"))
 }

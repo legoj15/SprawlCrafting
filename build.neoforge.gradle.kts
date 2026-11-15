@@ -26,6 +26,18 @@ val neoVersionRange = property("neoforge_version_range") as String
 val mcVersionRange = property("minecraft_version_range") as String
 // REI ships on the 1.21.1 line only; its presence is signalled by a node-level rei_version.
 val hasRei = project.findProperty("rei_version") != null
+// Sophisticated Core/Storage/Backpacks compat (compat/sophisticated): official NeoForge builds exist for 1.21.1
+// and 26.x; a node opts in by pinning sophisticated_core_version (+ the storage / backpacks pins).
+val sophisticatedCoreVersion = project.findProperty("sophisticated_core_version") as String?
+val sophisticatedStorageVersion = project.findProperty("sophisticated_storage_version") as String?
+val sophisticatedBackpacksVersion = project.findProperty("sophisticated_backpacks_version") as String?
+// All three pins or none: the package compiles against all three, and stonecutter.gradle.kts derives the
+// `sophisticated` constant from the same rule, so the gated call sites and the exclusion never disagree.
+val hasSophisticated = sophisticatedCoreVersion != null && sophisticatedStorageVersion != null
+        && sophisticatedBackpacksVersion != null
+// -Psc.sophisticated=true: run the dev client/server with Sophisticated Core/Storage/Backpacks. Core declares a
+// minimum JEI newer than the build's compile pin, so that runtime uses sophisticated_jei_version instead.
+val sophisticatedRuntime = hasSophisticated && project.findProperty("sc.sophisticated") == "true"
 
 // ─── Stonecutter source replacements ─────────────────────────────────────────────────────────
 // The forward-port regex tiers (ResourceLocation -> Identifier, Minecraft.screen -> gui.screen(),
@@ -62,6 +74,10 @@ repositories {
     maven("https://maven.blamejared.com")   // JEI
     maven("https://maven.shedaniel.me/")     // REI
     maven("https://maven.parchmentmc.org")
+    // Sophisticated Core/Storage/Backpacks (CurseForge/Modrinth only; Modrinth's Maven, artifact = project id)
+    maven("https://api.modrinth.com/maven") {
+        content { includeGroup("maven.modrinth") }
+    }
     mavenCentral()
 }
 
@@ -128,7 +144,9 @@ dependencies {
     compileOnly("mezz.jei:jei-$minecraftVersion-common-api:$jeiVersion")
     compileOnly("mezz.jei:jei-$minecraftVersion-neoforge-api:$jeiVersion")
     if (viewer == "jei" || viewer == "both") {
-        runtimeOnly("mezz.jei:jei-$minecraftVersion-neoforge:$jeiVersion")
+        val jeiRuntimeVersion =
+            if (sophisticatedRuntime) (project.findProperty("sophisticated_jei_version") as String?) ?: jeiVersion else jeiVersion
+        runtimeOnly("mezz.jei:jei-$minecraftVersion-neoforge:$jeiRuntimeVersion")
     }
 
     if (hasRei) {
@@ -142,6 +160,20 @@ dependencies {
         if (viewer == "rei" || viewer == "both") {
             // Transitive (pulls architectury/cloth) so runClient -Pviewer=rei actually loads REI.
             runtimeOnly("me.shedaniel:RoughlyEnoughItems-neoforge:$reiVersion")
+        }
+    }
+
+    // Sophisticated Core (nmoqTijg), Storage (hMlaZH8f), Backpacks (TyCTlI4b): compile-only, the player
+    // supplies them. -Psc.sophisticated=true also puts all three on the dev runtime (runClient/runServer)
+    // so the crafting-upgrade integration can be exercised in game. Their POMs declare no dependencies.
+    if (hasSophisticated) {
+        compileOnly("maven.modrinth:nmoqTijg:$sophisticatedCoreVersion")
+        compileOnly("maven.modrinth:hMlaZH8f:$sophisticatedStorageVersion")
+        compileOnly("maven.modrinth:TyCTlI4b:$sophisticatedBackpacksVersion")
+        if (sophisticatedRuntime) {
+            runtimeOnly("maven.modrinth:nmoqTijg:$sophisticatedCoreVersion")
+            runtimeOnly("maven.modrinth:hMlaZH8f:$sophisticatedStorageVersion")
+            runtimeOnly("maven.modrinth:TyCTlI4b:$sophisticatedBackpacksVersion")
         }
     }
 
@@ -173,6 +205,9 @@ tasks.withType<JavaCompile>().configureEach {
     if (!hasRei) {
         exclude("**/compat/rei/**")
         exclude("**/*ReiPlugin*")
+    }
+    if (!hasSophisticated) {
+        exclude("**/compat/sophisticated/**")
     }
     // Surface the full cross-cliff error set during the 26.x port (javac caps at 100 by default).
     options.compilerArgs.addAll(listOf("-Xmaxerrs", "2000", "-Xmaxwarns", "200"))

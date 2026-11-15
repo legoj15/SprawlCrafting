@@ -55,7 +55,11 @@ public final class DeferredCraftSync {
      */
     public static void maybeSync(ServerPlayer player) {
         //? if >=1.21.11 {
-        /*if (!(player.containerMenu instanceof net.minecraft.world.inventory.AbstractCraftingMenu menu)) {
+        /*// CraftingGrids, not AbstractCraftingMenu: a modded grid (the Sophisticated crafting upgrade) is a
+        // crafting screen too, and the client reports it the same way.
+        net.minecraft.world.inventory.AbstractContainerMenu menu = player.containerMenu;
+        CraftingGrids.Grid openGrid = CraftingGrids.find(menu);
+        if (openGrid == null) {
             LAST_SYNC.remove(player.getUUID());
             LAST_SYNC_TICK.remove(player.getUUID());
             return; // a non-crafting container (or nothing) — nothing to classify
@@ -70,8 +74,7 @@ public final class DeferredCraftSync {
         if (ClientCraftingView.open(player) == null) {
             return;
         }
-        GridContext grid = (menu.getGridWidth() >= 3 && menu.getGridHeight() >= 3)
-                ? GridContext.CRAFTING_TABLE : GridContext.INVENTORY;
+        GridContext grid = CraftingGrids.isFullGrid(openGrid) ? GridContext.CRAFTING_TABLE : GridContext.INVENTORY;
         // /reload swaps MinecraftServer.resources (a fresh RecipeManager instance) and
         // reallocates all display ids, so the manager's identity must be part of the key.
         net.minecraft.world.item.crafting.RecipeManager recipes = player.level().getServer().getRecipeManager();

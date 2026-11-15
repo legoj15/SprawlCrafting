@@ -134,6 +134,7 @@ loom {
 tasks.withType<JavaCompile>().configureEach {
     exclude("**/platform/neoforge/**")
     exclude("**/platform/forge/**")    // MinecraftForge platform layer
+    exclude("**/compat/sophisticated/**") // Sophisticated Core/Storage/Backpacks have no official Fabric build
     exclude("**/gametest/neoforge/**") // NeoForge-specific game-test registration (src/test)
     if (!hasRei) {
         exclude("**/compat/rei/**")
