@@ -920,7 +920,12 @@ public final class CraftExecutor {
             NetworkTerminals.View network = NetworkTerminals.view(player);
             if (network != null) {
                 int before = stack.getCount();
-                stack = network.insert(stack);
+                try {
+                    stack = network.insert(stack);
+                } catch (RuntimeException | LinkageError e) {
+                    // Never lose the stack to a failing AE2 insert: it drops at the feet below.
+                    LogManager.getLogger("SprawlCrafting").warn("Network insert failed, dropping {} instead", stack, e);
+                }
                 stored = stack.getCount() < before;
             }
         }

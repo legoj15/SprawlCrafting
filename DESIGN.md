@@ -289,7 +289,9 @@ AE2-UEL, see the 1.12.2 section); other lines are follow-ups #27 (1.20.1), #28 (
   inventory (JEI) or is left to AE2 entirely (REI).
 - **Accepted limits.** A connected but power-starved network can still cancel a job (counts are
   simulated per item, not in aggregate; no item loss). Items in the terminal's own 3x3 grid are
-  not counted. A paused job has no player cancel yet (#31).
+  not counted. A paused job has no player cancel yet (#31). A newer 1.21.1 client on an older
+  SprawlCrafting server counts the network client-side and offers crafts the server then refuses
+  with a message (no client-visible server capability exists for it; harmless).
 
 ## Client craftability across versions
 
@@ -350,12 +352,13 @@ Design points specific to it:
   grid placer and final-step hand-off refuse at the terminal (the last craft lands in the
   inventory). JEI: direct recipes keep AE2's own "+", deferred go to the engine, unsolvable
   to the gather screen; a server without the network capability (hello capability byte)
-  gets AE2's handler for everything. A job that uses the network (planned with it, or having
-  drawn from it) pauses ("open station") when a later step needs network items while the
+  gets AE2's handler for everything. A job that uses the network (its plan needed it — planning is
+  inventory-first — or a craft drew from or stored overflow in it) pauses ("open station") when a later step needs network items while the
   terminal is closed or unpowered; steps that can run from the inventory keep running. A
   chest-dependent and a network-dependent job are tracked separately, so one source being
-  visible never cancels a job waiting on the other. Wireless crafting terminals are out
-  (different container families).
+  visible never cancels a job waiting on the other. On 1.12.2 wireless crafting terminals are out
+  (different container families there); on 1.21.1 AE2's `WirelessCraftingTermMenu` subclasses
+  the crafting-terminal menu and counts.
 - **One deliberate cosmetic cut:** the recipe book's variant-overlay ("alternates") bubble
   isn't given the yellow deferred styling — a fragile SRG-named inner-class hook for a
   rarely-seen bit of UI.

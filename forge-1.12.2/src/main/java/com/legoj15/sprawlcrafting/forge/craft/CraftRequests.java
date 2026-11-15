@@ -64,7 +64,12 @@ public final class CraftRequests {
         // Vanilla parity: return the grid's contents to the inventory first, so the planner (which
         // reads only the 36 main slots) can see items that were sitting in the grid.
         CraftExecutor.clearOpenCraftingGrid(player);
-        return finish(player, CraftPlanner.plan(player, recipe, GridContext.current(player)));
+        GridContext grid = GridContext.current(player);
+        PlanOutcome own = CraftPlanner.sessionWithoutNetwork(player, grid).plan(recipe);
+        if (own instanceof PlanOutcome.Planned || !NetworkTerminals.usable(player)) {
+            return finish(player, own, false);
+        }
+        return finish(player, CraftPlanner.plan(player, recipe, grid), true);
     }
 
     /** Start path keyed by a result item (the JEI "+" hook, which has the stack, not the recipe). */
@@ -73,19 +78,30 @@ public final class CraftRequests {
             return new StartOutcome.Busy();
         }
         CraftExecutor.clearOpenCraftingGrid(player);
-        return finish(player, CraftPlanner.planByResult(player, result, GridContext.current(player)));
+        GridContext grid = GridContext.current(player);
+        PlanOutcome own = CraftPlanner.sessionWithoutNetwork(player, grid).planByResult(result);
+        if (own instanceof PlanOutcome.Planned || !NetworkTerminals.usable(player)) {
+            return finish(player, own, false);
+        }
+        return finish(player, CraftPlanner.planByResult(player, result, grid), true);
     }
 
-    private static StartOutcome finish(EntityPlayerMP player, PlanOutcome outcome) {
+    /**
+     * Inventory-first, as in the root tree: a job the player's own items (plus grid and station chest)
+     * cover is planned without the network and never depends on it, so closing the terminal later does
+     * not pause it; only a job that needed the network ({@code plannedOnNetwork}) starts dependent. Any
+     * job still becomes dependent the first time a craft draws from or stores overflow in the network.
+     */
+    private static StartOutcome finish(EntityPlayerMP player, PlanOutcome outcome, boolean plannedOnNetwork) {
         if (outcome instanceof PlanOutcome.Planned) {
             CraftJob job = ((PlanOutcome.Planned) outcome).job();
             // Remember what was in the pool at plan time, so a later step that can't be satisfied
             // once that source is gone waits for it instead of cancelling on an item it simply can't
             // currently see: a station chest (open station) and, separately, a network terminal's
-            // network (AE2; only a terminal whose network is reachable put anything in the plan).
-            // A job can also become dependent later (CraftQueueManager flags what a craft consumed).
+            // network (AE2), the latter only when the plan needed it. A job can also become
+            // dependent later (CraftQueueManager flags what a craft consumed or stored).
             job.setChestDependent(ExternalSlots.present(player));
-            job.setNetworkDependent(NetworkTerminals.usable(player));
+            job.setNetworkDependent(plannedOnNetwork);
             CraftQueueManager.start(player, job);
             return new StartOutcome.Started(job);
         }

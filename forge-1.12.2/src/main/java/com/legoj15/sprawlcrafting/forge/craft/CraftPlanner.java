@@ -118,7 +118,16 @@ public final class CraftPlanner {
     }
 
     public static Session session(EntityPlayer player, GridContext grid) {
-        return new Session(grid, snapshotMaterials(player));
+        return new Session(grid, snapshotMaterials(player, true));
+    }
+
+    /**
+     * A session over the inventory, grid and station chest only, without an open terminal's network.
+     * {@code CraftRequests} plans with this first, so a job the player's own items cover never depends
+     * on the network (as in the root tree's inventory-first planning).
+     */
+    public static Session sessionWithoutNetwork(EntityPlayer player, GridContext grid) {
+        return new Session(grid, snapshotMaterials(player, false));
     }
 
     /**
@@ -134,13 +143,15 @@ public final class CraftPlanner {
      * mirror on the client — under the same filter and key; sums saturate at
      * {@link Integer#MAX_VALUE} because a network can hold more than an int of one item.
      */
-    private static Map<ItemKey, Integer> snapshotMaterials(EntityPlayer player) {
+    private static Map<ItemKey, Integer> snapshotMaterials(EntityPlayer player, boolean network) {
         Map<ItemKey, Integer> counts = snapshotInventory(player.inventory);
         for (net.minecraft.inventory.Slot slot : ExternalSlots.materialSlots(player)) {
             addUsable(counts, slot.getStack());
         }
-        for (ItemStack stack : NetworkTerminals.stacks(player)) {
-            addUsable(counts, stack);
+        if (network) {
+            for (ItemStack stack : NetworkTerminals.stacks(player)) {
+                addUsable(counts, stack);
+            }
         }
         return counts;
     }
