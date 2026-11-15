@@ -31,10 +31,10 @@ public final class StationStorages {
 
         /**
          * Whether {@code menu} is one of this provider's station menus (by class), on either side. This
-         * marks stations whose screen needs its own recipe-viewer transfer handlers ({@link #menus}): the
-         * AE2 Crafting Terminal. It does not gate the final-grid hand-off: any station whose grid is a
-         * {@link CraftingGrids} grid takes it. A provider whose screen already has a fronted handler —
-         * the Sophisticated crafting upgrade — returns false.
+         * marks stations that need SprawlCrafting's own recipe-viewer transfer handlers ({@link #menus}
+         * for JEI, the REI handler's station branch). A provider whose menu already has a fronted
+         * handler — the Sophisticated crafting upgrade, through {@code SophisticatedCraftingTransferHandler}
+         * — returns false. The final-grid hand-off does not look at it.
          */
         boolean isStationMenu(AbstractContainerMenu menu);
 
