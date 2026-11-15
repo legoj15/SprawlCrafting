@@ -37,7 +37,7 @@ import net.minecraft.world.item.crafting.RecipeHolder;
  * <ul>
  *   <li>Only the 36 main inventory slots are read and written — never armor or offhand —
  *       so planning, consumption, and insertion all see the same item pool. The one addition is a
- *       crafting station the player has open ({@link StationStorages}, the AE2 Crafting Terminal),
+ *       crafting station the player has open ({@link StationStorages}: an AE2 Crafting Terminal, or a Sophisticated storage with a crafting upgrade),
  *       whose storage both the planner and {@link #craftOnce} add to the pool while it is open.</li>
  *   <li>Damaged, enchanted, or renamed stacks are never consumed, matching what the
  *       vanilla recipe book refuses to auto-fill ({@code StackedContents.accountSimpleStack}),
