@@ -5,6 +5,7 @@ import com.legoj15.sprawlcrafting.forge.client.ClientPlanCache;
 import com.legoj15.sprawlcrafting.forge.client.ServerPresence;
 import com.legoj15.sprawlcrafting.forge.craft.CraftPlanner;
 import com.legoj15.sprawlcrafting.forge.craft.GridContext;
+import com.legoj15.sprawlcrafting.forge.craft.NetworkTerminals;
 import com.legoj15.sprawlcrafting.forge.network.SprawlNetwork;
 
 import mezz.jei.api.gui.IRecipeLayout;
@@ -57,7 +58,10 @@ public final class NetworkTerminalTransferHandler extends DeferredCraftTransferH
     public IRecipeTransferError transferRecipe(Container container, IRecipeLayout recipeLayout,
                                                EntityPlayer player, boolean maxTransfer, boolean doTransfer) {
         IRecipeTransferHandler<Container> stock = original;
-        boolean engine = ServerPresence.networkTerminals() && SprawlConfig.jeiIntegration;
+        // An unpowered terminal is no station: the server plans it as the 2x2 inventory and would
+        // refuse 3x3 work, so AE2's handler takes everything until the network is back.
+        boolean engine = ServerPresence.networkTerminals() && SprawlConfig.jeiIntegration
+                && NetworkTerminals.usable(player);
         if (!engine) {
             JeiTintState.put(recipeLayout, null);
             // No usable engine: AE2's handler alone, or — when AE2 registered none — no "+" at all,

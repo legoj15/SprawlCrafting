@@ -157,9 +157,10 @@ public final class CraftExecutor {
 
         // Phase 2: apply — consume, collect remainders, insert the result into the player only. It
         // is not failure-free (a modded item's getContainerItem or an insert can throw), so anything
-        // taken from the network and not yet consumed is put back before the error propagates.
+        // taken from the network and not yet consumed is put back, and remainders already collected
+        // (empty buckets) go to the player, before the error propagates.
+        List<ItemStack> remainders = new ArrayList<ItemStack>();
         try {
-            List<ItemStack> remainders = new ArrayList<ItemStack>();
             boolean touchedExternal = false;
             boolean usedChest = false;
             boolean usedNetwork = false;
@@ -185,8 +186,9 @@ public final class CraftExecutor {
                 usedNetwork |= source instanceof NetworkSource;
             }
             assignment.chargeTo(ledger);
-            for (ItemStack remainder : remainders) {
-                insertIntoMainInventory(player, remainder);
+            // Removed before inserting, so the failure path never hands one out twice.
+            while (!remainders.isEmpty()) {
+                insertIntoMainInventory(player, remainders.remove(0));
             }
             ItemStack crafted = result.copy();
             insertIntoMainInventory(player, result);
@@ -200,6 +202,13 @@ public final class CraftExecutor {
             return new CraftResult.Success(crafted, usedChest, usedNetwork);
         } catch (Throwable failure) {
             returnPreparedNetworkItems(player, sources, failure);
+            for (ItemStack remainder : remainders) {
+                try {
+                    insertIntoMainInventory(player, remainder);
+                } catch (Throwable refundFailure) {
+                    failure.addSuppressed(refundFailure);
+                }
+            }
             throw failure;
         }
     }
