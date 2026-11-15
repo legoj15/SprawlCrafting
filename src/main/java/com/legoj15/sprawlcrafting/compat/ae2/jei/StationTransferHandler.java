@@ -108,20 +108,15 @@ public class StationTransferHandler<C extends AbstractContainerMenu>
         if (!SprawlConfig.get().jeiIntegration()) {
             // Integration off: stock behaviour where AE2 has some, else no button, as without this handler.
             return stock != null
-                    ? stock.transferRecipe(container, recipe, recipeSlots, player, maxTransfer, doTransfer)
+                    ? busyOr(() -> stock.transferRecipe(container, recipe, recipeSlots, player, maxTransfer, doTransfer))
                     : helper.createInternalError();
         }
         // An offline terminal is no station: the server plans it as the 2x2 inventory (GridContext.current),
         // so classify the same way rather than offering 3x3 work the server would refuse — and with a stock
         // handler, hand the recipe to AE2 entirely, exactly what a terminal user without us would get.
-        // Busy before any hand-off to AE2 (offline terminal or green): AE2's fill pulls from the inventory
-        // and the network into a grid the running job cannot see. Same click as 1.21.1, where stock is null.
-        if (stock != null && ClientJobTracker.hasActiveJob()) {
-            return helper.createUserErrorWithTooltip(Component.translatable("sprawlcrafting.craft.busy"));
-        }
         boolean usable = DeferredCraftableCache.stationUsable();
         if (!usable && stock != null) {
-            return stock.transferRecipe(container, recipe, recipeSlots, player, maxTransfer, doTransfer);
+            return busyOr(() -> stock.transferRecipe(container, recipe, recipeSlots, player, maxTransfer, doTransfer));
         }
         GridContext grid = usable ? GridContext.CRAFTING_TABLE : GridContext.INVENTORY;
         Craftability craftability = DeferredCraftableCache.classify(holder, grid);
@@ -132,7 +127,7 @@ public class StationTransferHandler<C extends AbstractContainerMenu>
             }
             if (craftability == Craftability.DIRECT && stock != null) {
                 // AE2 lays the recipe into the terminal grid straight from the network: stock behaviour.
-                return stock.transferRecipe(container, recipe, recipeSlots, player, maxTransfer, doTransfer);
+                return busyOr(() -> stock.transferRecipe(container, recipe, recipeSlots, player, maxTransfer, doTransfer));
             }
             if (doTransfer) {
                 DeferredClickState.sendStartPacket(holder);
@@ -151,8 +146,21 @@ public class StationTransferHandler<C extends AbstractContainerMenu>
         }
         if (stock != null) {
             // Unsolvable with the needs helper off: AE2's own report of what the grid cannot fill.
-            return stock.transferRecipe(container, recipe, recipeSlots, player, maxTransfer, doTransfer);
+            return busyOr(() -> stock.transferRecipe(container, recipe, recipeSlots, player, maxTransfer, doTransfer));
         }
         return helper.createUserErrorWithTooltip(Component.translatable("jei.tooltip.error.recipe.transfer.missing"));
+    }
+
+    /**
+     * Every hand-off to AE2's own handler goes through here: while a job runs it is refused with the busy
+     * tooltip, because AE2's fill pulls from the inventory and the network into a grid the running job
+     * cannot see (1.21.1, with no stock handler, shows busy for the same clicks). Our own gather list is
+     * not a hand-off and stays available mid-job, as at the crafting table.
+     */
+    private IRecipeTransferError busyOr(java.util.function.Supplier<IRecipeTransferError> toStock) {
+        if (ClientJobTracker.hasActiveJob()) {
+            return helper.createUserErrorWithTooltip(Component.translatable("sprawlcrafting.craft.busy"));
+        }
+        return toStock.get();
     }
 }
