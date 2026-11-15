@@ -288,8 +288,9 @@ Terminal shows its ME network, so while one is open **and usable** (link connect
 the network's plain items count as craft material. Nothing off-screen counts: no plain ME
 terminal, no adjacent storage. Shipped on `1.21.1-neoforge` (AE2 19.x), `1.20.1-forge` (AE2 15.x,
 #27) and 1.12.2 (rv6 and AE2-UEL, see the 1.12.2 section); other lines are follow-ups #27
-(1.20.1-fabric), #28 (26.x, needs
-`DeferredCraftSync` to fold the network in), #29 (1.16.5).
+(1.20.1-fabric), #28 (26.x; the `DeferredCraftSync` fold is in since #33, only the AE2 provider is
+left), #29 (1.16.5). The Sophisticated crafting upgrade is a second provider (see "Sophisticated
+crafting upgrade").
 
 - **Seam.** Shared code talks only to `craft/StationStorage` (counts, extract, insert) through
   `craft/StationStorages`; the AE2 provider lives in `compat/ae2`, compiled only on nodes that
@@ -437,8 +438,19 @@ anywhere, and the last craft is handed to the upgrade's grid.
   act on the upgrade's slots; if two players have the same storage open and its upgrade inventory is shared,
   one player's request moves the other's grid items into the requester's inventory (moved once, never
   duplicated). Accepted; not exercised in game.
-- **Ingredient sourcing.** Sophisticated's own direct transfer also draws from the storage's contents; the
-  deferred planner and executor read only the player's 36 main slots (the same open question as #2).
+- **Ingredient sourcing (issue #33).** While a Sophisticated screen with a crafting upgrade is open, its
+  storage is a crafting station (`compat/sophisticated/SophisticatedStation`, the #2 seam): the planner,
+  executor, gather list and the 26.x server sync count its plain items, inventory first. Gate: a crafting
+  upgrade must resolve (`CraftingGrids.isFullGrid`), else the storage does not count, since a usable
+  station makes `GridContext.current` claim a 3×3. `isStationMenu` stays false: the upgrade is a
+  `CraftingGrids` grid with the normal hand-off and its own JEI handler. Draws and inserts go slot by
+  slot, because Core's whole-handler extract asks the slot tracker and `ISlotTracker.Noop` returns
+  nothing. The final-grid hand-off lays out from the inventory only: when the final ingredients sit in
+  the storage it falls back to auto-crafting (drawing from the storage). Draws loop per slot (one
+  1.20.1/1.21.1 `extractItem` call yields at most a vanilla stack, though a stack-upgraded slot holds
+  more), and blocked slots (`isSlotAccessible`) neither count nor give. Overflow offered to the storage
+  obeys its upgrades: a Void upgrade set to void overflow of that item voids it, as it would a
+  shift-click; that is the player's setting, accepted. Not playtested in game yet.
 
 ## The 1.12.2 (Forge) port
 

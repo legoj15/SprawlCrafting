@@ -29,7 +29,14 @@ public final class StationStorages {
     /** One station type, implemented in compat code. */
     public interface Provider {
 
-        /** Whether {@code menu} is one of this provider's station menus (by class), on either side. */
+        /**
+         * Whether {@code menu} is one of this provider's station menus (by class), on either side. This
+         * marks stations whose grid is not a {@link CraftingGrids} grid: they need the final-grid
+         * hand-off skipped ({@code CraftQueueManager.canHandOff}) and their own recipe-viewer transfer
+         * handlers ({@link #menus}). A provider whose grid is a CraftingGrids grid — the Sophisticated
+         * crafting upgrade, laid out by the shared hand-off and already fronted by its own JEI
+         * handler — returns false.
+         */
         boolean isStationMenu(AbstractContainerMenu menu);
 
         /**
@@ -67,6 +74,7 @@ public final class StationStorages {
      */
     public static void bootstrap() {
         tryRegister("ae2", "com.legoj15.sprawlcrafting.compat.ae2.Ae2Station");
+        tryRegister("sophisticatedcore", "com.legoj15.sprawlcrafting.compat.sophisticated.SophisticatedStation");
     }
 
     private static void tryRegister(String modId, String providerClass) {
