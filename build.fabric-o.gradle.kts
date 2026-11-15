@@ -162,6 +162,9 @@ tasks.withType<JavaCompile>().configureEach {
     if (project.findProperty("ae2_version") == null) {
         exclude("**/compat/ae2/**")
     }
+    if (project.findProperty("jei_version") == null) {
+        exclude("**/compat/ae2/jei/**") // AE2 without JEI: the server-side station still compiles
+    }
 }
 
 tasks.test {

@@ -176,13 +176,16 @@ public final class CraftExecutor {
         assignment.chargeTo(ledger);
         // Results and remainders go to the main inventory as always; with a station open, what would
         // otherwise drop at the player's feet goes into its storage first.
+        // Overflow stored in the station counts as reliance too: the chain's own item now sits in its
+        // storage, so closing the station must pause the job, not cancel it.
+        boolean storedInStation = false;
         for (ItemStack remainder : remainders) {
-            insertIntoMainInventory(player, remainder, station);
+            storedInStation |= insertIntoMainInventory(player, remainder, station);
         }
         ItemStack crafted = result.copy();
-        insertIntoMainInventory(player, result.copy(), station);
+        storedInStation |= insertIntoMainInventory(player, result.copy(), station);
         ledger.produced(crafted.getItem(), crafted.getCount());
-        return new CraftResult.Success(crafted, !stationTakes.isEmpty());
+        return new CraftResult.Success(crafted, !stationTakes.isEmpty() || storedInStation);
     }
 
     /**
@@ -787,8 +790,9 @@ public final class CraftExecutor {
     /**
      * As {@link #insertIntoMainInventory(ServerPlayer, ItemStack)}, but overflow goes into {@code station}
      * (an open crafting station's storage, null for none) before whatever it refuses drops at the feet.
+     * Returns whether the station took any of it.
      */
-    private static void insertIntoMainInventory(ServerPlayer player, ItemStack stack, StationStorage station) {
+    private static boolean insertIntoMainInventory(ServerPlayer player, ItemStack stack, StationStorage station) {
         Inventory inventory = player.getInventory();
         for (int i = 0; i < Inventory.INVENTORY_SIZE && !stack.isEmpty(); i++) {
             ItemStack existing = inventory.getItem(i);
@@ -808,8 +812,11 @@ public final class CraftExecutor {
             }
         }
         inventory.setChanged();
+        boolean stored = false;
         if (!stack.isEmpty() && station != null) {
+            int before = stack.getCount();
             stack = insertIntoStation(station, stack);
+            stored = stack.getCount() < before;
         }
         if (!stack.isEmpty()) {
             // 26.3 replaced the (throwRandomly, retainOwnership) booleans with (retainOwnership,
@@ -820,6 +827,7 @@ public final class CraftExecutor {
             player.drop(stack, false);
             //?}
         }
+        return stored;
     }
 
     private static Component describe(Ingredient ingredient) {
