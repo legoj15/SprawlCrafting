@@ -26,6 +26,10 @@ val neoVersionRange = property("neoforge_version_range") as String
 val mcVersionRange = property("minecraft_version_range") as String
 // REI ships on the 1.21.1 line only; its presence is signalled by a node-level rei_version.
 val hasRei = project.findProperty("rei_version") != null
+// Applied Energistics 2 (optional): its Crafting Terminal counts as a crafting station (issue #2).
+// Signalled by a node-level ae2_version; without it compat/ae2 is not compiled at all.
+val ae2Version = project.findProperty("ae2_version") as String?
+val hasAe2 = ae2Version != null
 
 // ─── Stonecutter source replacements ─────────────────────────────────────────────────────────
 // The forward-port regex tiers (ResourceLocation -> Identifier, Minecraft.screen -> gui.screen(),
@@ -62,6 +66,12 @@ repositories {
     maven("https://maven.blamejared.com")   // JEI
     maven("https://maven.shedaniel.me/")     // REI
     maven("https://maven.parchmentmc.org")
+    // Modrinth's maven (AE2 and its GuideME runtime dependency), scoped to its own group so no other
+    // dependency is ever looked up there.
+    exclusiveContent {
+        forRepository { maven("https://api.modrinth.com/maven") }
+        filter { includeGroup("maven.modrinth") }
+    }
     mavenCentral()
 }
 
@@ -145,6 +155,17 @@ dependencies {
         }
     }
 
+    if (hasAe2) {
+        // AE2 (optional): compile only; the shipped jar never requires it (compat/ae2 is reached
+        // reflectively once ModList reports "ae2" loaded). -Psc.ae2=true also puts AE2 and GuideME (its
+        // hard runtime dependency) on the dev runtime, so runClient can open a Crafting Terminal.
+        compileOnly("maven.modrinth:ae2:$ae2Version")
+        if ((project.findProperty("sc.ae2") as String?) == "true") {
+            runtimeOnly("maven.modrinth:ae2:$ae2Version")
+            runtimeOnly("maven.modrinth:guideme:${property("guideme_version")}")
+        }
+    }
+
     // The solver library: compiled against and on the dev runtime (implementation), nested in the
     // shipped jar with a [current, next-major) range (jarJar). On the 1.x lines FML does not load a
     // plain non-mod jar from the JVM classpath (runServer dies with NoClassDefFoundError on the first
@@ -173,6 +194,9 @@ tasks.withType<JavaCompile>().configureEach {
     if (!hasRei) {
         exclude("**/compat/rei/**")
         exclude("**/*ReiPlugin*")
+    }
+    if (!hasAe2) {
+        exclude("**/compat/ae2/**")    // AE2 Crafting Terminal as a crafting station (issue #2)
     }
     // Surface the full cross-cliff error set during the 26.x port (javac caps at 100 by default).
     options.compilerArgs.addAll(listOf("-Xmaxerrs", "2000", "-Xmaxwarns", "200"))

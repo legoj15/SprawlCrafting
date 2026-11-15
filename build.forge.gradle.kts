@@ -229,10 +229,16 @@ tasks.withType<JavaCompile>().configureEach {
     exclude("**/*ModMenu*")            // Mod Menu is Fabric-only
     if (!hasJei) {
         exclude("**/compat/jei/**")    // no Forge JEI build on this line (26.x)
+        exclude("**/compat/ae2/jei/**")
     }
     if (!hasRei) {
         exclude("**/compat/rei/**")
         exclude("**/*ReiPlugin*")
+    }
+    // AE2 Crafting Terminal station (issue #2): compiled only where a node pins ae2_version (none on
+    // Forge yet; opting in also needs the compileOnly AE2 dependency, as build.neoforge.gradle.kts adds).
+    if (project.findProperty("ae2_version") == null) {
+        exclude("**/compat/ae2/**")
     }
     // Surface the full cross-cliff error set during ports (javac caps at 100 by default).
     options.compilerArgs.addAll(listOf("-Xmaxerrs", "2000", "-Xmaxwarns", "200"))

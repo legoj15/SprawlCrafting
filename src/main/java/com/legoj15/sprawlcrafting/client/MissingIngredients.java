@@ -73,8 +73,9 @@ public final class MissingIngredients {
         if (mc.player == null || mc.level == null) {
             return ShortfallView.unavailable();
         }
+        // With a crafting station open (AE2 Crafting Terminal) its storage counts as already gathered.
         return CraftPlanner.session(mc.level.getRecipeManager(), mc.level.registryAccess(),
-                mc.player.getInventory(), grid).shortfall(holder);
+                mc.player.getInventory(), grid, DeferredCraftableCache.stationCounts()).shortfall(holder);
     }
 
     public static void reset() {

@@ -14,6 +14,7 @@ import com.legoj15.sprawlcrafting.network.CraftPreviewPayload;
 import com.legoj15.sprawlcrafting.network.CraftProgressPayload;
 import com.legoj15.sprawlcrafting.network.CraftingScreenStatePayload;
 import com.legoj15.sprawlcrafting.network.DeferredCraftableSyncPayload;
+import com.legoj15.sprawlcrafting.network.ProgressStatesV2Payload;
 import com.legoj15.sprawlcrafting.network.RequestCraftPreviewPayload;
 import com.legoj15.sprawlcrafting.network.RequestShortfallByDisplayPayload;
 import com.legoj15.sprawlcrafting.network.RequestShortfallByRecipePayload;
@@ -70,6 +71,11 @@ public class NeoForgeMod {
                 // Lambda body, not a method reference: keeps the client-only
                 // tracker class from loading on the dedicated server.
                 (payload, context) -> ClientJobTracker.accept(payload));
+        // Capability marker only (never sent): tells the server this client decodes PAUSED_STATION.
+        registrar.playToClient(
+                ProgressStatesV2Payload.TYPE,
+                ProgressStatesV2Payload.STREAM_CODEC,
+                (payload, context) -> { });
 
         // 26.x server-driven recipe-book layer (1.21.1 computes it client-side, no payloads).
         //? if >=1.21.11 {

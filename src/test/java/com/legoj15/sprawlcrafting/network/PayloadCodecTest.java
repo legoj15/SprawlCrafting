@@ -197,6 +197,7 @@ class PayloadCodecTest {
         assertTrue(CraftProgressPayload.State.READY_IN_GRID.isTerminal());
         assertFalse(CraftProgressPayload.State.CRAFTING.isTerminal());
         assertFalse(CraftProgressPayload.State.PAUSED.isTerminal());
+        assertFalse(CraftProgressPayload.State.PAUSED_STATION.isTerminal());
     }
 
     @Test

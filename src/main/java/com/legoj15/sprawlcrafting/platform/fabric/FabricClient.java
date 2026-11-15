@@ -26,6 +26,10 @@ public class FabricClient implements ClientModInitializer {
         // Handler runs on the render thread (Fabric dispatches before invoking).
         ClientPlayNetworking.registerGlobalReceiver(CraftProgressPayload.TYPE,
                 (payload, context) -> ClientJobTracker.accept(payload));
+        // Capability marker only (never sent): registering it tells the server this client decodes
+        // PAUSED_STATION (see ProgressStatesV2Payload).
+        ClientPlayNetworking.registerGlobalReceiver(com.legoj15.sprawlcrafting.network.ProgressStatesV2Payload.TYPE,
+                (payload, context) -> { });
         //?} else {
         /*// Pre-1.20.5: channel id + raw buffer, delivered on the netty thread — decode there, then
         // hand the snapshot to the render thread.

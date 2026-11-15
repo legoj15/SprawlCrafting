@@ -123,6 +123,10 @@ final class ForgeNetwork {
                 // loading on the dedicated server.
                 .addMain(CraftProgressPayload.TYPE, widen(CraftProgressPayload.STREAM_CODEC),
                         (payload, context) -> ClientJobTracker.accept(payload))
+                // Capability marker only (never sent): tells the server this client decodes PAUSED_STATION.
+                .addMain(com.legoj15.sprawlcrafting.network.ProgressStatesV2Payload.TYPE,
+                        widen(com.legoj15.sprawlcrafting.network.ProgressStatesV2Payload.STREAM_CODEC),
+                        (payload, context) -> { })
                 //? if >=1.21.11 {
                 /*.addMain(DeferredCraftableSyncPayload.TYPE, widen(DeferredCraftableSyncPayload.STREAM_CODEC),
                         (payload, context) -> DeferredCraftableCache.accept(payload.displayIds(), payload.recipeIds()))

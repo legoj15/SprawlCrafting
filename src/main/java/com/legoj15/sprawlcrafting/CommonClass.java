@@ -1,5 +1,6 @@
 package com.legoj15.sprawlcrafting;
 
+import com.legoj15.sprawlcrafting.craft.StationStorages;
 import com.legoj15.sprawlcrafting.platform.Services;
 import com.legoj15.solver.RecipeGraphSolver;
 
@@ -17,5 +18,7 @@ public class CommonClass {
         Constants.LOG.info("SprawlCrafting init on {} ({}); solver library {} {} loaded",
                 Services.PLATFORM.getPlatformName(), Services.PLATFORM.getEnvironmentName(),
                 solver.getName(), version != null ? version : "(version not in manifest)");
+        // Crafting stations from optional mods (AE2's Crafting Terminal), only when that mod is loaded.
+        StationStorages.bootstrap();
     }
 }

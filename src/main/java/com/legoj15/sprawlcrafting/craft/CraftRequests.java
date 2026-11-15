@@ -37,8 +37,13 @@ public final class CraftRequests {
         // acting. We intercept the click, so replicate it here — and so the planner (which reads
         // only the 36 main slots) can see items that were sitting in the grid.
         CraftExecutor.clearOpenCraftingGrid(player);
-        PlanOutcome outcome = CraftPlanner.plan(player, holder, GridContext.current(player));
+        // A crafting station open right now (AE2 Crafting Terminal) adds its storage to the pool: the
+        // screen shows it, so its items are craft material (issue #2).
+        StationStorage station = StationStorages.open(player);
+        PlanOutcome outcome = CraftPlanner.plan(player, holder, GridContext.current(player),
+                station == null ? java.util.Map.of() : station.counts());
         if (outcome instanceof PlanOutcome.Planned planned) {
+            planned.job().setStationDependent(station != null);
             CraftQueueManager.start(player, planned.job());
             return new StartOutcome.Started(planned.job());
         }
