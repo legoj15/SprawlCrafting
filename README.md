@@ -41,7 +41,7 @@ Right-click a **red** recipe (or left-click the **orange** gather button in JEI/
 - **1.12.2** also requires **MixinBooter** on the client - it loads SprawlCrafting's recipe-book and JEI mixins, and without it the game stops at an error screen telling you to install it. (A dedicated server doesn't need it.)
 - **Optional integrations:**
   - **JEI** - adds the deferred-craft and gather buttons (all Minecraft versions, except Forge 26.x: no JEI exists for it)
-  - **REI** - same buttons (1.21.1 on Fabric or NeoForge)
+  - **REI** - same buttons (1.20.1 Fabric, 1.21.1 Fabric, 1.21.1 NeoForge; no REI exists for Forge or for 26.x)
   - **Mod Menu** - in-game config button (all Fabric versions)
 
 Multiplayer is supported; install the mod on both the client and the server. A vanilla client can still join a SprawlCrafting server (it just won't see any of the features), and a SprawlCrafting client on a vanilla server simply gets no deferred-craft offers.
@@ -51,13 +51,13 @@ Multiplayer is supported; install the mod on both the client and the server. A v
 Every setting defaults to **on** and can be changed in-game or by editing the config file; edits apply immediately.
 
 - **Fabric / NeoForge** (1.21.1, 26.1.2, 26.2, 26.3) and **Forge** (1.20.1, 1.21.1, 26.1.2, 26.2, 26.3): the file is `config/sprawlcrafting.json`; edit it in-game via Mod Menu (Fabric) or the mod-config screen (NeoForge, Forge).
-- **1.12.2 (Forge):** the file is `config/sprawlcrafting.cfg`; edit it in-game via the **Config** button on SprawlCrafting's entry in the Mods list. This build has three settings, not four - there's no REI toggle (REI is Fabric-only) - and they appear under their display names (*Sound effects*, *JEI integration*, *Needs helper*).
+- **1.12.2 (Forge):** the file is `config/sprawlcrafting.cfg`; edit it in-game via the **Config** button on SprawlCrafting's entry in the Mods list. This build has three settings, not four - there's no REI toggle (no REI exists for 1.12.2) - and they appear under their display names (*Sound effects*, *JEI integration*, *Needs helper*).
 
 | Setting | What it does |
 |---|---|
 | `sound_effects` | the per-step craft "pop" sound |
 | `jei_integration` | master switch for all JEI buttons |
-| `rei_integration` | master switch for all REI buttons (Fabric 1.21.1 only) |
+| `rei_integration` | master switch for all REI buttons (only where REI exists; see above) |
 | `needs_system` | the "what do I still need" screen, right-clicking red recipes, the tooltip hint, and the orange gather button |
 
 ## Building from source
