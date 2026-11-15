@@ -1,7 +1,8 @@
 # Handoff (2026-11-14, #2 AE2 Crafting Terminal station)
 
-Branch `claude/ae2-crafting-terminal-station-b6c5c4` (worktree of the same name), on top of main 2a1b059.
-Not merged, not pushed. Issue #2 claimed.
+MERGED to main 2026-11-14 (merge fecdb64 brought main's #30/#32 Sophisticated work in; main fast-forwarded).
+NOT pushed (needs the owner's go-ahead). Merged untested at the owner's request: the owner's 1.21.1 test
+pack uses REI, and the AE2 terminal has no vanilla recipe book.
 
 ## Done
 - AE2 Crafting Terminal counts as a crafting station (owner decision 2026-11-14): 1.21.1-neoforge
@@ -18,9 +19,11 @@ Not merged, not pushed. Issue #2 claimed.
    own fill; 1.21.1 JEI: engine; REI: AE2's fill); red -> gather list; close terminal mid-job -> "Paused
    — open station", reopen resumes; unpowered terminal; full inventory overflow lands in the network;
    network drained mid-craft -> clean cancel, totals unchanged; wireless crafting terminal on 1.21.1.
-2. Merge to main (user's call), then push (user's go-ahead); "Closes #2" on the merge.
+   REI-only packs CAN test it: at a usable terminal our REI handler takes yellow (needs intermediates)
+   and red (gather list); green falls through to AE2's own REI grid fill by design.
+2. Push main (owner's go-ahead).
 3. Follow-ups: #27 (1.20.1), #28 (26.x, DeferredCraftSync), #29 (1.16.5), #31 (cancel paused job).
 4. Older items from the previous handoff still open: #8, #3, #14, #20-#26.
 
 ## Uncommitted changes
-None besides this file (committed with it).
+None.
