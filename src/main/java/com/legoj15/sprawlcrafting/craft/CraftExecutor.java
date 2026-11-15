@@ -468,11 +468,17 @@ public final class CraftExecutor {
             }
         } catch (Throwable t) {
             // As in craftOnce: the drawn share is real. Cells before the failing one hold their items
-            // (visible in the grid); the station's share for the failing cell and every later one is
-            // still in hand, so it goes back (station, else inventory, else feet) before rethrowing.
+            // (visible in the grid); the station's share for every later cell is still in hand, and the
+            // failing cell's too unless its write landed before the throw (a throwing result recompute
+            // runs after the write; the grid was empty before placing), so only an empty cell's item
+            // goes back (station, else inventory, else feet). One failed give-back never stops the rest.
             for (int rest = cell; rest < slots.length; rest++) {
-                if (slots[rest] == STATION_CELL) {
-                    giveBack(player, station, stationItems[rest], 1);
+                if (slots[rest] == STATION_CELL && (rest > cell || inputs.get(rest).getItem().isEmpty())) {
+                    try {
+                        giveBack(player, station, stationItems[rest], 1);
+                    } catch (Throwable giveBackFailure) {
+                        t.addSuppressed(giveBackFailure);
+                    }
                 }
             }
             throw t;
@@ -482,10 +488,14 @@ public final class CraftExecutor {
         if (result.isEmpty() || !ItemStack.isSameItem(result, expected)) {
             // The station's share goes back where it came from first (station, else inventory, else feet),
             // so it never strands in the grid where the fallback auto-craft could not see it.
+            // Each cell is emptied before its item goes back, so a cell that will not clear keeps its
+            // item (visible) and gets no second copy.
             for (int c = 0; c < slots.length; c++) {
                 if (slots[c] == STATION_CELL) {
                     inputs.get(c).set(ItemStack.EMPTY);
-                    giveBack(player, station, stationItems[c], 1);
+                    if (inputs.get(c).getItem().isEmpty()) {
+                        giveBack(player, station, stationItems[c], 1);
+                    }
                 }
             }
             returnGridToInventory(player, menu, grid);
