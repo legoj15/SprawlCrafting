@@ -37,13 +37,24 @@ public final class CraftRequests {
         // acting. We intercept the click, so replicate it here — and so the planner (which reads
         // only the 36 main slots) can see items that were sitting in the grid.
         CraftExecutor.clearOpenCraftingGrid(player);
-        // A crafting station open right now (AE2 Crafting Terminal) adds its storage to the pool: the
-        // screen shows it, so its items are craft material (issue #2).
-        StationStorage station = StationStorages.open(player);
-        PlanOutcome outcome = CraftPlanner.plan(player, holder, GridContext.current(player),
-                station == null ? java.util.Map.of() : station.counts());
+        GridContext grid = GridContext.current(player);
+        // The inventory alone first: a job it can cover never depends on a crafting station, so closing the
+        // station (or the network losing power) later must not pause it. Only when the inventory falls
+        // short does an open, usable station (AE2 Crafting Terminal) add its storage to the pool, the
+        // screen shows it so its items are craft material (issue #2); a plan made that way is
+        // station-dependent. The station's counts are a storage scan, so they are taken only then.
+        PlanOutcome outcome = CraftPlanner.plan(player, holder, grid);
+        boolean stationDependent = false;
+        if (outcome instanceof PlanOutcome.Unsolvable || outcome instanceof PlanOutcome.TooComplex) {
+            StationStorage station = StationStorages.open(player);
+            if (station != null) {
+                // Even when still unsolvable, report this outcome: its shortfall already counts the network.
+                outcome = CraftPlanner.plan(player, holder, grid, station.counts());
+                stationDependent = outcome instanceof PlanOutcome.Planned;
+            }
+        }
         if (outcome instanceof PlanOutcome.Planned planned) {
-            planned.job().setStationDependent(station != null);
+            planned.job().setStationDependent(stationDependent);
             CraftQueueManager.start(player, planned.job());
             return new StartOutcome.Started(planned.job());
         }

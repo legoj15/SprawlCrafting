@@ -14,6 +14,7 @@ import appeng.api.networking.energy.IEnergySource;
 import appeng.api.networking.security.IActionSource;
 import appeng.api.stacks.AEItemKey;
 import appeng.api.stacks.AEKey;
+import appeng.api.storage.ITerminalHost;
 import appeng.api.storage.MEStorage;
 import appeng.api.storage.StorageHelper;
 import appeng.menu.me.common.GridInventoryEntry;
@@ -43,13 +44,26 @@ import net.minecraft.world.item.ItemStack;
  *       {@code host.getInventory()} (which must not be called again), so it is read reflectively.</li>
  *   <li>{@code AEBaseMenu.getActionSource()} is the menu's own {@code PlayerSource(player, actionHost)},
  *       the source AE2 itself uses for terminal extractions ({@code moveOneStackToPlayer}).</li>
- *   <li>{@code MEStorageMenu.getLinkStatus().connected()} is what AE2's own {@code canInteractWithGrid}
- *       and client {@code hasIngredient} check; an unlinked terminal is not a usable station.</li>
+ *   <li>{@code ILinkStatus.connected()} is what AE2's own {@code canInteractWithGrid} and client
+ *       {@code hasIngredient} check. For a terminal on a grid node, {@code ILinkStatus.ofManagedNode}
+ *       reports connected exactly when {@code IManagedGridNode.isOnline()}; the other cases are "Out of
+ *       power" ({@code !isPowered()}) and "No channel", so an unpowered network is already disconnected.
+ *       A wireless terminal's host folds range and the item's charge into the same status.</li>
+ *   <li>{@code MEStorageMenu.getLinkStatus()} is a copy refreshed once per menu tick
+ *       ({@code broadcastChanges -> updateLinkStatus}) and pushed to the client; the live value is
+ *       {@code getHost().getLinkStatus()} ({@code ITerminalHost}).</li>
+ *   <li>{@code StorageHelper.poweredExtraction} caps an extraction at what the energy source can pay
+ *       for (one power unit per item), so a connected but power-starved network delivers less than it
+ *       stores.</li>
  *   <li>Client side, {@code MEStorageMenu.getClientRepo()} is the screen's repo;
  *       {@code IClientRepo.getAllEntries()} gives {@code GridInventoryEntry}s with the key and stored
  *       amount the server synced (already filtered by the menu's view).</li>
  * </ul>
  * Only plain {@link AEItemKey}s (no component patch) count, matching {@link StationStorage}'s contract.
+ *
+ * <p>"Usable" (the {@link StationStorages.Provider} contract) means the terminal is open and its link
+ * is connected. Server side that is asked live; the client mirror can only see the synced copy. An
+ * unusable terminal counts as no station at all: no counts, no draws.
  */
 public final class Ae2Station implements StationStorages.Provider {
 
@@ -78,9 +92,18 @@ public final class Ae2Station implements StationStorages.Provider {
         return menu instanceof CraftingTermMenu;
     }
 
+    /**
+     * Server side: whether {@code menu}'s network is online right now. Asks the host, not the menu's
+     * per-tick copy, so a network that lost power this tick is already unusable.
+     */
+    private static boolean usable(CraftingTermMenu menu) {
+        ITerminalHost host = menu.getHost();
+        return host != null && host.getLinkStatus().connected();
+    }
+
     @Override
     public StationStorage open(ServerPlayer player) {
-        if (!(player.containerMenu instanceof CraftingTermMenu menu) || !menu.getLinkStatus().connected()) {
+        if (!(player.containerMenu instanceof CraftingTermMenu menu) || !usable(menu)) {
             return null;
         }
         MEStorage storage;
@@ -94,6 +117,7 @@ public final class Ae2Station implements StationStorages.Provider {
 
     @Override
     public Map<Item, Long> clientCounts(AbstractContainerMenu menu) {
+        // The client only has the synced copy of the link status; a disconnected terminal has no counts.
         if (!(menu instanceof CraftingTermMenu terminal) || !terminal.getLinkStatus().connected()) {
             return null;
         }
@@ -132,13 +156,29 @@ public final class Ae2Station implements StationStorages.Provider {
             return key != null && menu.isKeyVisible(key) ? key : null;
         }
 
+        /**
+         * What extracting {@code limit} of {@code key} would really deliver right now: the same
+         * energy-capped call {@link #extract} makes, simulated. The single definition of "available" that
+         * {@link #counts} and {@link #available} share, so a plan never counts what the executor's
+         * extraction would refuse because the network cannot pay for it.
+         */
+        private long deliverable(AEItemKey key, long limit) {
+            return StorageHelper.poweredExtraction(energy, storage, key, limit, source, Actionable.SIMULATE);
+        }
+
         @Override
         public Map<Item, Long> counts() {
             Map<Item, Long> counts = new HashMap<>();
+            if (!usable(menu)) {
+                return counts;
+            }
             for (Object2LongMap.Entry<AEKey> entry : storage.getAvailableStacks()) {
                 if (entry.getKey() instanceof AEItemKey key && !key.hasComponents() && entry.getLongValue() > 0
                         && menu.isKeyVisible(key) && CraftExecutor.usableAsIngredient(key.toStack())) {
-                    counts.merge(key.getItem(), entry.getLongValue(), Ae2Station::saturatingAdd);
+                    long deliverable = deliverable(key, entry.getLongValue());
+                    if (deliverable > 0) {
+                        counts.merge(key.getItem(), deliverable, Ae2Station::saturatingAdd);
+                    }
                 }
             }
             return counts;
@@ -147,8 +187,7 @@ public final class Ae2Station implements StationStorages.Provider {
         @Override
         public long available(Item item, long limit) {
             AEItemKey key = key(item);
-            return key == null || limit <= 0 ? 0
-                    : StorageHelper.poweredExtraction(energy, storage, key, limit, source, Actionable.SIMULATE);
+            return key == null || limit <= 0 || !usable(menu) ? 0 : deliverable(key, limit);
         }
 
         @Override
@@ -164,7 +203,10 @@ public final class Ae2Station implements StationStorages.Provider {
         @Override
         public ItemStack insert(ItemStack stack) {
             AEItemKey key = stack.isEmpty() ? null : AEItemKey.of(stack);
-            if (key == null || !menu.isKeyVisible(key)) {
+            // Only component-less stacks go in: counts()/extract() only ever see plain keys, so anything
+            // carrying components (damage, enchantments, a name, potion contents...) stored here could
+            // never be drawn again. Those fall through to the player's inventory, then the feet.
+            if (key == null || key.hasComponents() || !menu.isKeyVisible(key)) {
                 return stack;
             }
             long inserted = StorageHelper.poweredInsert(energy, storage, key, stack.getCount(), source,

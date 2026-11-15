@@ -97,6 +97,12 @@ repositories {
     mavenLocal()
     maven("https://maven.blamejared.com")   // JEI
     maven("https://maven.parchmentmc.org")
+    // Modrinth's maven (AE2, for nodes that pin ae2_version), scoped to its own group so no other
+    // dependency is ever looked up there.
+    exclusiveContent {
+        forRepository { maven("https://api.modrinth.com/maven") }
+        filter { includeGroup("maven.modrinth") }
+    }
     mavenCentral()
 }
 
@@ -193,6 +199,20 @@ dependencies {
         }
     }
 
+    // Applied Energistics 2 (optional; issue #2): compile only, for nodes that pin ae2_version, so
+    // compat/ae2 (the Crafting Terminal as a crafting station) compiles. On SRG lines the Forge jar is
+    // published reobfuscated, so it is renamed to dev names exactly like JEI's Forge API above. The
+    // shipped jar never requires AE2 (the compat is reached reflectively once the loader reports "ae2").
+    // Compiling needs no GuideME: AE2 references it only from its guide classes, which the compat never
+    // touches (build.neoforge.gradle.kts adds it on its dev runtime alone).
+    (project.findProperty("ae2_version") as String?)?.let {
+        if (srgRuntime) {
+            compileOnly(renamer!!.dependency("maven.modrinth:ae2:$it"))
+        } else {
+            compileOnly("maven.modrinth:ae2:$it")
+        }
+    }
+
     // The solver library: compiled against and on the dev runtime (implementation), nested in the
     // shipped jar with a [current, next-major) range (jarJar). Never shaded (see the header above).
     implementation("com.legoj15:solver:$solverVersion")
@@ -236,7 +256,7 @@ tasks.withType<JavaCompile>().configureEach {
         exclude("**/*ReiPlugin*")
     }
     // AE2 Crafting Terminal station (issue #2): compiled only where a node pins ae2_version (none on
-    // Forge yet; opting in also needs the compileOnly AE2 dependency, as build.neoforge.gradle.kts adds).
+    // Forge yet; the compileOnly AE2 dependency above is wired, so opting in is the property).
     if (project.findProperty("ae2_version") == null) {
         exclude("**/compat/ae2/**")
     }

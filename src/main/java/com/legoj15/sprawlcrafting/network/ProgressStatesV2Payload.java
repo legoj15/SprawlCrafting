@@ -20,7 +20,10 @@ import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
  * {@code ShortfallV2Payload}'s new id, without duplicating the progress payload.
  *
  * <p>Registered (optional, empty handler) on every 1.20.5+ loader. Pre-1.20.5 lines do not register it,
- * so their server always downgrades; no station provider exists on those lines today.
+ * so their server always downgrades: Fabric 1.20.1 answers per channel id and the id is absent, and
+ * Forge 1.20.1, which tracks presence per {@code SimpleChannel} (every payload shares one), answers
+ * {@code false} for this id explicitly in {@code ForgePlatformHelper.remoteHas}, because channel
+ * presence would otherwise be true for any 1.0.x client. No station provider exists on those lines today.
  */
 public record ProgressStatesV2Payload() implements SprawlPayload {
 

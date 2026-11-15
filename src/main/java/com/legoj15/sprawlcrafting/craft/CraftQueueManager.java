@@ -80,8 +80,9 @@ public final class CraftQueueManager {
         // second, which is every craft of a paced step); a bulk step bursts every tick in between, so
         // those ticks re-validate just the table the last scan found (cheap) and pause the moment it
         // is gone or out of reach, instead of crafting on for up to half a second after the player left.
-        // An open crafting station (AE2 Crafting Terminal, which has its own 3×3 grid) counts like a table
-        // in reach; it is a class check on the open menu, cheap enough for every burst tick.
+        // A usable open crafting station (AE2 Crafting Terminal, which has its own 3×3 grid) counts like a
+        // table in reach; the check is the open menu's class plus its live link status, cheap enough for
+        // every burst tick.
         if (job.currentStep().needsFullGrid()) {
             if (job.reachCheckDue()) {
                 BlockPos table = CraftingTableReach.findInReach(player);
@@ -158,8 +159,15 @@ public final class CraftQueueManager {
                 }
                 // FillOutcome.Fallback: couldn't hand off (recipe locked, grid uncleanable, …) — auto-craft below.
             }
-            CraftExecutor.CraftResult craft = CraftExecutor.craftOnce(player, job.currentStep().recipeId(), job.produced());
+            CraftExecutor.CraftResult craft = CraftExecutor.craftOnce(player, job.currentStep().recipeId(),
+                    job.produced(), job.stationDependent());
             if (craft instanceof CraftExecutor.CraftResult.Success success) {
+                if (success.usedStation()) {
+                    // From now on this job needs the station (a job that started from its inventory alone
+                    // but had to reach into the network because the player moved items): losing the
+                    // station pauses it instead of cancelling.
+                    job.setStationDependent(true);
+                }
                 lastCrafted = success.crafted();
                 boolean stepDone = job.onCraftPerformed();
                 if (job.isFinished()) {
@@ -181,10 +189,13 @@ public final class CraftQueueManager {
                 continue;
             }
             if (craft instanceof CraftExecutor.CraftResult.MissingIngredient missing) {
-                // A job planned with a station's storage in the pool, whose station is closed (or offline)
-                // now: the missing item may be sitting in that storage, so wait for the player to reopen
-                // it rather than cancelling. With the station open the storage IS visible, so a genuine
-                // shortfall (another player or automation drained it) still cancels, as before.
+                // A job that relies on a station's storage (planned on it, or it already drew from it),
+                // whose station is closed or unusable now (the terminal is shut, or its network offline or
+                // out of power: StationStorages.open is null for both): the missing item may be sitting in
+                // that storage, so wait for the player to get the station back rather than cancelling.
+                // With a usable station open the storage IS visible, so a genuine shortfall (another player
+                // or automation drained it) still cancels, as before. A job that never needed the station
+                // always takes the plain cancel.
                 if (job.stationDependent() && StationStorages.open(player) == null) {
                     job.holdForRetry();
                     sync(player, job, CraftProgressPayload.State.PAUSED_STATION, ItemStack.EMPTY);
@@ -228,15 +239,20 @@ public final class CraftQueueManager {
         return !step.needsFullGrid() || open == GridContext.CRAFTING_TABLE;
     }
 
-    /** Whether the player has a crafting station open (it brings its own 3×3 grid). */
+    /**
+     * Whether the player has a usable crafting station open (it brings its own 3×3 grid). Usable, not merely
+     * open: an AE2 terminal whose network is offline does not stand in for a crafting table, so a full-grid
+     * step waits (consistent with {@link GridContext#current}, which then plans it as the 2×2 grid).
+     */
     private static boolean hasOpenStation(ServerPlayer player) {
-        return StationStorages.isStationMenu(player.containerMenu);
+        return StationStorages.hasUsableStation(player);
     }
 
     /**
-     * Which pause to report for a full-grid step with no grid available: a job that drew on a station's
+     * Which pause to report for a full-grid step with no grid available: a job that relies on a station's
      * storage points the player back to the station ("open station": its grid and its items both live
-     * there), otherwise the classic "need a crafting table". (1.12.2's {@code pausedState}.)
+     * there), otherwise the classic "need a crafting table" (so a job that never touched the network never
+     * shows station text). (1.12.2's {@code pausedState}.)
      */
     private static CraftProgressPayload.State pausedState(CraftJob job) {
         return job.stationDependent()
