@@ -1,8 +1,9 @@
 # Sophisticated crafting-upgrade: in-game check (agent runbook)
 
 How the compat in `compat/sophisticated/` (design: DESIGN.md "Sophisticated crafting upgrade") was verified, so the
-check can be repeated. Verified in game on `1.21.1-neoforge` (full scenario) and `26.1.2-neoforge` (yellow "+", hand-off, gather list);
-`26.2` / `26.3-neoforge` are compile-checked (see the bottom).
+check can be repeated. Verified in game on `1.21.1-neoforge` (full scenario), `26.1.2-neoforge` (yellow "+", hand-off,
+gather list) and `1.20.1-forge` (full scenario, Storage and Backpacks; the node-specific steps and the production
+check are in the last section); `26.2` / `26.3-neoforge` are compile-checked (see the next-to-last section).
 
 ## Launch
 
@@ -58,3 +59,61 @@ branches). On 26.x the yellow state comes from the server's craftability sync (`
 upgrade grid, and opens the gather list. `26.3` already satisfies Core 26.3's minimums but was not run; `26.2`'s pins
 (NeoForge 26.2.0.7-beta, JEI 30.2.0.15) are below Core 26.2's (26.2.0.53-beta, JEI 30.7.0.39), so raise
 `neoforge_version` and set `sophisticated_jei_version` there before using the flag on it.
+
+## 1.20.1 Forge node (`1.20.1-forge`)
+
+Same scenario as above, with these node differences. Dev runtime: `.\devclient.ps1 -Node 1.20.1-forge -Gradle
+'-Psc.sophisticated=true -Psc.world=SophTest'` (JEI 15.74 already meets Core's JEI >= 15.20, so there is no
+`sophisticated_jei_version`; the three jars come through Renamer, see DESIGN.md). Drop
+`McDevBridge/versions/1.20.1-forge/build/libs/mcdevbridge-*.jar` into `versions/1.20.1-forge/run/mods` (a
+dev-workspace jar: Mojang names, so it only works in the dev run, never in an installed Forge 47).
+
+- **World.** The node has no saves. Boot `.\smoke.ps1 -Task :1.20.1-forge:runServer` once, copy
+  `versions/1.20.1-forge/run-server/world` to `run/saves/SophTest` (a flat world: no crafting table anywhere, which
+  the gate test needs). Do not reuse a world saved with the Sophisticated mods for the no-Sophisticated boot
+  (Forge asks to confirm the missing registry entries): move it aside and use a fresh copy (`PlainTest`).
+- **Bridge on this node.** `/input {"interactive":false}` first, else the unfocused game sits on the pause screen.
+  `gamemode survival @p`, `difficulty peaceful`, `gamerule keepInventory true` (a slime killed the dev player
+  mid-session). `/command` has no entity, so address the player as `@p`. Item ids are
+  `sophisticatedstorage:barrel` / `sophisticatedstorage:crafting_upgrade` and `sophisticatedbackpacks:backpack` /
+  `sophisticatedbackpacks:crafting_upgrade`; the backpack opens by right-clicking the sky (`/look` pitch -80) with
+  it selected (`key.hotbar.N`). In the storage and backpack menus the hotbar is `/slotclick` slots 54 to 62.
+  Screen fractions (854x480): upgrade slot 0.275/0.2125, its tab 0.726/0.318, JEI search box 0.834/0.931 (type
+  `oak door`), first result 0.882/0.265 with the tab open and 0.796/0.265 closed, the recipe's "+" 0.664/0.585,
+  the upgrade's result slot 0.773/0.783 (shift-click moves the doors out and empties the grid).
+- **Traps.** The vanilla movement-tutorial toast covers the grid's top row, so a stray item in the top-left cell
+  is invisible: judge by `/inventory` counts (the cobblestone must return to 16). The first JEI item clicked in
+  the unfiltered list is a spruce / dark-oak door; those are 6 planks of a wood you lack, i.e. the orange gather
+  button, which is a free test of that state. JEI logs "Received invalid gui properties for screen:
+  MissingIngredientsScreen" (guiXSize 0 and the like: the handler reads the screen's size before its first init)
+  when the gather screen opens; it also happens at a vanilla table with no Sophisticated on the classpath, so it
+  is not part of this compat.
+- **Result, with `-Psc.sophisticated=true`.** Barrel and backpack both: yellow "+" with the tab open and closed;
+  open tab -> "Oak Door done in the crafting grid" and the door layout sits in the upgrade's grid; closed tab ->
+  "Crafted Oak Door" into the inventory; closing the screen right after the click leaves the planks crafted and
+  the door step pending, reopening the barrel finishes it; a stray cobblestone in the grid is returned first;
+  planks in the inventory make the "+" white "Move Items" and the mod's own packet fills the grid; no logs -> orange
+  and the gather list. Without the flag the same client boots with no Sophisticated line in the log and the
+  vanilla table path unchanged; `smoke.ps1 -Task :1.20.1-forge:runServer` passes with and without the flag.
+
+### Production check (no 1.20.1 Forge dev-workspace bridge exists for an installed game)
+
+An installed Forge 47 runs SRG names, so the bridge stays off there and only boots and static linking can be
+checked. Three layers were used on the shipped `build/libs/sprawlcrafting-<ver>+mc1.20.1-forge.jar`:
+
+1. `javap -c -p` on `compat/sophisticated/*`: Minecraft members are SRG (`RecipeType.f_44107_`), Sophisticated's own
+   members (`getOpenContainer`, `getOpenOrFirstCraftingContainer`, `getRecipeSlots`, ...) are unchanged.
+2. A static linkage pass over every class in the jar (3422 member and class references): each must resolve in a
+   production classpath made of Forge 47.4.29's SRG client jar and universal jar, the libraries of the Forge
+   version JSON, JEI 15.56, Core, Storage, Backpacks and the nested solver / MixinExtras jars (a one-off ASM
+   program, not committed; JDK references are not checked; counts are from the #32 run). The Mojmap `-slim` jar fails the same pass with 330 unresolved
+   references, the shipped jar with none.
+3. A real SRG Forge 47.4.29 client booted offline in a scratch game directory (the Modrinth app's `meta/libraries`
+   and its Java 17 are read only; the installer-processor libraries the version JSON appends must be left off
+   the classpath, and duplicate jars removed) with the jar plus the user's mods (JEI 15.56, AE2, GuideME, IMDS
+   Reborn, Sophisticated Core and Storage), then again with Backpacks: "SprawlCrafting init on Forge (production)",
+   "Sophisticated Core found", JEI's transfer-handler registration completes, no linkage error. Errors in that log
+   are not ours: Storage's cross-mod advancements name Backpacks items when Backpacks is absent, and IMDS Reborn's
+   void sword breaks JEI's anvil helper.
+
+What production did not cover: clicking through the screens (no bridge), which the dev client did.

@@ -20,8 +20,13 @@ final class SophisticatedStorageJei {
 
     static void register(IRecipeTransferRegistration registration) {
         // Built exactly as StorageJeiPlugin builds its own, so a direct transfer is byte-for-byte what the mod does.
+        //? if >=1.20.2 {
         JeiCraftingContainerRecipeTransferHandlerBase<StorageContainerMenu, RecipeHolder<CraftingRecipe>> storage =
                 new JeiCraftingContainerRecipeTransferHandlerBase<StorageContainerMenu, RecipeHolder<CraftingRecipe>>(
+        //?} else {
+        /*JeiCraftingContainerRecipeTransferHandlerBase<StorageContainerMenu, CraftingRecipe> storage =
+                new JeiCraftingContainerRecipeTransferHandlerBase<StorageContainerMenu, CraftingRecipe>(*/
+        //?}
                         registration.getTransferHelper(), registration.getJeiHelpers().getStackHelper()) {
                     @Override
                     public Class<StorageContainerMenu> getContainerClass() {
@@ -31,8 +36,10 @@ final class SophisticatedStorageJei {
                     @Override
                     //? if >=1.21.11 {
                     /*public IRecipeType<RecipeHolder<CraftingRecipe>> getRecipeType() {*/
-                    //?} else {
+                    //?} else if >=1.20.2 {
                     public RecipeType<RecipeHolder<CraftingRecipe>> getRecipeType() {
+                    //?} else {
+                    /*public RecipeType<CraftingRecipe> getRecipeType() {*/
                     //?}
                         return RecipeTypes.CRAFTING;
                     }

@@ -51,7 +51,7 @@ final class SophisticatedGrids implements CraftingGrids.Provider {
         /*int width = crafting.getCraftingGridWidth();
         int height = crafting.getCraftingGridHeight();*/
         //?} else {
-        int width = 3; // the 1.21.1 upgrade is always 3×3 and has no size accessor
+        int width = 3; // the 1.20.1 / 1.21.1 upgrade is always 3×3 and has no size accessor
         int height = 3;
         //?}
         List<Slot> inputs = crafting.getRecipeSlots();

@@ -23,8 +23,13 @@ final class SophisticatedBackpacksJei {
 
     static void register(IRecipeTransferRegistration registration) {
         // Built exactly as BackpackJeiPlugin builds its own, so a direct transfer is byte-for-byte what the mod does.
+        //? if >=1.20.2 {
         JeiCraftingContainerRecipeTransferHandlerBase<BackpackContainer, RecipeHolder<CraftingRecipe>> backpack =
                 new JeiCraftingContainerRecipeTransferHandlerBase<BackpackContainer, RecipeHolder<CraftingRecipe>>(
+        //?} else {
+        /*JeiCraftingContainerRecipeTransferHandlerBase<BackpackContainer, CraftingRecipe> backpack =
+                new JeiCraftingContainerRecipeTransferHandlerBase<BackpackContainer, CraftingRecipe>(*/
+        //?}
                         registration.getTransferHelper(), registration.getJeiHelpers().getStackHelper()) {
                     @Override
                     public Class<BackpackContainer> getContainerClass() {
@@ -34,8 +39,10 @@ final class SophisticatedBackpacksJei {
                     @Override
                     //? if >=1.21.11 {
                     /*public IRecipeType<RecipeHolder<CraftingRecipe>> getRecipeType() {*/
-                    //?} else {
+                    //?} else if >=1.20.2 {
                     public RecipeType<RecipeHolder<CraftingRecipe>> getRecipeType() {
+                    //?} else {
+                    /*public RecipeType<CraftingRecipe> getRecipeType() {*/
                     //?}
                         return RecipeTypes.CRAFTING;
                     }

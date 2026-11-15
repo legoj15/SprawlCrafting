@@ -67,7 +67,8 @@ MinecraftForge (not NeoForge) on 1.21.1, at feature parity with `1.21.1-neoforge
 
 ## The Forge 1.20.1 node (`1.20.1-forge`)
 
-MinecraftForge 47 on 1.20.1, at parity with `1.20.1-fabric` (minus REI and Mod Menu, as above). It is
+MinecraftForge 47 on 1.20.1, at parity with `1.20.1-fabric` (minus REI and Mod Menu, as above; plus the Sophisticated
+compat, which has no Fabric build). It is
 the dev test bed for Forge-1.20.1-only mods. Same `build.forge.gradle.kts`; everything that differs is
 behind its `srgRuntime` flag (`<1.20.6`), so the other Forge nodes' builds are untouched.
 
@@ -89,7 +90,8 @@ behind its `srgRuntime` flag (`<1.20.6`), so the other Forge nodes' builds are u
   `mezz_config`, which it ships jar-in-jar; Renamer does not touch nested jars, so the dev runtime adds a
   renamed `mezz_config` (`mezz_config_version`), which Forge's JarJar selector prefers over the nested
   copy. Forge 47.4.29 does not bundle MixinExtras (installer library list), so it is jar-in-jar'd as on
-  1.21.1.
+  1.21.1. The Sophisticated Core / Storage / Backpacks jars (SRG too) go the same way, compile-only plus an
+  opt-in dev runtime (`-Psc.sophisticated=true`); see "Sophisticated crafting upgrade".
 - **Networking.** Forge 47 has no payload channels: one `SimpleChannel` `sprawlcrafting:main` (the same
   name as legacy 1.16.5), discriminators 0 start craft (C2S), 1 screen state (C2S), 2 progress (S2C),
   frozen (append only). Both version predicates accept every value, `ABSENT` and `ACCEPTVANILLA`
@@ -324,14 +326,29 @@ anywhere, and the last craft is handed to the upgrade's grid.
   `gradle.properties` pin `sophisticated_core_version` (+ `sophisticated_storage_version`,
   `sophisticated_backpacks_version`; Modrinth Maven, group `maven.modrinth`, artifact = project id, all
   compile-only). The shared call sites (`CommonClass.init`, `SprawlCraftingJeiPlugin`) sit behind the
-  `sophisticated` Stonecutter constant, which the controller derives from the same rule (a NeoForge node
-  pinning all three), and a `sophisticatedcore` loaded check (in `CommonClass`, and inside `SophisticatedJei`
-  for the JEI plugin). `-Psc.sophisticated=true` puts Core, Storage and Backpacks on a node's dev
-  runtime (with the JEI build in `sophisticated_jei_version`: Core wants a newer JEI than the compile pin). Not on `26.2-neoforge` as pinned: Core 26.2 needs a newer
-  NeoForge and JEI than that node's build pins.
-- **Nodes.** Official Sophisticated builds are NeoForge-only on 1.21.1 and 26.x, so the compat is on
-  `1.21.1-neoforge` and `26.1.2` / `26.2` / `26.3-neoforge`. Fabric has no official build; the Forge 1.21.1
+  `sophisticated` Stonecutter constant, which the controller derives from the same rule (a node pinning all
+  three; `build.neoforge.gradle.kts` and `build.forge.gradle.kts` read the same pins and exclude the package
+  without them, the Fabric scripts always exclude it), and a `sophisticatedcore` loaded check (in
+  `CommonClass`, and inside `SophisticatedJei` for the JEI plugin). `-Psc.sophisticated=true` puts Core,
+  Storage and Backpacks on a node's dev runtime (on the NeoForge nodes with the JEI build in
+  `sophisticated_jei_version`: Core wants a newer JEI than the compile pin). Not on `26.2-neoforge` as
+  pinned: Core 26.2 needs a newer NeoForge and JEI than that node's build pins.
+- **Nodes.** Official Sophisticated builds are NeoForge-only on 1.21.1 and 26.x, and one build per mod on
+  1.20.1 that serves Forge and NeoForge alike, so the compat is on `1.21.1-neoforge`,
+  `26.1.2` / `26.2` / `26.3-neoforge` and `1.20.1-forge`. Fabric has no official build; the Forge 1.21.1
   and 26.x lines have none either. The pins are build pins, like JEI's.
+- **1.20.1 Forge.** The 1.20.1 jars (Core `1.20.1-1.5.33.2475`, Storage `1.20.1-1.5.17.2230`, Backpacks
+  `1.20.1-3.26.20.2248`) are SRG-named (`m_`/`f_`), so `build.forge.gradle.kts` consumes them the way it
+  consumes JEI there: one `renamer.dependency(...)` per jar (Mojmap names for compile and the dev runtime, with
+  the jar's access transformer renamed too so the dev runtime applies it), and the shipped jar's references to Sophisticated and Minecraft members come out SRG from
+  Renamer like the rest of the jar (Sophisticated's own members, such as `getOpenContainer`, carry no
+  obfuscated name and stay as written). The mods' `mods.toml` declare nothing beyond Forge, Core and (optional)
+  JEI 15.20+, which this node's JEI pin meets. The API differs from 1.21.1 in one way the compat sees: JEI 15's
+  recipe type is the bare `CraftingRecipe` and Core's JEI handler base is typed on it, so the handler classes
+  carry `//? if >=1.20.2` branches and wrap the recipe in the `RecipeHolder` shim for `DeferredTransfers`
+  (the same split `DeferredCraftingTransferHandler` has); the upgrade has no size accessor (always 3×3), like
+  1.21.1. Core's own mixins load in the dev runtime (Mixin remaps their SRG refmap to dev names; seen in
+  the dev-client boot).
 - **Grid.** `SophisticatedGrids` is the `CraftingGrids` provider: for a `StorageContainerMenuBase` it takes
   `getOpenOrFirstCraftingContainer(CRAFTING)` (the same call the mods' own JEI handler uses), whose
   `getRecipeSlots()` are the nine inputs and whose last slot is the result. Those slots are not in
@@ -346,9 +363,9 @@ anywhere, and the last craft is handed to the upgrade's grid.
   mod-list order. Storage (`StorageContainerMenu`) and Backpacks (`BackpackContainer`) each register a
   handler built on Core's `JeiCraftingContainerRecipeTransferHandlerBase`; we register our own for the same
   classes after them (optional `AFTER` dependencies on `sophisticatedstorage` / `sophisticatedbackpacks` in
-  `neoforge.mods.toml`, client side only), wrapping an identical instance of that Core handler. Direct
-  transfers are therefore exactly the mods' own (their packet, their rules); a user-facing "missing items"
-  error becomes the yellow / orange state through `DeferredTransfers`, the same decision the vanilla table
+  `neoforge.mods.toml`, and in `mods.toml` where `has_sophisticated` is set, client side only), wrapping an
+  identical instance of that Core handler. Direct transfers are therefore exactly the mods' own (their packet,
+  their rules); a user-facing "missing items" error becomes the yellow / orange state through `DeferredTransfers`, the same decision the vanilla table
   handler makes. A menu with no crafting upgrade gets the mod's internal error back, passed through.
 - **Source of ingredients.** Planning and execution read only the player's 36 main slots, as ever. The mods'
   direct JEI transfer also draws from the open storage's contents, so a recipe whose items sit in the chest
@@ -357,13 +374,17 @@ anywhere, and the last craft is handed to the upgrade's grid.
 - **Verification.** In-game on `1.21.1-neoforge` (Storage barrel and Backpack: yellow button, direct transfer
   untouched, gather list, 3×3 step with no table in reach and the pause when the screen is closed, hand-off
   into the grid, inventory fallback with the tab closed, no Sophisticated on the runtime) and `26.1.2-neoforge`
-  (the server-synced yellow state, hand-off, gather list); `26.2` / `26.3-neoforge` are compile-checked only.
-  The procedure and the traps are in [`docs/sophisticated-check.md`](docs/sophisticated-check.md).
-- **Not done:** REI and EMI (Sophisticated ships handlers for both; neither is wrapped here); 1.20.1 Forge
-  (Sophisticated's 1.20.1 jar is one SRG-named build for Forge and NeoForge, so it would go through the Renamer
-  dependency path JEI uses there, and the Core API on that line predates `RecipeHolder`; not attempted, no way to
-  verify it without a 1.20.1 Forge dev client); and a Sophisticated storage block within reach acting as a table
-  while its screen is closed.
+  (the server-synced yellow state, hand-off, gather list), and `1.20.1-forge` (dev client with JEI 15.74: barrel
+  and backpack yellow button, direct transfer untouched, gather list, 3×3 step with no table in reach and the
+  pause when the screen is closed, hand-off into the grid, inventory fallback with the tab closed, clearing a
+  stray grid item, and a boot without Sophisticated). The shipped SRG jar was also checked without a bridge:
+  `javap` on the compat classes, a static linkage pass of every reference in the jar against a Forge 47
+  production classpath with the Sophisticated and JEI 15.56 jars, and an offline boot of a real Forge 47.4.29
+  client with the player's mod list (init, JEI registration, no linkage error); clicking through the screens
+  was dev-client only. `26.2` / `26.3-neoforge` are compile-checked only. The procedure and the traps are in
+  [`docs/sophisticated-check.md`](docs/sophisticated-check.md).
+- **Not done:** REI and EMI (Sophisticated ships handlers for both; neither is wrapped here); and a
+  Sophisticated storage block within reach acting as a table while its screen is closed.
 - **Shared storage, two viewers (unverified edge).** Clearing the grid on a deferred request and the hand-off
   act on the upgrade's slots; if two players have the same storage open and its upgrade inventory is shared,
   one player's request moves the other's grid items into the requester's inventory (moved once, never

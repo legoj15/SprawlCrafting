@@ -11,7 +11,7 @@
 // Forge BELOW 1.20.6 (the 1.20.1 node, Forge 47) still runs SRG names (m_/f_) at runtime. The source is
 // the same Mojmap source (dev runs are Mojmap), but the shipped jar must be reobfuscated: on those nodes
 // (`srgRuntime` below) this script also applies the Renamer plugin, runs the Mixin + MixinExtras
-// annotation processors to write an SRG refmap, renames SRG-published dependencies (JEI) to dev names,
+// annotation processors to write an SRG refmap, renames SRG-published dependencies (JEI, Sophisticated) to dev names,
 // and renames the final jar to SRG. Everything SRG-only is behind `if (srgRuntime)`, so the other nodes'
 // builds are unchanged. One script rather than a sibling: the lines share every other line of it.
 plugins {
@@ -61,6 +61,17 @@ val jeiVersionRange = (project.findProperty("jei_version_range") as String?) ?: 
 val hasRei = project.findProperty("rei_version") != null
 // JEI's compat layer (compat/jei, @JeiPlugin) exists only on nodes that pin a jei_version.
 val hasJei = jeiVersion != null
+// Sophisticated Core/Storage/Backpacks compat (compat/sophisticated): the 1.20.1 line is the only MinecraftForge
+// one with builds (one SRG-named jar serves Forge and NeoForge 1.20.1; 1.21.1 / 26.x are NeoForge-only). A node
+// opts in by pinning all three; stonecutter.gradle.kts derives the `sophisticated` constant from the same rule,
+// so the gated call sites and the exclusion below never disagree.
+val sophisticatedCoreVersion = project.findProperty("sophisticated_core_version") as String?
+val sophisticatedStorageVersion = project.findProperty("sophisticated_storage_version") as String?
+val sophisticatedBackpacksVersion = project.findProperty("sophisticated_backpacks_version") as String?
+val hasSophisticated = sophisticatedCoreVersion != null && sophisticatedStorageVersion != null
+        && sophisticatedBackpacksVersion != null
+// -Psc.sophisticated=true: run the dev client/server with Sophisticated Core/Storage/Backpacks.
+val sophisticatedRuntime = hasSophisticated && project.findProperty("sc.sophisticated") == "true"
 // Jar naming (sprawlcrafting-<ver>+mc<mc>-forge.jar), shared by the slim `jar` and the shipped `jarJar`.
 val jarBaseName = "sprawlcrafting"
 val jarVersion = "$modVersion+mc$minecraftVersion-forge"
@@ -97,6 +108,10 @@ repositories {
     mavenLocal()
     maven("https://maven.blamejared.com")   // JEI
     maven("https://maven.parchmentmc.org")
+    // Sophisticated Core/Storage/Backpacks (CurseForge/Modrinth only; Modrinth's Maven, artifact = project id)
+    maven("https://api.modrinth.com/maven") {
+        content { includeGroup("maven.modrinth") }
+    }
     mavenCentral()
 }
 
@@ -193,6 +208,25 @@ dependencies {
         }
     }
 
+    // Sophisticated Core (nmoqTijg), Storage (hMlaZH8f), Backpacks (TyCTlI4b): compile-only, the player
+    // supplies them. Their 1.20.1 jars are SRG-named, so like JEI's they are renamed to dev names once each
+    // (one Renamer task per jar, shared by compile and runtime) with their access transformers renamed too, so
+    // the dev runtime applies them (each widens Minecraft members its code uses). -Psc.sophisticated=true also
+    // puts all three on the dev runtime. Their mods.toml declare no mod beyond Core and JEI >= 15.20, which
+    // this node's JEI pin meets.
+    if (hasSophisticated) {
+        check(srgRuntime) { "Sophisticated has no MinecraftForge build above 1.20.1; pin it on SRG Forge nodes only" }
+        val rn = renamer!!
+        listOf("nmoqTijg:$sophisticatedCoreVersion", "hMlaZH8f:$sophisticatedStorageVersion",
+                "TyCTlI4b:$sophisticatedBackpacksVersion").forEach { coordinates ->
+            val sophisticated = rn.dependency("maven.modrinth:$coordinates") { accessTransformers.set(true) }
+            compileOnly(sophisticated)
+            if (sophisticatedRuntime) {
+                runtimeOnly(sophisticated)
+            }
+        }
+    }
+
     // The solver library: compiled against and on the dev runtime (implementation), nested in the
     // shipped jar with a [current, next-major) range (jarJar). Never shaded (see the header above).
     implementation("com.legoj15:solver:$solverVersion")
@@ -234,9 +268,11 @@ tasks.withType<JavaCompile>().configureEach {
         exclude("**/compat/rei/**")
         exclude("**/*ReiPlugin*")
     }
-    // No Forge build of Sophisticated is wired up (1.21.1 / 26.x are NeoForge-only; the 1.20.1 jar is SRG and
-    // not consumed yet), and the `sophisticated` constant is false on every Forge node.
-    exclude("**/compat/sophisticated/**")
+    // Only 1.20.1 has a Forge-loadable Sophisticated build (1.21.1 / 26.x are NeoForge-only); the nodes that
+    // pin it get the package and the `sophisticated` constant, the rest drop both.
+    if (!hasSophisticated) {
+        exclude("**/compat/sophisticated/**")
+    }
     // Surface the full cross-cliff error set during ports (javac caps at 100 by default).
     options.compilerArgs.addAll(listOf("-Xmaxerrs", "2000", "-Xmaxwarns", "200"))
 }
@@ -258,7 +294,9 @@ tasks.processResources {
         "forge_loader_version_range" to forgeLoaderRange,
         "minecraft_version_range" to mcVersionRange,
         "jei_version_range" to jeiVersionRange,
-        "has_jei" to hasJei
+        "has_jei" to hasJei,
+        // Optional AFTER dependencies on sophisticatedstorage / sophisticatedbackpacks (load order only).
+        "has_sophisticated" to hasSophisticated
     )
     inputs.properties(replaceProperties)
     filesMatching("META-INF/mods.toml") { expand(replaceProperties) }
