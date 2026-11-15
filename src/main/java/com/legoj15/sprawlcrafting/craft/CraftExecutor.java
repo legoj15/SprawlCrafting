@@ -9,6 +9,7 @@ import java.util.Map;
 import com.legoj15.solver.LedgerTally;
 import com.legoj15.solver.ProducedLedger;
 import com.legoj15.solver.SlotAssignment;
+import com.legoj15.sprawlcrafting.Constants;
 
 //? if >=1.20.5 {
 import net.minecraft.core.component.DataComponents;
@@ -52,8 +53,11 @@ public final class CraftExecutor {
     private static final int RESULT_SLOT = 0;
 
     public sealed interface CraftResult {
-        /** {@code crafted} is a display copy of what was produced. */
-        record Success(ItemStack crafted) implements CraftResult {}
+        /**
+         * {@code crafted} is a display copy of what was produced; {@code usedStation} is whether this craft
+         * drew any ingredient from an open crafting station's storage (see {@link StationStorages}).
+         */
+        record Success(ItemStack crafted, boolean usedStation) implements CraftResult {}
 
         /** An ingredient vanished since planning; {@code missing} names it for the player. */
         record MissingIngredient(Component missing) implements CraftResult {}
@@ -73,7 +77,25 @@ public final class CraftExecutor {
         record RecipeGone() implements FillOutcome {}
     }
 
+    /**
+     * {@link #craftOnce(ServerPlayer, ResourceLocation, ProducedLedger, boolean)} for a job that is not
+     * planned on a crafting station's storage.
+     */
     public static CraftResult craftOnce(ServerPlayer player, ResourceLocation recipeId, ProducedLedger<Item> ledger) {
+        return craftOnce(player, recipeId, ledger, false);
+    }
+
+    /**
+     * One craft against the live inventory and, when the player has a usable crafting station open, its
+     * storage. {@code stationPlanned} says the job's plan counted on that storage
+     * ({@link CraftJob#stationDependent()}): its crafts are assigned over inventory plus station stock,
+     * exactly as the plan chose. Any other job is assigned from the inventory alone first, so it never
+     * touches the network while its own items cover the craft, and reaches into the station only for what
+     * the inventory has since lost (the player moved items mid-job). {@link CraftResult.Success#usedStation()}
+     * reports that, so the job pauses rather than cancels once the station goes away.
+     */
+    public static CraftResult craftOnce(ServerPlayer player, ResourceLocation recipeId, ProducedLedger<Item> ledger,
+                                        boolean stationPlanned) {
         RecipeHolder<?> holder = RecipeIds.byId(player.level().getServer().getRecipeManager(), recipeId).orElse(null);
         if (holder == null || !(holder.value() instanceof CraftingRecipe recipe)) {
             return new CraftResult.RecipeGone();
@@ -94,7 +116,16 @@ public final class CraftExecutor {
         // A crafting station open right now (AE2 Crafting Terminal) adds its storage to the pool. It is
         // re-opened for every craft, so a closed or offline station stops being drawn from at once.
         StationStorage station = StationStorages.open(player);
-        Assignment assignment = assign(inventory, ingredients, ledger, station);
+        Assignment assignment = null;
+        if (station == null || !stationPlanned) {
+            assignment = assign(inventory, ingredients, ledger, null);
+            if (assignment.missing() != null && station != null) {
+                assignment = null; // the inventory alone fell short: let the open station supply the rest
+            }
+        }
+        if (assignment == null) {
+            assignment = assign(inventory, ingredients, ledger, station);
+        }
         if (assignment.missing() != null) {
             return new CraftResult.MissingIngredient(describe(assignment.missing()));
         }
@@ -151,27 +182,18 @@ public final class CraftExecutor {
         ItemStack crafted = result.copy();
         insertIntoMainInventory(player, result.copy(), station);
         ledger.produced(crafted.getItem(), crafted.getCount());
-        return new CraftResult.Success(crafted);
+        return new CraftResult.Success(crafted, !stationTakes.isEmpty());
     }
 
     /**
-     * Extracts {@code takes} from the station. Returns null when every item came out in full; otherwise
-     * gives back everything this call extracted (into the station, else the inventory, else the
-     * player's feet: never voided) and returns the first item that came up short.
+     * Extracts {@code takes} from the station, all or nothing ({@link StationDraw}). Returns null when every
+     * item came out in full; otherwise everything this call extracted has been given back (into the
+     * station, else the inventory, else the player's feet: never voided) and the first item that came up
+     * short is returned. If the station's mod throws mid-draw, the same give-back runs before the
+     * exception propagates.
      */
     private static Item drawFromStation(ServerPlayer player, StationStorage station, Map<Item, Integer> takes) {
-        Map<Item, Integer> drawn = new LinkedHashMap<>();
-        for (Map.Entry<Item, Integer> take : takes.entrySet()) {
-            int got = station.extract(take.getKey(), take.getValue());
-            if (got > 0) {
-                drawn.merge(take.getKey(), got, Integer::sum);
-            }
-            if (got < take.getValue()) {
-                drawn.forEach((item, count) -> giveBack(player, station, item, count));
-                return take.getKey();
-            }
-        }
-        return null;
+        return StationDraw.draw(takes, station::extract, (item, count) -> giveBack(player, station, item, count));
     }
 
     /** Returns {@code count} plain {@code item} to the station, overflowing into the inventory, then the feet. */
@@ -180,10 +202,23 @@ public final class CraftExecutor {
         for (int left = count; left > 0; ) {
             int chunk = Math.min(left, maxStack);
             left -= chunk;
-            ItemStack rest = station.insert(new ItemStack(item, chunk));
+            ItemStack rest = insertIntoStation(station, new ItemStack(item, chunk));
             if (!rest.isEmpty()) {
                 insertIntoMainInventory(player, rest, null);
             }
+        }
+    }
+
+    /**
+     * {@link StationStorage#insert} that never loses the stack: what the station refuses, or all of it
+     * when the station's mod throws, is returned for the caller to place elsewhere (inventory, then feet).
+     */
+    private static ItemStack insertIntoStation(StationStorage station, ItemStack stack) {
+        try {
+            return station.insert(stack);
+        } catch (RuntimeException | LinkageError e) {
+            Constants.LOG.warn("SprawlCrafting: crafting station insert failed, keeping {} with the player", stack, e);
+            return stack;
         }
     }
 
@@ -774,7 +809,7 @@ public final class CraftExecutor {
         }
         inventory.setChanged();
         if (!stack.isEmpty() && station != null) {
-            stack = station.insert(stack);
+            stack = insertIntoStation(station, stack);
         }
         if (!stack.isEmpty()) {
             // 26.3 replaced the (throwRandomly, retainOwnership) booleans with (retainOwnership,

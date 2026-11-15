@@ -34,7 +34,9 @@ public final class StationStorages {
 
         /**
          * Server: the storage behind the station {@code player} has open, or null when none is open
-         * or it is unusable right now (e.g. an ME terminal whose network is offline).
+         * or it is unusable right now (e.g. an ME terminal whose network is offline or out of power).
+         * "Usable" is judged live, every call: an unusable station is treated exactly like a closed one
+         * (no counts, no draws, no grid), see {@link StationStorages#hasUsableStation}.
          */
         StationStorage open(ServerPlayer player);
 
@@ -104,6 +106,18 @@ public final class StationStorages {
             }
         }
         return null;
+    }
+
+    /**
+     * Whether the player has a station open that is usable right now. This, not {@link #isStationMenu},
+     * decides whether the open station counts as a 3×3 grid (the reach gate in {@code CraftQueueManager}
+     * and {@code GridContext.current}): an open but offline terminal behaves like no station at all, so a
+     * job needing a grid pauses and a plan sees only the inventory, rather than starting work the station
+     * could not feed. {@link #isStationMenu} stays a pure class check, for places that must recognise the
+     * menu whatever its state (the final-grid hand-off, recipe-viewer registration).
+     */
+    public static boolean hasUsableStation(ServerPlayer player) {
+        return open(player) != null;
     }
 
     /** Client mirror of the open station's counts, or null (see {@link Provider#clientCounts}). */

@@ -198,6 +198,12 @@ tasks.withType<JavaCompile>().configureEach {
     if (!hasAe2) {
         exclude("**/compat/ae2/**")    // AE2 Crafting Terminal as a crafting station (issue #2)
     }
+    // AE2's JEI plugin (compat/ae2/jei) needs the JEI API, as in build.forge.gradle.kts. Every NeoForge
+    // node pins jei_version today (this script reads it unconditionally above), so this cannot trigger
+    // yet; it keeps the two scripts' rule identical for the day a node drops JEI.
+    if (project.findProperty("jei_version") == null) {
+        exclude("**/compat/ae2/jei/**")
+    }
     // Surface the full cross-cliff error set during the 26.x port (javac caps at 100 by default).
     options.compilerArgs.addAll(listOf("-Xmaxerrs", "2000", "-Xmaxwarns", "200"))
 }

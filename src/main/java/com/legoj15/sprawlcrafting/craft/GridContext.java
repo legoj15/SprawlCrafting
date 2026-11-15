@@ -40,10 +40,11 @@ public enum GridContext {
      * dimensions rather than {@code CraftingMenu} keeps this in lockstep with the client's
      * {@code DeferredCraftableCache.gridFor}, including modded crafting-table menus. A crafting
      * station ({@link StationStorages}, e.g. AE2's Crafting Terminal) has a 3×3 grid but no recipe
-     * book, so it is recognised by menu class instead.
+     * book, so it is recognised by menu class instead, and only while it is usable
+     * ({@link StationStorages#hasUsableStation}): an open terminal whose network is offline is no grid.
      */
     public static GridContext current(ServerPlayer player) {
-        if (StationStorages.isStationMenu(player.containerMenu)) {
+        if (StationStorages.hasUsableStation(player)) {
             return CRAFTING_TABLE;
         }
         //? if >=1.21.11 {

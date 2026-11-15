@@ -44,13 +44,20 @@ public class ForgePlatformHelper implements IPlatformHelper {
 
     // The remote's registered-channel list is what it sent in Forge's channel-registration payload; a
     // vanilla or modless peer never sends one, so it is empty and nothing is ever sent to it.
-    // Forge 47 (1.20.1) tracks presence per SimpleChannel, and all three payloads share the one channel,
-    // so payloadId cannot narrow the answer there.
+    // Forge 47 (1.20.1) tracks presence per SimpleChannel, and all the payloads share the one channel
+    // (discriminators 0-2, frozen), so payloadId cannot narrow the answer there. Channel presence only
+    // proves the peer has the original messages, so it must never vouch for a capability that is
+    // told apart by its own id: ProgressStatesV2Payload (the marker for newer progress states) is not
+    // registered on this line, and a 1.0.x client has the channel yet cannot decode those states. It
+    // answers false, so the server always sends such a client the original state.
     private static boolean remoteHas(Connection connection, ResourceLocation payloadId) {
         //? if >=1.20.5 {
         return NetworkContext.get(connection).getRemoteChannels().contains(payloadId);
         //?} else {
-        /*return ForgeNetwork.isRemotePresent(connection);*/
+        /*if (com.legoj15.sprawlcrafting.network.ProgressStatesV2Payload.ID.equals(payloadId)) {
+            return false;
+        }
+        return ForgeNetwork.isRemotePresent(connection);*/
         //?}
     }
 

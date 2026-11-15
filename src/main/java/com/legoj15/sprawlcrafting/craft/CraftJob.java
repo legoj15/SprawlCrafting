@@ -85,10 +85,13 @@ public final class CraftJob {
     /** The crafting table the last passing reach scan found; the cheap per-tick re-check watches it. */
     private BlockPos reachTable;
     /**
-     * Whether the job was planned with a crafting station's storage in the pool (AE2 Crafting
-     * Terminal open at start, see {@link StationStorages}). Such a job pauses instead of cancelling
-     * when an ingredient is missing while the station is closed: the item may be in the storage the
-     * player can no longer see. (1.12.2's {@code CraftJob.externalDependent}.)
+     * Whether the job relies on a crafting station's storage (AE2 Crafting Terminal, see
+     * {@link StationStorages}): set at start when the plan could not be made from the inventory alone
+     * ({@code CraftRequests}), and later the first time a craft actually draws from the station
+     * ({@code CraftQueueManager}), e.g. because the player moved items out of the inventory mid-job.
+     * Such a job pauses instead of cancelling when an ingredient is missing while the station is
+     * closed or unusable: the item may be in the storage the player can no longer reach. A job that
+     * never needed the station keeps the plain cancel. (1.12.2's {@code CraftJob.externalDependent}.)
      */
     private boolean stationDependent;
 

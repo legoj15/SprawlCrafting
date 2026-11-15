@@ -23,8 +23,10 @@ import net.minecraft.world.item.ItemStack;
 public interface StationStorage {
 
     /**
-     * Plain-item counts for the planner's snapshot. May be expensive (a full storage scan), so it is
-     * called once per plan, never per craft.
+     * Plain-item counts for the planner's snapshot: what {@link #extract} could really deliver right now
+     * (a storage that can be seen but not drawn from, e.g. a network without the power to move the items,
+     * counts for nothing), and empty when the station is not usable. May be expensive (a full storage
+     * scan), so it is called once per plan, never per craft.
      */
     Map<Item, Long> counts();
 

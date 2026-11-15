@@ -49,6 +49,12 @@ repositories {
     maven("https://maven.blamejared.com")   // JEI
     maven("https://maven.shedaniel.me/")     // REI (unused on 26.x; kept for parity)
     maven("https://maven.terraformersmc.com/releases") // Mod Menu
+    // Modrinth's maven (AE2, for nodes that pin ae2_version), scoped to its own group so no other
+    // dependency is ever looked up there.
+    exclusiveContent {
+        forRepository { maven("https://api.modrinth.com/maven") }
+        filter { includeGroup("maven.modrinth") }
+    }
     mavenCentral()
 }
 
@@ -88,6 +94,13 @@ dependencies {
     if (hasModMenu) {
         compileOnly("com.terraformersmc:modmenu:${property("modmenu_version")}")
     }
+
+    // Applied Energistics 2 (optional; issue #2): compile only, for nodes that pin ae2_version, so
+    // compat/ae2 (the Crafting Terminal as a crafting station) compiles. Plain compileOnly on this
+    // unobfuscated node. The shipped jar never requires AE2 (the compat is reached reflectively once the
+    // loader reports "ae2"). Compiling needs no GuideME: AE2 references it only from its guide classes,
+    // which the compat never touches (build.neoforge.gradle.kts adds it on its dev runtime alone).
+    (project.findProperty("ae2_version") as String?)?.let { compileOnly("maven.modrinth:ae2:$it") }
 
     // The solver library: compiled against, on the dev runtime, and nested in the shipped jar. Loom
     // generates a fabric.mod.json for the nested plain jar so Fabric Loader loads it as a library mod.
@@ -138,8 +151,8 @@ tasks.withType<JavaCompile>().configureEach {
         exclude("**/*ModMenu*") // no Mod Menu build for this node → drop the integration class
     }
     // AE2 Crafting Terminal station (issue #2): compiled only where a node pins ae2_version (none on
-    // Fabric yet; opting in also needs the compileOnly AE2 dependency and a jei_mod_plugin entrypoint
-    // for compat/ae2/jei, as build.neoforge.gradle.kts / fabric.mod.json show for the others).
+    // Fabric yet; the compileOnly AE2 dependency above is wired, so opting in is the property plus a
+    // jei_mod_plugin entrypoint for compat/ae2/jei, as build.neoforge.gradle.kts / fabric.mod.json show).
     if (project.findProperty("ae2_version") == null) {
         exclude("**/compat/ae2/**")
     }
