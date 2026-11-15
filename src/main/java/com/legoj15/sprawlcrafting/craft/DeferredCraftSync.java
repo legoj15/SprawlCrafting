@@ -107,6 +107,8 @@ public final class DeferredCraftSync {
         if (!Services.PLATFORM.canReceive(player, DeferredCraftableSyncPayload.TYPE.id())) {
             return; // vanilla/modless client — record nothing, so we retry if it can ever receive
         }
+        // Station storage (issue #2) would join here: pass StationStorages.open(player).counts() as the
+        // session's station map, and hash those counts into the maybeSync debounce key.
         CraftPlanner.Session session = CraftPlanner.session(recipes, player.registryAccess(),
                 player.getInventory(), grid);
         java.util.Set<Integer> displayIds = new java.util.HashSet<>();

@@ -72,13 +72,22 @@ public final class CraftPlanner {
     }
 
     public static PlanOutcome plan(ServerPlayer player, RecipeHolder<?> targetHolder, GridContext grid) {
+        return plan(player, targetHolder, grid, Map.of());
+    }
+
+    /**
+     * Plans against the player's 36 main slots plus {@code station}: the plain-item counts of an
+     * open crafting station's storage ({@link StationStorage#counts()}), empty for none.
+     */
+    public static PlanOutcome plan(ServerPlayer player, RecipeHolder<?> targetHolder, GridContext grid,
+                                   Map<Item, Long> station) {
         // Cheap reject before building the producer index, so spammed unplannable
         // requests (special/non-crafting/wrong-grid recipes) cost almost nothing.
         if (McRecipe.of(targetHolder, player.registryAccess()) == null) {
             return new PlanOutcome.Unsupported();
         }
         return session(player.level().getServer().getRecipeManager(), player.registryAccess(),
-                player.getInventory(), grid).plan(targetHolder);
+                player.getInventory(), grid, station).plan(targetHolder);
     }
 
     /**
@@ -105,8 +114,17 @@ public final class CraftPlanner {
      */
     public static Session session(RecipeManager recipes, RegistryAccess registries,
                                   Inventory inventory, GridContext grid) {
+        return session(recipes, registries, inventory, grid, Map.of());
+    }
+
+    /**
+     * {@link #session(RecipeManager, RegistryAccess, Inventory, GridContext)} with an open crafting
+     * station's plain-item counts ({@link StationStorage}) added to the pool; empty for none.
+     */
+    public static Session session(RecipeManager recipes, RegistryAccess registries,
+                                  Inventory inventory, GridContext grid, Map<Item, Long> station) {
         return new Session(recipes, registries, grid,
-                ProducerIndex.forGrid(recipes, registries, grid), snapshotInventory(inventory));
+                ProducerIndex.forGrid(recipes, registries, grid), snapshotInventory(inventory, station));
     }
 
     /**
@@ -258,8 +276,12 @@ public final class CraftPlanner {
      * only pulls from the main slots (see {@code CraftExecutor}). Damaged/enchanted/renamed
      * stacks are skipped with the same predicate execution uses, so the plan never counts
      * an item that {@code CraftExecutor} would refuse to consume.
+     *
+     * <p>{@code station} adds an open crafting station's plain-item counts (already usable, see
+     * {@link StationStorage}); the solver counts in {@code int}, so each total is clamped at
+     * {@link Integer#MAX_VALUE} (an ME network can hold far more).
      */
-    private static Map<Item, Integer> snapshotInventory(Inventory inventory) {
+    private static Map<Item, Integer> snapshotInventory(Inventory inventory, Map<Item, Long> station) {
         Map<Item, Integer> counts = new HashMap<>();
         for (int i = 0; i < Inventory.INVENTORY_SIZE; i++) {
             ItemStack stack = inventory.getItem(i);
@@ -267,7 +289,20 @@ public final class CraftPlanner {
                 counts.merge(stack.getItem(), stack.getCount(), Integer::sum);
             }
         }
+        station.forEach((item, count) -> {
+            if (count > 0) {
+                counts.merge(item, clampToInt(count), CraftPlanner::saturatingIntSum);
+            }
+        });
         return counts;
+    }
+
+    private static int clampToInt(long count) {
+        return (int) Math.min(count, Integer.MAX_VALUE);
+    }
+
+    private static int saturatingIntSum(int a, int b) {
+        return clampToInt((long) a + b);
     }
 
     /**

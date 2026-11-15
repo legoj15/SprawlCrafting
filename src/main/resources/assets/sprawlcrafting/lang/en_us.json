@@ -12,6 +12,7 @@
   "sprawlcrafting.toast.crafting": "Crafting %s",
   "sprawlcrafting.toast.step": "%s/%s",
   "sprawlcrafting.toast.paused": "Need a crafting table!",
+  "sprawlcrafting.toast.paused_station": "Paused — open station",
   "sprawlcrafting.toast.finished": "Crafted %s",
   "sprawlcrafting.toast.ready_in_grid": "%s ready in grid",
   "sprawlcrafting.toast.cancelled": "Crafting cancelled",

@@ -84,6 +84,13 @@ public final class CraftJob {
     private int ticksSinceReachCheck = TICKS_PER_STEP;
     /** The crafting table the last passing reach scan found; the cheap per-tick re-check watches it. */
     private BlockPos reachTable;
+    /**
+     * Whether the job was planned with a crafting station's storage in the pool (AE2 Crafting
+     * Terminal open at start, see {@link StationStorages}). Such a job pauses instead of cancelling
+     * when an ingredient is missing while the station is closed: the item may be in the storage the
+     * player can no longer see. (1.12.2's {@code CraftJob.externalDependent}.)
+     */
+    private boolean stationDependent;
 
     public CraftJob(ResourceLocation targetRecipe, ItemStack targetResult, List<CraftStep> steps) {
         if (steps.isEmpty()) {
@@ -111,6 +118,15 @@ public final class CraftJob {
     /** The final output, for chat/HUD display. Do not mutate. */
     public ItemStack targetResult() {
         return targetResult;
+    }
+
+    /** See {@link #stationDependent}. */
+    public boolean stationDependent() {
+        return stationDependent;
+    }
+
+    public void setStationDependent(boolean stationDependent) {
+        this.stationDependent = stationDependent;
     }
 
     /** What this job crafted and has not used back up; lets the executor take its own altered intermediates. */

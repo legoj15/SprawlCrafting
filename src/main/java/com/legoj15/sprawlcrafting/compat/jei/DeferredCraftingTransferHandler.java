@@ -48,7 +48,13 @@ public class DeferredCraftingTransferHandler
         implements IRecipeTransferHandler<CraftingMenu, CraftingRecipe> {*/
 //?}
 
-    private static final IRecipeTransferError DEFERRED_AVAILABLE = new DeferredCraftError();
+    /** The yellow "craft it for me" button state; also used by station handlers (compat/ae2). */
+    public static final IRecipeTransferError DEFERRED_AVAILABLE = new DeferredCraftError();
+
+    /** The orange "what would I need to gather" button state for an unmakeable {@code recipe}. */
+    public static IRecipeTransferError gatherListError(RecipeHolder<CraftingRecipe> recipe) {
+        return new GatherListError(recipe);
+    }
 
     //? if >=1.20.2 {
     private final IRecipeTransferHandler<CraftingMenu, RecipeHolder<CraftingRecipe>> vanilla;

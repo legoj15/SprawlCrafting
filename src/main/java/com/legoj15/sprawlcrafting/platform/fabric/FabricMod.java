@@ -41,6 +41,10 @@ public class FabricMod implements ModInitializer {
                 CraftingScreenStatePayload.TYPE, CraftingScreenStatePayload.STREAM_CODEC);
         s2c().register(
                 CraftProgressPayload.TYPE, CraftProgressPayload.STREAM_CODEC);
+        // Capability marker only (never sent): the client's receiver tells the server it decodes PAUSED_STATION.
+        s2c().register(
+                com.legoj15.sprawlcrafting.network.ProgressStatesV2Payload.TYPE,
+                com.legoj15.sprawlcrafting.network.ProgressStatesV2Payload.STREAM_CODEC);
         ServerPlayNetworking.registerGlobalReceiver(StartDeferredCraftPayload.TYPE,
                 (payload, context) -> CraftRequests.handleStartRequest(context.player(), payload.recipeId()));
         ServerPlayNetworking.registerGlobalReceiver(CraftingScreenStatePayload.TYPE,

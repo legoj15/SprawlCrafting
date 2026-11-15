@@ -28,7 +28,10 @@ public record CraftProgressPayload(State state, ItemStack target, ItemStack curr
     public enum State {
         // Wire format is ordinal-keyed (STATE_CODEC below) and PayloadCodecTest pins that
         // out-of-range ordinals throw — only ever APPEND new states here, never reorder.
-        CRAFTING, PAUSED, FINISHED, CANCELLED, READY_IN_GRID;
+        // PAUSED_STATION (a station-dependent job waiting for its crafting station to be reopened) is
+        // newer than the 1.0.x clients: the server only sends it to a client that registered
+        // ProgressStatesV2Payload and downgrades it to PAUSED for any other (CraftQueueManager.sync).
+        CRAFTING, PAUSED, FINISHED, CANCELLED, READY_IN_GRID, PAUSED_STATION;
 
         /**
          * The job is over for the client's purposes — the toast lingers, then slides out.

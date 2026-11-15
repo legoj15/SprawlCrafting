@@ -51,6 +51,12 @@ public class CraftProgressToast implements Toast {
     private static final int TEXT_X = 30;
     private static final int TEXT_BUDGET = 124;
 
+    /** "Need a crafting table!" or, for a job waiting on its crafting station, "Paused — open station". */
+    private static String pausedKey(CraftProgressPayload.State state) {
+        return state == CraftProgressPayload.State.PAUSED_STATION
+                ? "sprawlcrafting.toast.paused_station" : "sprawlcrafting.toast.paused";
+    }
+
     //? if >=1.21.11 {
     /*private Toast.Visibility wantedVisibility = Toast.Visibility.SHOW;
 
@@ -90,10 +96,10 @@ public class CraftProgressToast implements Toast {
                         CountFormat.format(job.done()), CountFormat.format(job.total())), TEXT_X, 18, SUBTITLE_COLOR, false);
                 drawProgressBar(guiGraphics, job);
             }
-            case PAUSED -> {
+            case PAUSED, PAUSED_STATION -> {
                 drawClipped(guiGraphics, font, Component.translatable("sprawlcrafting.toast.crafting",
                         job.target().getHoverName()), 7, TITLE_COLOR);
-                guiGraphics.text(font, Component.translatable("sprawlcrafting.toast.paused"),
+                guiGraphics.text(font, Component.translatable(pausedKey(job.state())),
                         TEXT_X, 18, PAUSED_COLOR, false);
                 drawProgressBar(guiGraphics, job);
             }
@@ -157,10 +163,10 @@ public class CraftProgressToast implements Toast {
                         CountFormat.format(job.done()), CountFormat.format(job.total())), TEXT_X, 18, SUBTITLE_COLOR, false);
                 drawProgressBar(guiGraphics, job);
             }
-            case PAUSED -> {
+            case PAUSED, PAUSED_STATION -> {
                 drawClipped(guiGraphics, font, Component.translatable("sprawlcrafting.toast.crafting",
                         job.target().getHoverName()), 7, TITLE_COLOR);
-                guiGraphics.drawString(font, Component.translatable("sprawlcrafting.toast.paused"),
+                guiGraphics.drawString(font, Component.translatable(pausedKey(job.state())),
                         TEXT_X, 18, PAUSED_COLOR, false);
                 drawProgressBar(guiGraphics, job);
             }

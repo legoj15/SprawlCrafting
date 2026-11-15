@@ -38,9 +38,14 @@ public enum GridContext {
      * The grid the player is looking at right now, keyed on the open menu's grid size —
      * 3×3 (or larger) is a crafting table, else the 2×2 inventory grid. Matching on grid
      * dimensions rather than {@code CraftingMenu} keeps this in lockstep with the client's
-     * {@code DeferredCraftableCache.gridFor}, including modded crafting-table menus.
+     * {@code DeferredCraftableCache.gridFor}, including modded crafting-table menus. A crafting
+     * station ({@link StationStorages}, e.g. AE2's Crafting Terminal) has a 3×3 grid but no recipe
+     * book, so it is recognised by menu class instead.
      */
     public static GridContext current(ServerPlayer player) {
+        if (StationStorages.isStationMenu(player.containerMenu)) {
+            return CRAFTING_TABLE;
+        }
         //? if >=1.21.11 {
         /*if (player.containerMenu instanceof AbstractCraftingMenu menu
                 && menu.getGridWidth() >= 3 && menu.getGridHeight() >= 3) {*/

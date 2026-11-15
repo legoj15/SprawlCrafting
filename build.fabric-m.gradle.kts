@@ -137,6 +137,12 @@ tasks.withType<JavaCompile>().configureEach {
     if (!hasModMenu) {
         exclude("**/*ModMenu*") // no Mod Menu build for this node → drop the integration class
     }
+    // AE2 Crafting Terminal station (issue #2): compiled only where a node pins ae2_version (none on
+    // Fabric yet; opting in also needs the compileOnly AE2 dependency and a jei_mod_plugin entrypoint
+    // for compat/ae2/jei, as build.neoforge.gradle.kts / fabric.mod.json show for the others).
+    if (project.findProperty("ae2_version") == null) {
+        exclude("**/compat/ae2/**")
+    }
 }
 
 tasks.test {

@@ -2,6 +2,7 @@ package com.legoj15.sprawlcrafting.craft;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -33,7 +34,9 @@ import net.minecraft.world.item.crafting.RecipeHolder;
  * <p>Two invariants shared with {@code CraftPlanner}:
  * <ul>
  *   <li>Only the 36 main inventory slots are read and written — never armor or offhand —
- *       so planning, consumption, and insertion all see the same item pool.</li>
+ *       so planning, consumption, and insertion all see the same item pool. The one addition is a
+ *       crafting station the player has open ({@link StationStorages}, the AE2 Crafting Terminal),
+ *       whose storage both the planner and {@link #craftOnce} add to the pool while it is open.</li>
  *   <li>Damaged, enchanted, or renamed stacks are never consumed, matching what the
  *       vanilla recipe book refuses to auto-fill ({@code StackedContents.accountSimpleStack}),
  *       except up to what the job's {@link ProducedLedger} says it produced itself: some mods
@@ -80,31 +83,53 @@ public final class CraftExecutor {
             return new CraftResult.RecipeGone();
         }
 
-        // Phase 1: match every ingredient slot to an inventory slot without mutating,
-        // so a shortfall discovered at slot N leaves slots 1..N-1 untouched.
+        // Phase 1: match every ingredient slot to an inventory slot (or a crafting station's storage)
+        // without mutating, so a shortfall discovered at slot N leaves slots 1..N-1 untouched.
         Inventory inventory = player.getInventory();
         //? if >=1.21.11 {
         /*List<Ingredient> ingredients = recipe.placementInfo().ingredients();*/
         //?} else {
         List<Ingredient> ingredients = recipe.getIngredients();
         //?}
-        Assignment assignment = assign(inventory, ingredients, ledger);
+        // A crafting station open right now (AE2 Crafting Terminal) adds its storage to the pool. It is
+        // re-opened for every craft, so a closed or offline station stops being drawn from at once.
+        StationStorage station = StationStorages.open(player);
+        Assignment assignment = assign(inventory, ingredients, ledger, station);
         if (assignment.missing() != null) {
             return new CraftResult.MissingIngredient(describe(assignment.missing()));
         }
 
-        // Phase 2: apply — consume, return remainders, insert the result.
-        List<ItemStack> remainders = new ArrayList<>();
+        // Phase 2a: the station's share first, all or nothing. Its storage can change under us (another
+        // player or automation drained it since the simulated check): a short extraction gives back
+        // everything this craft drew and reports the item missing, before the inventory is touched.
+        Map<Item, Integer> stationTakes = assignment.stationTakes();
+        if (!stationTakes.isEmpty()) {
+            Item shortItem = drawFromStation(player, station, stationTakes);
+            if (shortItem != null) {
+                return new CraftResult.MissingIngredient(new ItemStack(shortItem).getHoverName());
+            }
+        }
+
+        // Phase 2b: apply — consume, return remainders, insert the result.
+        List<Item> consumed = new ArrayList<>();
         for (int slot : assignment.slots()) {
             if (slot < 0) {
-                continue;
+                continue; // a blank cell, or a cell the station supplied (consumed in phase 2a)
             }
             ItemStack stack = inventory.getItem(slot);
-            Item item = stack.getItem();
+            consumed.add(stack.getItem());
             stack.shrink(1);
             if (stack.isEmpty()) {
                 inventory.setItem(slot, ItemStack.EMPTY);
             }
+        }
+        stationTakes.forEach((item, count) -> {
+            for (int i = 0; i < count; i++) {
+                consumed.add(item);
+            }
+        });
+        List<ItemStack> remainders = new ArrayList<>();
+        for (Item item : consumed) {
             //? if >=1.21.11 {
             /*net.minecraft.world.item.ItemStackTemplate remainder = item.getCraftingRemainder();
             if (remainder != null) {
@@ -118,13 +143,48 @@ public final class CraftExecutor {
         }
         inventory.setChanged();
         assignment.chargeTo(ledger);
+        // Results and remainders go to the main inventory as always; with a station open, what would
+        // otherwise drop at the player's feet goes into its storage first.
         for (ItemStack remainder : remainders) {
-            insertIntoMainInventory(player, remainder);
+            insertIntoMainInventory(player, remainder, station);
         }
         ItemStack crafted = result.copy();
-        insertIntoMainInventory(player, result.copy());
+        insertIntoMainInventory(player, result.copy(), station);
         ledger.produced(crafted.getItem(), crafted.getCount());
         return new CraftResult.Success(crafted);
+    }
+
+    /**
+     * Extracts {@code takes} from the station. Returns null when every item came out in full; otherwise
+     * gives back everything this call extracted (into the station, else the inventory, else the
+     * player's feet: never voided) and returns the first item that came up short.
+     */
+    private static Item drawFromStation(ServerPlayer player, StationStorage station, Map<Item, Integer> takes) {
+        Map<Item, Integer> drawn = new LinkedHashMap<>();
+        for (Map.Entry<Item, Integer> take : takes.entrySet()) {
+            int got = station.extract(take.getKey(), take.getValue());
+            if (got > 0) {
+                drawn.merge(take.getKey(), got, Integer::sum);
+            }
+            if (got < take.getValue()) {
+                drawn.forEach((item, count) -> giveBack(player, station, item, count));
+                return take.getKey();
+            }
+        }
+        return null;
+    }
+
+    /** Returns {@code count} plain {@code item} to the station, overflowing into the inventory, then the feet. */
+    private static void giveBack(ServerPlayer player, StationStorage station, Item item, int count) {
+        int maxStack = new ItemStack(item).getMaxStackSize();
+        for (int left = count; left > 0; ) {
+            int chunk = Math.min(left, maxStack);
+            left -= chunk;
+            ItemStack rest = station.insert(new ItemStack(item, chunk));
+            if (!rest.isEmpty()) {
+                insertIntoMainInventory(player, rest, null);
+            }
+        }
     }
 
     /**
@@ -423,7 +483,7 @@ public final class CraftExecutor {
     }
 
     /** Vanilla recipe-book parity: never consume damaged, enchanted, or renamed stacks. */
-    static boolean usableAsIngredient(ItemStack stack) {
+    public static boolean usableAsIngredient(ItemStack stack) {
         //? if >=1.20.5 {
         return !stack.isDamaged() && !stack.isEnchanted() && !stack.has(DataComponents.CUSTOM_NAME);
         //?} else {
@@ -441,6 +501,32 @@ public final class CraftExecutor {
      * rejected copies of that item the pool still holds.
      */
     private static Assignment assign(Inventory inventory, List<Ingredient> ingredients, ProducedLedger<Item> ledger) {
+        return assign(inventory, ingredients, ledger, null);
+    }
+
+    /** A cell {@link #assign} fills from the crafting station's storage, not an inventory slot. */
+    private static final int STATION_CELL = -2;
+
+    /**
+     * {@link #assign(Inventory, List, ProducedLedger)} with an open crafting station's storage
+     * ({@code station}, null for none) in the pool. The station joins the pool the planner counted:
+     * {@link #preferredItems} picks each cell's item from inventory plus station stock, exactly as the
+     * plan's {@link SlotAssignment} did. Within that item the player's own stacks go first, so a craft
+     * only reaches into the station for what the inventory lacks:
+     * <ol>
+     *   <li>the preferred item from the inventory;</li>
+     *   <li>the preferred item from the station (rather than an inventory alternative: taking a
+     *       different item than the plan's rule chose could starve a later step the plan counted on);</li>
+     *   <li>any usable inventory match;</li>
+     *   <li>any of the ingredient's items from the station;</li>
+     *   <li>(with a ledger) a refused inventory stack the ledger admits, the last resort as before.</li>
+     * </ol>
+     * Station cells are marked {@link #STATION_CELL} and summed per item in
+     * {@link Assignment#stationTakes}; they count as plain picks in the tally (a station only holds
+     * plain items), which can only draw the ledger down, never admit more.
+     */
+    private static Assignment assign(Inventory inventory, List<Ingredient> ingredients, ProducedLedger<Item> ledger,
+                                     StationStorage station) {
         int[] slots = new int[ingredients.size()];
         int[] reserved = new int[Inventory.INVENTORY_SIZE];
         LedgerTally<Item> tally = new LedgerTally<>();
@@ -450,16 +536,42 @@ public final class CraftExecutor {
             countRefused(inventory, tally);
             admitting = tally.admissible(ledger);
         }
-        Item[] preferred = preferredItems(inventory, ingredients);
+        StationPool pool = station == null ? null : new StationPool(station);
+        Item[] preferred = preferredItems(inventory, ingredients, pool);
         for (int n = 0; n < slots.length; n++) {
             Ingredient ingredient = ingredients.get(n);
             if (ingredient == null || ingredient.isEmpty()) {
                 slots[n] = -1;
                 continue;
             }
-            int slot = findMatchingSlot(inventory, ingredient, preferred[n], reserved, admitting, ledgerTakes);
+            int slot;
+            Item fromStation = null;
+            if (pool == null) {
+                slot = findMatchingSlot(inventory, ingredient, preferred[n], reserved, admitting, ledgerTakes);
+            } else {
+                slot = preferred[n] == null ? -1 : findPreferredSlot(inventory, ingredient, preferred[n], reserved);
+                if (slot < 0) {
+                    fromStation = pool.take(ingredient, preferred[n] == null ? null : List.of(preferred[n]));
+                }
+                if (slot < 0 && fromStation == null) {
+                    slot = findUsableSlot(inventory, ingredient, reserved);
+                }
+                if (slot < 0 && fromStation == null) {
+                    fromStation = pool.take(ingredient, CraftPlanner.slotAlternatives(ingredient));
+                }
+                if (slot < 0 && fromStation == null && admitting != null) {
+                    slot = findRefusedSlot(inventory, ingredient, reserved, admitting, ledgerTakes);
+                }
+            }
+            if (fromStation != null) {
+                slots[n] = STATION_CELL;
+                if (ledger != null) {
+                    tally.picked(fromStation, false);
+                }
+                continue;
+            }
             if (slot < 0) {
-                return new Assignment(slots, tally, ingredient);
+                return new Assignment(slots, tally, ingredient, pool == null ? Map.of() : pool.taken);
             }
             reserved[slot]++;
             slots[n] = slot;
@@ -468,7 +580,41 @@ public final class CraftExecutor {
                 tally.picked(stack.getItem(), !usableAsIngredient(stack));
             }
         }
-        return new Assignment(slots, tally, null);
+        return new Assignment(slots, tally, null, pool == null ? Map.of() : pool.taken);
+    }
+
+    /**
+     * The station's side of one {@link #assign} call: simulated availability per item, queried lazily
+     * and at most once per item (a simulated extraction is a storage lookup, not free), and what this
+     * craft has claimed so far.
+     */
+    private static final class StationPool {
+        private final StationStorage station;
+        private final Map<Item, Long> available = new HashMap<>();
+        /** Items claimed by this craft's cells, in claim order. */
+        final Map<Item, Integer> taken = new LinkedHashMap<>();
+
+        StationPool(StationStorage station) {
+            this.station = station;
+        }
+
+        long count(Item item) {
+            return available.computeIfAbsent(item, i -> station.available(i, Integer.MAX_VALUE));
+        }
+
+        /** Claims one of the first {@code candidates} item the station still has and the ingredient accepts. */
+        Item take(Ingredient ingredient, List<Item> candidates) {
+            if (candidates == null) {
+                return null;
+            }
+            for (Item item : candidates) {
+                if (count(item) - taken.getOrDefault(item, 0) > 0 && ingredient.test(new ItemStack(item))) {
+                    taken.merge(item, 1, Integer::sum);
+                    return item;
+                }
+            }
+            return null;
+        }
     }
 
     /** Records in {@code tally} every stack in the 36 main slots that {@link #usableAsIngredient} rejects. */
@@ -481,7 +627,12 @@ public final class CraftExecutor {
         }
     }
 
-    private record Assignment(int[] slots, LedgerTally<Item> tally, Ingredient missing) {
+    /**
+     * {@code stationTakes}: plain items per kind the station supplies to this craft (cells marked
+     * {@link #STATION_CELL}), empty without a station.
+     */
+    private record Assignment(int[] slots, LedgerTally<Item> tally, Ingredient missing,
+                              Map<Item, Integer> stationTakes) {
         void chargeTo(ProducedLedger<Item> ledger) {
             tally.chargeTo(ledger);
         }
@@ -492,8 +643,10 @@ public final class CraftExecutor {
      * main slots (null for a blank cell or when nothing usable fits). The solver plans every craft
      * with the same rule over the same slot lists ({@link CraftPlanner#slotAlternatives}) and counts,
      * so each craft takes what the plan counted on, not whichever stack sits first in the inventory.
+     * With a crafting station open ({@code pool} non-null) its stock of every candidate item joins the
+     * counts, as it joined the plan's snapshot.
      */
-    private static Item[] preferredItems(Inventory inventory, List<Ingredient> ingredients) {
+    private static Item[] preferredItems(Inventory inventory, List<Ingredient> ingredients, StationPool pool) {
         Map<Item, Integer> stock = new HashMap<>();
         for (int i = 0; i < Inventory.INVENTORY_SIZE; i++) {
             ItemStack stack = inventory.getItem(i);
@@ -508,6 +661,17 @@ public final class CraftExecutor {
             if (ingredient != null && !ingredient.isEmpty()) {
                 slots.add(CraftPlanner.slotAlternatives(ingredient));
                 cells.add(n);
+            }
+        }
+        if (pool != null) {
+            java.util.Set<Item> candidates = new java.util.HashSet<>();
+            slots.forEach(candidates::addAll);
+            for (Item item : candidates) {
+                long inStation = pool.count(item);
+                if (inStation > 0) {
+                    stock.merge(item, (int) Math.min(inStation, Integer.MAX_VALUE),
+                            (a, b) -> (int) Math.min((long) a + b, Integer.MAX_VALUE));
+                }
             }
         }
         List<Item> chosen = SlotAssignment.assign(slots, stock);
@@ -525,14 +689,32 @@ public final class CraftExecutor {
     private static int findMatchingSlot(Inventory inventory, Ingredient ingredient, Item preferred, int[] reserved,
                                         ProducedLedger<Item> ledger, Map<Item, Integer> ledgerTakes) {
         if (preferred != null) {
-            for (int i = 0; i < Inventory.INVENTORY_SIZE; i++) {
-                ItemStack stack = inventory.getItem(i);
-                if (!stack.isEmpty() && stack.getItem() == preferred && stack.getCount() - reserved[i] > 0
-                        && usableAsIngredient(stack) && ingredient.test(stack)) {
-                    return i;
-                }
+            int slot = findPreferredSlot(inventory, ingredient, preferred, reserved);
+            if (slot >= 0) {
+                return slot;
             }
         }
+        int slot = findUsableSlot(inventory, ingredient, reserved);
+        if (slot >= 0 || ledger == null) {
+            return slot;
+        }
+        return findRefusedSlot(inventory, ingredient, reserved, ledger, ledgerTakes);
+    }
+
+    /** The first unreserved usable stack of {@code preferred} the ingredient accepts, or -1. */
+    private static int findPreferredSlot(Inventory inventory, Ingredient ingredient, Item preferred, int[] reserved) {
+        for (int i = 0; i < Inventory.INVENTORY_SIZE; i++) {
+            ItemStack stack = inventory.getItem(i);
+            if (!stack.isEmpty() && stack.getItem() == preferred && stack.getCount() - reserved[i] > 0
+                    && usableAsIngredient(stack) && ingredient.test(stack)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /** The first unreserved usable stack the ingredient accepts, in inventory order, or -1. */
+    private static int findUsableSlot(Inventory inventory, Ingredient ingredient, int[] reserved) {
         for (int i = 0; i < Inventory.INVENTORY_SIZE; i++) {
             ItemStack stack = inventory.getItem(i);
             if (!stack.isEmpty() && stack.getCount() - reserved[i] > 0
@@ -540,9 +722,12 @@ public final class CraftExecutor {
                 return i;
             }
         }
-        if (ledger == null) {
-            return -1;
-        }
+        return -1;
+    }
+
+    /** The first unreserved refused stack the ledger still admits and the ingredient accepts, or -1. */
+    private static int findRefusedSlot(Inventory inventory, Ingredient ingredient, int[] reserved,
+                                       ProducedLedger<Item> ledger, Map<Item, Integer> ledgerTakes) {
         for (int i = 0; i < Inventory.INVENTORY_SIZE; i++) {
             ItemStack stack = inventory.getItem(i);
             if (!stack.isEmpty() && stack.getCount() - reserved[i] > 0 && !usableAsIngredient(stack)
@@ -561,6 +746,14 @@ public final class CraftExecutor {
      * the offhand slot, where later steps of the job would not find them.
      */
     private static void insertIntoMainInventory(ServerPlayer player, ItemStack stack) {
+        insertIntoMainInventory(player, stack, null);
+    }
+
+    /**
+     * As {@link #insertIntoMainInventory(ServerPlayer, ItemStack)}, but overflow goes into {@code station}
+     * (an open crafting station's storage, null for none) before whatever it refuses drops at the feet.
+     */
+    private static void insertIntoMainInventory(ServerPlayer player, ItemStack stack, StationStorage station) {
         Inventory inventory = player.getInventory();
         for (int i = 0; i < Inventory.INVENTORY_SIZE && !stack.isEmpty(); i++) {
             ItemStack existing = inventory.getItem(i);
@@ -580,6 +773,9 @@ public final class CraftExecutor {
             }
         }
         inventory.setChanged();
+        if (!stack.isEmpty() && station != null) {
+            stack = station.insert(stack);
+        }
         if (!stack.isEmpty()) {
             // 26.3 replaced the (throwRandomly, retainOwnership) booleans with (retainOwnership,
             // Prediction); SERVER_ONLY matches vanilla's own server-side clearContainer drop.
