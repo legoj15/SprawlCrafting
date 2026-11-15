@@ -48,6 +48,17 @@ public final class DeferredCraftSync {
     private static final int SYNC_THROTTLE_TICKS = 10;
 
     /**
+     * Each player's last open-station storage scan ({@code StationStorage#counts}, a full storage scan),
+     * reused for up to {@link #SYNC_THROTTLE_TICKS} ticks while the same menu stays open, so an idle
+     * station screen costs one scan per window instead of one per tick. A change shows up within one
+     * window, the same latency the push throttle already allows. Empty on 1.21.1.
+     */
+    private static final Map<UUID, StationScan> STATION_SCANS = new ConcurrentHashMap<>();
+
+    private record StationScan(Object menu, int tick, Map<net.minecraft.world.item.Item, Long> counts) {
+    }
+
+    /**
      * If the player has a crafting screen open and its (menu, grid, inventory contents) state changed
      * since the last push, reclassify all crafting recipes and sync the deferred-only set. Gated to a
      * screen actually being open (and rate-limited) so idle/gathering players cost nothing. No-op on
@@ -77,8 +88,7 @@ public final class DeferredCraftSync {
         // The open station's storage (issue #2, the AE2 terminal; #33, a Sophisticated screen with its
         // crafting upgrade) joins the pool the classification plans against — the same fold the 1.21.1
         // client's local solve makes (DeferredCraftableCache.stationCounts).
-        StationStorage station = StationStorages.open(player);
-        Map<net.minecraft.world.item.Item, Long> stationCounts = station == null ? Map.of() : station.counts();
+        Map<net.minecraft.world.item.Item, Long> stationCounts = stationCounts(player, menu);
         GridContext grid = CraftingGrids.isFullGrid(openGrid) ? GridContext.CRAFTING_TABLE : GridContext.INVENTORY;
         // /reload swaps MinecraftServer.resources (a fresh RecipeManager instance) and
         // reallocates all display ids, so the manager's identity must be part of the key.
@@ -156,10 +166,27 @@ public final class DeferredCraftSync {
     }*/
     //?}
 
+    //? if >=1.21.11 {
+    /*// The open station's plain-item counts (see STATION_SCANS): rescanned only for a new menu, or once
+    // the cached scan is a throttle window old.
+    private static Map<net.minecraft.world.item.Item, Long> stationCounts(ServerPlayer player,
+                                                                         net.minecraft.world.inventory.AbstractContainerMenu menu) {
+        int now = player.level().getServer().getTickCount();
+        StationScan scan = STATION_SCANS.get(player.getUUID());
+        if (scan == null || scan.menu() != menu || now < scan.tick() || now - scan.tick() >= SYNC_THROTTLE_TICKS) {
+            StationStorage station = StationStorages.open(player);
+            scan = new StationScan(menu, now, station == null ? Map.of() : station.counts());
+            STATION_SCANS.put(player.getUUID(), scan);
+        }
+        return scan.counts();
+    }*/
+    //?}
+
     /** Forget a player's debounce state (disconnect). No-op on 1.21.1. */
     public static void clear(UUID playerId) {
         LAST_SYNC.remove(playerId);
         LAST_SYNC_TICK.remove(playerId);
+        STATION_SCANS.remove(playerId);
     }
 
     /**
@@ -170,6 +197,7 @@ public final class DeferredCraftSync {
     public static void clearAll() {
         LAST_SYNC.clear();
         LAST_SYNC_TICK.clear();
+        STATION_SCANS.clear();
     }
 
     /** Server handler: a recipe-book click confirmed by display index — map it back and start. No-op on 1.21.1. */
