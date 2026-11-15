@@ -258,6 +258,8 @@ than a full exponential search — see "Known limitations".
   gear and mods are honored. Out of range, the job pauses (a Factorio assembler waiting on
   input) and auto-resumes; 2×2 steps craft anywhere. The reach scan skips empty chunk
   sections via the block palette, so a 64-block reach doesn't cost millions of lookups.
+- **Stations count as a table.** A usable crafting station (below) is treated as an open 3x3
+  grid by both `GridContext` and the proximity pause, wherever the player stands.
 
 ## Crafting stations: the AE2 Crafting Terminal (issue #2)
 

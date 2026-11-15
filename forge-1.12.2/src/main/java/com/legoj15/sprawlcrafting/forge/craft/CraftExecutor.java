@@ -516,11 +516,20 @@ public final class CraftExecutor {
 
     /** Records in {@code tally}, by {@link #ledgerKey}, every stack in the pool that {@link #usableAsIngredient} rejects. */
     private static void countRefused(List<Source> sources, LedgerTally<ItemKey> tally) {
+        // Summed in a long and saturated per key before the tally sees it: a network source's peek is
+        // the network's whole count (up to Integer.MAX_VALUE), and an int overflow would flip held
+        // negative and admit the player's own altered copies. Over-counting held is the safe side.
+        Map<ItemKey, Long> refused = new LinkedHashMap<ItemKey, Long>();
         for (Source source : sources) {
             ItemStack stack = source.peek();
             if (!stack.isEmpty() && !usableAsIngredient(stack)) {
-                tally.held(ledgerKey(stack), stack.getCount());
+                ItemKey key = ledgerKey(stack);
+                Long sum = refused.get(key);
+                refused.put(key, (sum == null ? 0L : sum) + stack.getCount());
             }
+        }
+        for (Map.Entry<ItemKey, Long> entry : refused.entrySet()) {
+            tally.held(entry.getKey(), (int) Math.min(entry.getValue(), Integer.MAX_VALUE));
         }
     }
 
@@ -778,7 +787,7 @@ public final class CraftExecutor {
             ItemStack leftover;
             try {
                 leftover = network.insert(back);
-            } catch (RuntimeException e) {
+            } catch (RuntimeException | LinkageError e) {
                 // The network cannot take it back right now: the player gets it, never the void.
                 LogManager.getLogger("SprawlCrafting").warn("Could not return {} to the network", back, e);
                 leftover = back;

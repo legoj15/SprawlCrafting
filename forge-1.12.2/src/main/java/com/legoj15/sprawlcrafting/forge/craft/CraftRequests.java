@@ -66,8 +66,9 @@ public final class CraftRequests {
         CraftExecutor.clearOpenCraftingGrid(player);
         GridContext grid = GridContext.current(player);
         PlanOutcome own = CraftPlanner.sessionWithoutNetwork(player, grid).plan(recipe);
-        if (own instanceof PlanOutcome.Planned || !NetworkTerminals.usable(player)) {
-            return finish(player, own, false);
+        if (!(own instanceof PlanOutcome.Unsolvable || own instanceof PlanOutcome.TooComplex)
+                || !NetworkTerminals.usable(player)) {
+            return finish(player, own, false); // planned, or a failure more materials cannot fix
         }
         return finish(player, CraftPlanner.plan(player, recipe, grid), true);
     }
@@ -80,8 +81,9 @@ public final class CraftRequests {
         CraftExecutor.clearOpenCraftingGrid(player);
         GridContext grid = GridContext.current(player);
         PlanOutcome own = CraftPlanner.sessionWithoutNetwork(player, grid).planByResult(result);
-        if (own instanceof PlanOutcome.Planned || !NetworkTerminals.usable(player)) {
-            return finish(player, own, false);
+        if (!(own instanceof PlanOutcome.Unsolvable || own instanceof PlanOutcome.TooComplex)
+                || !NetworkTerminals.usable(player)) {
+            return finish(player, own, false); // planned, or a failure more materials cannot fix
         }
         return finish(player, CraftPlanner.planByResult(player, result, grid), true);
     }

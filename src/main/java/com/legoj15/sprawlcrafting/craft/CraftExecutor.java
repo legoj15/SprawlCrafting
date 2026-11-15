@@ -141,8 +141,12 @@ public final class CraftExecutor {
             }
         }
 
-        // Phase 2b: apply — consume, return remainders, insert the result.
+        // Phase 2b: apply — consume, return remainders, insert the result. The remainder lookups are mod
+        // code and can throw; the station's share is already out of its storage by now, so on a failure
+        // it goes back (station, else inventory, else feet) before the error propagates.
         List<Item> consumed = new ArrayList<>();
+        List<ItemStack> remainders = new ArrayList<>();
+        try {
         for (int slot : assignment.slots()) {
             if (slot < 0) {
                 continue; // a blank cell, or a cell the station supplied (consumed in phase 2a)
@@ -159,7 +163,6 @@ public final class CraftExecutor {
                 consumed.add(item);
             }
         });
-        List<ItemStack> remainders = new ArrayList<>();
         for (Item item : consumed) {
             //? if >=1.21.11 {
             /*net.minecraft.world.item.ItemStackTemplate remainder = item.getCraftingRemainder();
@@ -171,6 +174,16 @@ public final class CraftExecutor {
                 remainders.add(new ItemStack(item.getCraftingRemainingItem()));
             }
             //?}
+        }
+        } catch (RuntimeException | LinkageError failure) {
+            stationTakes.forEach((item, count) -> {
+                try {
+                    giveBack(player, station, item, count);
+                } catch (RuntimeException | LinkageError giveBackFailure) {
+                    failure.addSuppressed(giveBackFailure);
+                }
+            });
+            throw failure;
         }
         inventory.setChanged();
         assignment.chargeTo(ledger);
