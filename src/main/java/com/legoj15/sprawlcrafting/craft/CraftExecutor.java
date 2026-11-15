@@ -502,7 +502,11 @@ public final class CraftExecutor {
                 if (slots[c] == STATION_CELL) {
                     inputs.get(c).set(ItemStack.EMPTY);
                     if (inputs.get(c).getItem().isEmpty()) {
-                        giveBack(player, station, stationItems[c], 1);
+                        try { // one failed give-back never stops the rest (as in the throw path above)
+                            giveBack(player, station, stationItems[c], 1);
+                        } catch (RuntimeException | LinkageError e) {
+                            Constants.LOG.warn("SprawlCrafting: hand-off give-back of {} failed", stationItems[c], e);
+                        }
                     }
                 }
             }

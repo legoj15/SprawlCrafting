@@ -47,8 +47,8 @@ public final class DeferredCraftableCache {
      * most once per client tick (and when the open menu changes): recipe viewers classify many recipes
      * per frame, and the scan is linear in the storage's size. The returned map keeps its identity
      * while the counts are unchanged, so callers can compare by reference to see a change.
-     * (Only the 1.21.1 client solves locally; 26.x would fold station counts in server-side, in
-     * {@code DeferredCraftSync}.)
+     * (Only the 1.21.1 client solves locally; 26.x folds station counts in server-side, in
+     * {@code DeferredCraftSync}, since issue #33.)
      */
     public static Map<Item, Long> stationCounts() {
         Minecraft minecraft = Minecraft.getInstance();

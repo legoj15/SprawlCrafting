@@ -115,12 +115,17 @@ public final class SophisticatedStation implements StationStorages.Provider {
         return CraftingGrids.isFullGrid(CraftingGrids.find(menu));
     }
 
-    /** Whether {@code stack} is nothing but its item: no component patch (no NBT tag on 1.20.1). */
+    /**
+     * Whether {@code stack} is nothing but its item: no component patch; on 1.20.1, exactly the tag of a
+     * fresh stack, because a new damageable item already carries {@code Damage:0}
+     * ({@code ItemStack(ItemLike, int)} calls {@code setDamageValue}), so a "no tag" test would skip every
+     * pristine tool (the same trap {@code Ae2Station.canonical} handles).
+     */
     private static boolean isPlain(ItemStack stack) {
         //? if >=1.20.5 {
         return stack.getComponentsPatch().isEmpty();
         //?} else {
-        /*return !stack.hasTag(); // pre-components NBT*/
+        /*return ItemStack.isSameItemSameTags(stack, new ItemStack(stack.getItem()));*/
         //?}
     }
 
