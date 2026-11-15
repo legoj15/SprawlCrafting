@@ -11,6 +11,7 @@ import com.legoj15.sprawlcrafting.compat.jei.DeferredCraftingTransferHandler;
 import com.legoj15.sprawlcrafting.config.SprawlConfig;
 import com.legoj15.sprawlcrafting.craft.CraftPlanner.Craftability;
 import com.legoj15.sprawlcrafting.craft.GridContext;
+import com.legoj15.sprawlcrafting.craft.StationStorages;
 
 import mezz.jei.api.constants.RecipeTypes;
 import mezz.jei.api.gui.ingredient.IRecipeSlotsView;
@@ -69,7 +70,10 @@ public class StationTransferHandler<C extends AbstractContainerMenu>
         if (!SprawlConfig.get().jeiIntegration()) {
             return helper.createInternalError(); // integration off: no button, as without this handler
         }
-        Craftability craftability = DeferredCraftableCache.classify(recipe, GridContext.CRAFTING_TABLE);
+        // An offline terminal is no station: the server plans it as the 2x2 inventory (GridContext.current),
+        // so classify the same way rather than offering 3x3 work the server would refuse.
+        GridContext grid = StationStorages.clientCounts(container) != null ? GridContext.CRAFTING_TABLE : GridContext.INVENTORY;
+        Craftability craftability = DeferredCraftableCache.classify(recipe, grid);
         if (craftability == Craftability.DIRECT || craftability == Craftability.DEFERRED) {
             if (ClientJobTracker.hasActiveJob()) {
                 return helper.createUserErrorWithTooltip(Component.translatable("sprawlcrafting.craft.busy"));
@@ -84,7 +88,7 @@ public class StationTransferHandler<C extends AbstractContainerMenu>
             if (doTransfer) {
                 // Same as the crafting-table handler: open after JEI's click handling settles.
                 MissingIngredients.requestOpenNextTick(
-                        () -> MissingIngredientsView.open(recipe, GridContext.CRAFTING_TABLE));
+                        () -> MissingIngredientsView.open(recipe, grid));
                 return null;
             }
             return DeferredCraftingTransferHandler.gatherListError(recipe);

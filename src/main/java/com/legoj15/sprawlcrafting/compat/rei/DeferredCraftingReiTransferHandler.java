@@ -51,12 +51,13 @@ public class DeferredCraftingReiTransferHandler implements TransferHandler {
             grid = GridContext.CRAFTING_TABLE;
         } else if (context.getMenu() instanceof InventoryMenu) {
             grid = GridContext.INVENTORY;
-        } else if (StationStorages.isStationMenu(context.getMenu())) {
+        } else if (StationStorages.clientCounts(context.getMenu()) != null) {
             // A crafting station (AE2 Crafting Terminal): a 3×3 grid whose storage counts as material.
             // Only the yellow (deferred) and orange (gather) cases are ours; a direct craft returns
             // NotApplicable below, so the station mod's own handler (AE2's UseCraftingRecipeTransfer,
             // priority 0, after ours at 1) keeps filling its grid. REI walks handlers by descending
-            // priority and stops at the first applicable+successful result.
+            // priority and stops at the first applicable+successful result. An offline terminal has no
+            // counts, so it is NotApplicable entirely and AE2's handler takes every recipe.
             grid = GridContext.CRAFTING_TABLE;
         } else {
             return Result.createNotApplicable();
