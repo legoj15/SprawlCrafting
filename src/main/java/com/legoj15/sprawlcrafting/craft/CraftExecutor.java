@@ -175,11 +175,12 @@ public final class CraftExecutor {
             }
             //?}
         }
-        } catch (RuntimeException | LinkageError failure) {
+        } catch (Throwable failure) {
+            // Any Throwable, even an Error, as in StationDraw: the drawn share is real either way.
             stationTakes.forEach((item, count) -> {
                 try {
                     giveBack(player, station, item, count);
-                } catch (RuntimeException | LinkageError giveBackFailure) {
+                } catch (Throwable giveBackFailure) {
                     failure.addSuppressed(giveBackFailure);
                 }
             });
