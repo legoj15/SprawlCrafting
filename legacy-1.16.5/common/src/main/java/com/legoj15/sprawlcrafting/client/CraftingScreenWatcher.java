@@ -1,11 +1,10 @@
 package com.legoj15.sprawlcrafting.client;
 
+import com.legoj15.sprawlcrafting.craft.CraftingGrids;
 import com.legoj15.sprawlcrafting.platform.Services;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screen.inventory.ContainerScreen;
-import net.minecraft.inventory.container.Container;
-import net.minecraft.inventory.container.RecipeBookContainer;
 
 /**
  * Client tick watcher (render thread) that tells the server which crafting grid the player currently
@@ -57,11 +56,12 @@ public final class CraftingScreenWatcher {
         int width = 0;
         int height = 0;
         if (minecraft.screen instanceof ContainerScreen) {
-            Container menu = ((ContainerScreen<?>) minecraft.screen).getMenu();
-            // RecipeBookContainer also covers furnaces (1×1); the server-side ≥2×2 threshold filters those.
-            if (menu instanceof RecipeBookContainer) {
-                width = ((RecipeBookContainer<?>) menu).getGridWidth();
-                height = ((RecipeBookContainer<?>) menu).getGridHeight();
+            // Any menu showing a crafting grid: a crafting table, the 2×2 inventory, or a usable AE2 Crafting
+            // Terminal's (CraftingGrids knows which menus those are).
+            CraftingGrids.Grid grid = CraftingGrids.find(((ContainerScreen<?>) minecraft.screen).getMenu());
+            if (grid != null) {
+                width = grid.width();
+                height = grid.height();
             }
         }
 

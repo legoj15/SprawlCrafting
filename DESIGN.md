@@ -287,9 +287,9 @@ Rule: every item a craft draws from must be visible in the open screen. The AE2 
 Terminal shows its ME network, so while one is open **and usable** (link connected / powered)
 the network's plain items count as craft material. Nothing off-screen counts: no plain ME
 terminal, no adjacent storage. Shipped on `1.21.1-neoforge` (AE2 19.x), `1.20.1-forge` (AE2 15.x,
-#27) and 1.12.2 (rv6 and AE2-UEL, see the 1.12.2 section); other lines are follow-ups #27
-(1.20.1-fabric), #28 (26.x; the `DeferredCraftSync` fold is in since #33, only the AE2 provider is
-left), #29 (1.16.5). The Sophisticated crafting upgrade is a second provider (see "Sophisticated
+#27), 1.12.2 (rv6 and AE2-UEL, see the 1.12.2 section) and legacy 1.16.5 Forge (AE2 8.4.7, #29; see
+`docs/legacy-1.16.5.md`); other lines are follow-ups #27 (1.20.1-fabric), #28 (26.x; the
+`DeferredCraftSync` fold is in since #33, only the AE2 provider is left). The Sophisticated crafting upgrade is a second provider (see "Sophisticated
 crafting upgrade").
 
 - **Seam.** Shared code talks only to `craft/StationStorage` (counts, extract, insert) through
@@ -322,6 +322,14 @@ crafting upgrade").
   key of a fresh stack (`canonical`: `AEItemKey.of(new ItemStack(item))` on 1.20.1, where a new
   damageable stack already carries `Damage:0`; `AEItemKey.of(item)` on 1.21.1), since a tag-less key
   can still carry capability data and a pristine tool is never tag-less.
+- **1.16.5 (legacy tree, Forge only).** Same seam, executor and lifecycle ported to Java 8 in
+  `legacy-1.16.5/common`; the provider is `legacy-1.16.5/forge/.../compat/ae2/Ae2Station` (AE2 8.4.7,
+  mod id `appliedenergistics2`, `CraftingTermContainer`). Usable is the AE2 15-style power check; view
+  cells filter on both sides; "plain" is AE2-equal to a fresh stack (1.16.5 also tags new damageable
+  stacks `Damage:0`). JEI 7 fronts AE2 8's own handler like 1.20.1 (optional `AFTER
+  appliedenergistics2`). `PAUSED_STATION` and client-side station counting hang off a message-less
+  Forge marker channel `progress_states_v2` in both directions, so an old server never sees a station
+  offered and an old client never gets the new ordinal. Fabric 1.16.5 has no station.
 - **Accepted limits.** A connected but power-starved network can still cancel a job (counts are
   simulated per item, not in aggregate; no item loss). Items in the terminal's own 3x3 grid are
   not counted. A paused job has no player cancel yet (#31). A newer 1.21.1 client on an older

@@ -75,18 +75,22 @@ public final class CraftQueueManager {
         // second, which is every craft of a paced step); a bulk step bursts every tick in between, so
         // those ticks re-validate just the table the last scan found (cheap) and pause the moment it
         // is gone or out of reach, instead of crafting on for up to half a second after the player left.
+        // A usable open crafting station (AE2 Crafting Terminal, which has its own 3×3 grid but is no
+        // recipe-book menu) counts like a table in reach; the check is the open menu's class plus its live
+        // power state, cheap enough for every burst tick, and asked only when the table check fails.
         if (job.currentStep().needsFullGrid()) {
             if (job.reachCheckDue()) {
                 BlockPos table = CraftingTableReach.findInReach(player);
-                if (table == null) {
+                if (table == null && !StationStorages.hasUsableStation(player)) {
                     job.holdForRetry();
-                    sync(player, job, CraftProgressPacket.State.PAUSED, ItemStack.EMPTY);
+                    sync(player, job, pausedState(job), ItemStack.EMPTY);
                     return;
                 }
                 job.markReachChecked(table);
-            } else if (!CraftingTableReach.isStillInReach(player, job.reachTable())) {
+            } else if (!CraftingTableReach.isStillInReach(player, job.reachTable())
+                    && !StationStorages.hasUsableStation(player)) {
                 job.holdForRetry();
-                sync(player, job, CraftProgressPacket.State.PAUSED, ItemStack.EMPTY);
+                sync(player, job, pausedState(job), ItemStack.EMPTY);
                 return;
             }
         }
@@ -149,9 +153,16 @@ public final class CraftQueueManager {
                 }
                 // FALLBACK: couldn't hand off (recipe locked, grid uncleanable, …) — auto-craft below.
             }
-            CraftExecutor.CraftResult result = CraftExecutor.craftOnce(player, job.currentStep().recipeId(), job.produced());
+            CraftExecutor.CraftResult result = CraftExecutor.craftOnce(player, job.currentStep().recipeId(),
+                    job.produced(), job.stationDependent());
             switch (result.kind()) {
                 case SUCCESS:
+                    if (result.usedStation()) {
+                        // From now on this job needs the station (a job that started from its inventory alone
+                        // but had to reach into the network because the player moved items): losing the
+                        // station pauses it instead of cancelling.
+                        job.setStationDependent(true);
+                    }
                     lastCrafted = result.crafted();
                     boolean stepDone = job.onCraftPerformed();
                     if (job.isFinished()) {
@@ -172,6 +183,18 @@ public final class CraftQueueManager {
                     }
                     continue;
                 case MISSING_INGREDIENT:
+                    // A job that relies on a station's storage (planned on it, or it already drew from it),
+                    // whose station is closed or unusable now (the terminal is shut, or its network offline or
+                    // out of power: StationStorages.open is null for both): the missing item may be sitting in
+                    // that storage, so wait for the player to get the station back rather than cancelling.
+                    // With a usable station open the storage IS visible, so a genuine shortfall (another player
+                    // or automation drained it) still cancels. A job that never needed the station always
+                    // takes the plain cancel.
+                    if (job.stationDependent() && StationStorages.open(player) == null) {
+                        job.holdForRetry();
+                        sync(player, job, CraftProgressPacket.State.PAUSED_STATION, ItemStack.EMPTY);
+                        return;
+                    }
                     ACTIVE.remove(player.getUUID());
                     sync(player, job, CraftProgressPacket.State.CANCELLED, ItemStack.EMPTY);
                     notify(player, new TranslationTextComponent("sprawlcrafting.craft.missing",
@@ -196,14 +219,31 @@ public final class CraftQueueManager {
     /**
      * Whether the player has a crafting grid open that the final craft can be handed off to: reported
      * open by the client ({@link ClientCraftingView}), agreeing with the server's view of the open menu
-     * ({@link GridContext#current}), and large enough for the step.
+     * ({@link GridContext#current}), on screen, and large enough for the step. That includes a usable
+     * crafting station's own grid (the AE2 Crafting Terminal's, a registered {@link CraftingGrids.Provider}
+     * while the terminal is usable): the executor lays the recipe out through {@code Slot.set}, so no
+     * vanilla slot layout is assumed.
      */
     private static boolean canHandOff(ServerPlayerEntity player, CraftStep step) {
         GridContext open = ClientCraftingView.open(player);
         if (open == null || GridContext.current(player) != open) {
             return false;
         }
+        CraftingGrids.Grid grid = CraftingGrids.find(player.containerMenu);
+        if (grid == null || !grid.visible()) {
+            return false;
+        }
         return !step.needsFullGrid() || open == GridContext.CRAFTING_TABLE;
+    }
+
+    /**
+     * Which pause to report for a full-grid step with no grid available: a job that relies on a station's
+     * storage points the player back to the station ("open station": its grid and its items both live
+     * there), otherwise the classic "need a crafting table", so a job that never touched the network never
+     * shows station text.
+     */
+    private static CraftProgressPacket.State pausedState(CraftJob job) {
+        return job.stationDependent() ? CraftProgressPacket.State.PAUSED_STATION : CraftProgressPacket.State.PAUSED;
     }
 
     private static void notify(ServerPlayerEntity player, ITextComponent message) {
@@ -213,6 +253,12 @@ public final class CraftQueueManager {
     /** Guarded by the platform's channel check, so a modless/vanilla client is simply skipped. */
     private static void sync(ServerPlayerEntity player, CraftJob job, CraftProgressPacket.State state, ItemStack current) {
         job.markSynced();
+        // The state travels as an ordinal that an older client decodes with values()[i] and rejects when out
+        // of range, so a state appended after the original five goes only to a client that has the
+        // progress-states-v2 marker channel; any other gets the nearest original state.
+        if (state == CraftProgressPacket.State.PAUSED_STATION && !Services.PLATFORM.canReceiveProgressStatesV2(player)) {
+            state = CraftProgressPacket.State.PAUSED;
+        }
         // done/total stay int on the wire (mod-1.0.3 layout); wireDone/wireTotal scale an over-int job down.
         Services.PLATFORM.sendProgress(player, new CraftProgressPacket(
                 state, job.targetResult().copy(), current.copy(), job.wireDone(), job.wireTotal()));

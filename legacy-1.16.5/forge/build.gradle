@@ -29,6 +29,13 @@ sourceSets {
             srcDir '../common/src/main/resources'
         }
     }
+    // Minecraft-free unit tests of shared logic (StationDraw). Run once, here: Forge's toolchain already
+    // compiles common/ as Java 8, and the classes under test are identical on Fabric.
+    test {
+        java {
+            srcDir '../common/src/test/java'
+        }
+    }
 }
 
 // The solver library (com.legoj15:solver, a composite build). Forge 36 has no jar-in-jar, so its classes
@@ -66,6 +73,9 @@ repositories {
     maven fg.forgeMaven
     maven fg.minecraftLibsMaven
     maven { url = 'https://maven.blamejared.com/'; content { includeGroup 'mezz.jei' } }
+    // AE2's own maven: appeng:appliedenergistics2 is the Forge jar on the 1.16 line (AE2 for Fabric 1.16 was
+    // a separate artifact), so unlike Modrinth's pin on 1.20.1 it cannot resolve to a Fabric jar.
+    maven { url = 'https://modmaven.dev/'; content { includeGroup 'appeng' } }
     mavenCentral()
 }
 
@@ -80,12 +90,48 @@ dependencies {
         runtimeOnly renamer.dependency("mezz.jei:jei-1.16.5:${jei_version}")
     }
 
+    // AE2 (SRG-named in its published jar) renamed to our dev names; compile-only soft dependency for
+    // compat/ae2, which loads only when AE2 does (StationStorages.bootstrap).
+    // One renamed artifact for both configurations: a second renamer.dependency() of the same coordinate is
+    // a second rename task writing the same file, which Gradle rejects as an undeclared dependency.
+    // AE2's published jar is signed, and renaming rewrites its classes but keeps META-INF's signature, so a
+    // dev run dies on "SHA-256 digest error" when ModLauncher verifies the jar: strip the signature after
+    // renaming (an unsigned jar is not verified). Dev-only artifact; nothing of AE2 is shipped.
+    def ae2 = renamer.dependency("appeng:appliedenergistics2:${ae2_version}") { rename ->
+        rename.doLast {
+            def jar = rename.output.get().asFile.toPath()
+            def zip = java.nio.file.FileSystems.newFileSystem(jar, (ClassLoader) null)
+            try {
+                java.nio.file.Files.list(zip.getPath('META-INF')).withCloseable { entries ->
+                    entries.filter { it.fileName.toString() ==~ /(?i).+\.(SF|RSA|DSA|EC)/ }
+                            .collect(java.util.stream.Collectors.toList())
+                            .each { java.nio.file.Files.delete(it) }
+                }
+            } finally {
+                zip.close()
+            }
+        }
+    }
+    compileOnly ae2
+    // -Pae2 pulls AE2 into dev runs for manual testing (combine with -Pjei for the terminal's JEI button).
+    if (project.hasProperty('ae2')) {
+        runtimeOnly ae2
+    }
+
     shade "com.legoj15:solver:${rootProject.ext.solverVersion}"
+
+    testImplementation platform('org.junit:junit-bom:5.10.3')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 renamer.mappings(minecraft.dependency.toSrg)
 
 tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8'
+}
+
+tasks.named('test', Test) {
+    useJUnitPlatform()
 }
 
 tasks.named('processResources', ProcessResources) {

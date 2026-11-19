@@ -33,6 +33,14 @@ public interface IPlatformHelper {
     void sendProgress(ServerPlayerEntity player, CraftProgressPacket packet);
 
     /**
+     * Whether {@code player}'s client has the progress-states-v2 marker channel
+     * ({@link com.legoj15.sprawlcrafting.network.ProgressStatesV2}), so it can decode the progress states
+     * appended after the original five ({@code PAUSED_STATION}). Channel presence alone is not enough: a
+     * mod-1.0.x client has the main channel but would reject the new ordinal.
+     */
+    boolean canReceiveProgressStatesV2(ServerPlayerEntity player);
+
+    /**
      * Squared block-interaction distance used by the server's own use-item validation on this
      * loader: Forge honours its {@code REACH_DISTANCE} attribute ({@code (reach + 3)^2}); Fabric
      * 1.16.5 uses vanilla's fixed {@code 64.0}. Measured from the player's position to the block centre.
@@ -44,6 +52,13 @@ public interface IPlatformHelper {
 
     /** Whether the connected server negotiated this mod's channel (false on vanilla/modless servers). */
     boolean serverHasMod();
+
+    /**
+     * Whether the connected server has the progress-states-v2 marker channel, i.e. it is a SprawlCrafting
+     * build that plans and crafts with an open crafting station's storage. Without it the client must not
+     * count a station's items (it would offer crafts the server then refuses).
+     */
+    boolean serverSupportsStations();
 
     /** C2S: confirm a deferred craft of {@code recipeId}. No-op unless {@link #serverHasMod()}. */
     void sendStartCraft(net.minecraft.util.ResourceLocation recipeId);

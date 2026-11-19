@@ -1,7 +1,6 @@
 package com.legoj15.sprawlcrafting.craft;
 
 import net.minecraft.entity.player.ServerPlayerEntity;
-import net.minecraft.inventory.container.RecipeBookContainer;
 
 /**
  * The crafting grid a deferred-craft request was made from. Whole-chain gating (DESIGN.md): every
@@ -37,13 +36,16 @@ public enum GridContext {
 
     /**
      * The grid the player is looking at right now, keyed on the open menu's grid size rather than
-     * {@code CraftingMenu}, so a modded recipe-book menu exposing a 3×3 grid plans correctly.
+     * {@code CraftingMenu}, so a modded recipe-book menu exposing a 3×3 grid plans correctly. A crafting
+     * station ({@link StationStorages}, the AE2 Crafting Terminal) has a 3×3 grid but no recipe book, so it
+     * is recognised by its provider instead, and only while it is usable
+     * ({@link StationStorages#hasUsableStation}): an open terminal whose network is offline is no grid.
      */
     public static GridContext current(ServerPlayerEntity player) {
-        if (player.containerMenu instanceof RecipeBookContainer) {
-            RecipeBookContainer<?> menu = (RecipeBookContainer<?>) player.containerMenu;
-            return forSize(menu.getGridWidth(), menu.getGridHeight());
+        if (StationStorages.hasUsableStation(player)) {
+            return CRAFTING_TABLE;
         }
-        return INVENTORY;
+        CraftingGrids.Grid grid = CraftingGrids.find(player.containerMenu);
+        return grid == null ? INVENTORY : forSize(grid.width(), grid.height());
     }
 }

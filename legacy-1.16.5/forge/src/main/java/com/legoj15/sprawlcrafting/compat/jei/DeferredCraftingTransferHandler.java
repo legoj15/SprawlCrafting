@@ -47,6 +47,19 @@ public class DeferredCraftingTransferHandler implements IRecipeTransferHandler<W
         this.vanilla = vanilla;
     }
 
+    /** The yellow "craftable from raw resources" state, shared with {@link StationTransferHandler}. */
+    static IRecipeTransferError deferredAvailable() {
+        return DEFERRED_AVAILABLE;
+    }
+
+    /**
+     * The orange "open the gather list" state for {@code recipe}, its tooltip costed for {@code grid}; shared
+     * with {@link StationTransferHandler}.
+     */
+    static IRecipeTransferError gatherListError(IRecipe<?> recipe, GridContext grid) {
+        return new GatherListError(recipe, grid);
+    }
+
     /** The button tint for one of our errors, or {@code fallback} for anyone else's. */
     public static int highlightColor(IRecipeTransferError error, int fallback) {
         if (error instanceof ColoredError) {
@@ -92,7 +105,7 @@ public class DeferredCraftingTransferHandler implements IRecipeTransferHandler<W
                         () -> MissingIngredientsView.open(craft, GridContext.CRAFTING_TABLE));
                 return null;
             }
-            return new GatherListError(craft);
+            return new GatherListError(craft, GridContext.CRAFTING_TABLE);
         }
         return vanillaError;
     }
@@ -145,9 +158,11 @@ public class DeferredCraftingTransferHandler implements IRecipeTransferHandler<W
         private static final int TRANSLUCENT_ORANGE = 0x80FF6A00;
 
         private final IRecipe<?> recipe;
+        private final GridContext grid;
 
-        GatherListError(IRecipe<?> recipe) {
+        GatherListError(IRecipe<?> recipe, GridContext grid) {
             this.recipe = recipe;
+            this.grid = grid;
         }
 
         @Override
@@ -157,7 +172,7 @@ public class DeferredCraftingTransferHandler implements IRecipeTransferHandler<W
 
         @Override
         List<ITextComponent> tooltip() {
-            ShortfallView view = MissingIngredients.shortfallLocal(recipe, GridContext.CRAFTING_TABLE);
+            ShortfallView view = MissingIngredients.shortfallLocal(recipe, grid);
             return GatherTooltip.compact(view.demands(), view.approximate());
         }
     }

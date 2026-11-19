@@ -3,6 +3,7 @@ package com.legoj15.sprawlcrafting.platform.fabric;
 import com.legoj15.sprawlcrafting.craft.ClientCraftingView;
 import com.legoj15.sprawlcrafting.craft.CraftQueueManager;
 import com.legoj15.sprawlcrafting.craft.CraftRequests;
+import com.legoj15.sprawlcrafting.craft.StationStorages;
 import com.legoj15.sprawlcrafting.network.CraftingScreenStatePacket;
 import com.legoj15.sprawlcrafting.network.StartDeferredCraftPacket;
 
@@ -24,6 +25,7 @@ public class FabricMod implements ModInitializer {
 
     @Override
     public void onInitialize() {
+        StationStorages.bootstrap(); // no station compat in the Fabric jar: registers nothing
         ServerPlayNetworking.registerGlobalReceiver(StartDeferredCraftPacket.ID,
                 (server, player, handler, buf, sender) -> {
                     final StartDeferredCraftPacket packet = StartDeferredCraftPacket.read(buf);

@@ -33,3 +33,12 @@ mandatory = false
 versionRange = "[7.6,)"
 ordering = "AFTER"
 side = "CLIENT"
+
+# Load after AE2 so JEI (which runs plugins in mod order and keeps the last transfer handler per
+# container class) keeps our Crafting Terminal handler, which fronts AE2's own.
+[[dependencies.sprawlcrafting]]
+modId = "appliedenergistics2"
+mandatory = false
+versionRange = "[0,)"
+ordering = "AFTER"
+side = "CLIENT"

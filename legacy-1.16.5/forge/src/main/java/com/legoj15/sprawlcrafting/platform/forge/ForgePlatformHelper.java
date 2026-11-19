@@ -52,6 +52,18 @@ public class ForgePlatformHelper implements IPlatformHelper {
     }
 
     @Override
+    public boolean canReceiveProgressStatesV2(ServerPlayerEntity player) {
+        return player.connection != null
+                && ForgeMod.PROGRESS_STATES_V2.isRemotePresent(player.connection.getConnection());
+    }
+
+    @Override
+    public boolean serverSupportsStations() {
+        ClientPlayNetHandler connection = Minecraft.getInstance().getConnection();
+        return connection != null && ForgeMod.PROGRESS_STATES_V2.isRemotePresent(connection.getConnection());
+    }
+
+    @Override
     public double blockInteractionDistanceSqr(ServerPlayerEntity player) {
         // Mirrors ServerPlayNetHandler#handleUseItemOn: (REACH_DISTANCE + 3)^2.
         ModifiableAttributeInstance reach =

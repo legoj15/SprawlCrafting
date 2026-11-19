@@ -6,6 +6,7 @@ import java.util.List;
 import com.google.common.collect.ImmutableList;
 import com.legoj15.sprawlcrafting.Constants;
 import com.legoj15.sprawlcrafting.client.MissingIngredientsScreen;
+import com.legoj15.sprawlcrafting.craft.StationStorages;
 
 import mezz.jei.api.IModPlugin;
 import mezz.jei.api.JeiPlugin;
@@ -15,6 +16,7 @@ import mezz.jei.api.recipe.transfer.IRecipeTransferHandlerHelper;
 import mezz.jei.api.recipe.transfer.IRecipeTransferInfo;
 import mezz.jei.api.registration.IGuiHandlerRegistration;
 import mezz.jei.api.registration.IRecipeTransferRegistration;
+import net.minecraft.inventory.container.Container;
 import net.minecraft.inventory.container.Slot;
 import net.minecraft.inventory.container.WorkbenchContainer;
 import net.minecraft.util.ResourceLocation;
@@ -29,14 +31,17 @@ import net.minecraft.util.ResourceLocation;
  * Our registration replaces JEI's because JEI loads its vanilla plugin first and the handler table is
  * keyed by (container class, category), last write wins.
  *
- * <p>Scope note: only the crafting table screen's handler is replaced, as on the modern nodes; the
- * player 2x2 is covered by the recipe-book integration.
+ * <p>Scope note: the crafting table screen's handler is replaced, as on the modern nodes, plus each
+ * crafting station's (the AE2 Crafting Terminal, {@link StationTransferHandler}); the player 2x2 is covered
+ * by the recipe-book integration.
  */
 @JeiPlugin
 public class SprawlCraftingJeiPlugin implements IModPlugin {
 
     private static final ResourceLocation UID = Constants.id("jei_plugin");
     private static final String BASIC_HANDLER = "mezz.jei.transfer.BasicRecipeTransferHandler";
+    /** AE2 8.x's own Crafting Terminal handler; package-private constructor (Class, helper). */
+    private static final String AE2_CRAFTING_HANDLER = "appeng.integration.modules.jei.CraftingRecipeTransferHandler";
 
     @Override
     public ResourceLocation getPluginUid() {
@@ -46,12 +51,54 @@ public class SprawlCraftingJeiPlugin implements IModPlugin {
     @Override
     public void registerRecipeTransferHandlers(IRecipeTransferRegistration registration) {
         IRecipeTransferHandlerHelper helper = registration.getTransferHelper();
+        registerStations(registration, helper);
         IRecipeTransferHandler<WorkbenchContainer> vanilla = createBasicHandler(registration, helper);
         if (vanilla == null) {
             return;
         }
         registration.addRecipeTransferHandler(
                 new DeferredCraftingTransferHandler(vanilla), VanillaRecipeCategoryUid.CRAFTING);
+    }
+
+    /**
+     * One {@link StationTransferHandler} per crafting-station menu a provider registered (the AE2 Crafting
+     * Terminal; the list is empty without AE2, so no AE2 class is touched then). JEI 7 keys handlers by exact
+     * container class and category, last write wins, and walks plugins in mod order: the optional AFTER
+     * dependency on appliedenergistics2 in mods.toml is what makes ours replace AE2's own registration.
+     */
+    private static void registerStations(IRecipeTransferRegistration registration, IRecipeTransferHandlerHelper helper) {
+        for (Class<? extends Container> menu : StationStorages.menus()) {
+            registration.addRecipeTransferHandler(stationHandler(menu, helper), VanillaRecipeCategoryUid.CRAFTING);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static <C extends Container> StationTransferHandler<C> stationHandler(
+            Class<? extends Container> menu, IRecipeTransferHandlerHelper helper) {
+        Class<C> menuClass = (Class<C>) menu;
+        return new StationTransferHandler<>(menuClass, helper, createStockStationHandler(menuClass, helper));
+    }
+
+    /**
+     * AE2's own handler for {@code menuClass}, which ours fronts for the direct (green) craft, or null when it
+     * cannot be built (the engine then takes every recipe). Reflective because the constructor is
+     * package-private and so this plugin never links AE2.
+     */
+    @SuppressWarnings("unchecked")
+    private static <C extends Container> IRecipeTransferHandler<C> createStockStationHandler(
+            Class<C> menuClass, IRecipeTransferHandlerHelper helper) {
+        try {
+            Constructor<?> constructor = Class.forName(AE2_CRAFTING_HANDLER)
+                    .getDeclaredConstructor(Class.class, IRecipeTransferHandlerHelper.class);
+            constructor.setAccessible(true);
+            IRecipeTransferHandler<C> stock = (IRecipeTransferHandler<C>) constructor.newInstance(menuClass, helper);
+            // AE2's handler is written for one container class; never front it for a different one.
+            return stock.getContainerClass() == menuClass ? stock : null;
+        } catch (ReflectiveOperationException | LinkageError | ClassCastException | SecurityException e) {
+            Constants.LOG.warn("Could not build AE2's Crafting Terminal JEI handler; SprawlCrafting handles every"
+                    + " recipe there", e);
+            return null;
+        }
     }
 
     @Override

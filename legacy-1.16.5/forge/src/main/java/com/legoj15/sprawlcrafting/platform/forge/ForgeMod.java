@@ -10,8 +10,10 @@ import com.legoj15.sprawlcrafting.client.ClientJobTracker;
 import com.legoj15.sprawlcrafting.craft.ClientCraftingView;
 import com.legoj15.sprawlcrafting.craft.CraftQueueManager;
 import com.legoj15.sprawlcrafting.craft.CraftRequests;
+import com.legoj15.sprawlcrafting.craft.StationStorages;
 import com.legoj15.sprawlcrafting.network.CraftProgressPacket;
 import com.legoj15.sprawlcrafting.network.CraftingScreenStatePacket;
+import com.legoj15.sprawlcrafting.network.ProgressStatesV2;
 import com.legoj15.sprawlcrafting.network.StartDeferredCraftPacket;
 
 import net.minecraft.entity.player.ServerPlayerEntity;
@@ -50,12 +52,25 @@ public class ForgeMod {
             ForgeMod::acceptsVersion,
             ForgeMod::acceptsVersion);
 
+    /**
+     * The progress-states-v2 capability marker ({@link ProgressStatesV2}): registered, never sent on. Forge
+     * tracks presence per channel name from the login handshake, so its presence on the peer is the one
+     * signal a mod-1.0.x peer (main channel only) cannot fake. Same lenient predicates as the main channel.
+     */
+    public static final SimpleChannel PROGRESS_STATES_V2 = NetworkRegistry.newSimpleChannel(
+            ProgressStatesV2.ID,
+            () -> PROTOCOL,
+            ForgeMod::acceptsVersion,
+            ForgeMod::acceptsVersion);
+
     public ForgeMod() {
         // Server-list compatibility: present-or-absent on either side is fine.
         ModLoadingContext.get().registerExtensionPoint(ExtensionPoint.DISPLAYTEST,
                 () -> Pair.of(() -> FMLNetworkConstants.IGNORESERVERONLY, (remote, isServer) -> true));
 
         registerMessages();
+        // AE2 Crafting Terminal as a crafting station, only when AE2 is loaded (reflective, see the class).
+        StationStorages.bootstrap();
 
         MinecraftForge.EVENT_BUS.addListener(ForgeMod::onServerTick);
         MinecraftForge.EVENT_BUS.addListener(ForgeMod::onPlayerLoggedOut);

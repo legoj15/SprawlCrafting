@@ -50,9 +50,24 @@ public final class CraftRequests {
         // Vanilla parity: clicking a recipe returns the grid's contents to the inventory before acting.
         // We intercept the click, so replicate it — the planner reads only the 36 main slots.
         CraftExecutor.clearOpenCraftingGrid(player);
-        PlanOutcome outcome = CraftPlanner.plan(player, recipe, GridContext.current(player));
+        GridContext grid = GridContext.current(player);
+        // The inventory alone first: a job it can cover never depends on a crafting station, so closing the
+        // station (or the network losing power) later must not pause it. Only when the inventory falls short
+        // does an open, usable station (AE2 Crafting Terminal) add its storage to the pool; a plan made that
+        // way is station-dependent. The station's counts are a storage scan, so they are taken only then.
+        PlanOutcome outcome = CraftPlanner.plan(player, recipe, grid);
+        boolean stationDependent = false;
+        if (outcome.kind() == PlanOutcome.Kind.UNSOLVABLE || outcome.kind() == PlanOutcome.Kind.TOO_COMPLEX) {
+            StationStorage station = StationStorages.open(player);
+            if (station != null) {
+                // Even when still unsolvable, report this outcome: its shortfall already counts the network.
+                outcome = CraftPlanner.plan(player, recipe, grid, station.counts());
+                stationDependent = outcome.isPlanned();
+            }
+        }
         if (outcome.isPlanned()) {
             CraftJob job = outcome.job();
+            job.setStationDependent(stationDependent);
             CraftQueueManager.start(player, job);
             notify(player, new TranslationTextComponent("sprawlcrafting.craft.started",
                     job.targetResult().getHoverName(),

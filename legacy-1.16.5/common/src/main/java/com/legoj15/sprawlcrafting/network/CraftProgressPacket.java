@@ -18,8 +18,11 @@ public final class CraftProgressPacket {
     public static final ResourceLocation ID = Constants.id("craft_progress");
 
     public enum State {
-        // Wire format is ordinal-keyed — only ever APPEND new states, never reorder.
-        CRAFTING, PAUSED, FINISHED, CANCELLED, READY_IN_GRID;
+        // Wire format is ordinal-keyed — only ever APPEND new states, never reorder. PAUSED_STATION (a
+        // station-dependent job waiting for its crafting station to be reopened) is beyond what a mod-1.0.x
+        // client decodes, so the server sends it only to a client that has the progress-states-v2 marker
+        // channel and downgrades it to PAUSED for any other (CraftQueueManager.sync).
+        CRAFTING, PAUSED, FINISHED, CANCELLED, READY_IN_GRID, PAUSED_STATION;
 
         /** The job is over for the client's purposes — the toast lingers, then slides out. */
         public boolean isTerminal() {

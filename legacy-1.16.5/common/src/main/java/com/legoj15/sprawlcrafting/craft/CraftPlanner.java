@@ -102,22 +102,33 @@ public final class CraftPlanner {
     }
 
     public static PlanOutcome plan(ServerPlayerEntity player, IRecipe<?> target, GridContext grid) {
+        return plan(player, target, grid, Collections.<Item, Long>emptyMap());
+    }
+
+    /**
+     * Plans against the player's 36 main slots plus {@code station}: the plain-item counts of an open
+     * crafting station's storage ({@link StationStorage#counts()}), empty for none.
+     */
+    public static PlanOutcome plan(ServerPlayerEntity player, IRecipe<?> target, GridContext grid,
+                                   Map<Item, Long> station) {
         // Cheap reject before building the producer index, so spammed unplannable requests cost little.
         if (McRecipe.of(target) == null) {
             return PlanOutcome.of(PlanOutcome.Kind.UNSUPPORTED);
         }
-        return session(player.getServer().getRecipeManager(), player.inventory, grid).plan(target);
+        return session(player.getServer().getRecipeManager(), player.inventory, grid, station).plan(target);
     }
 
     /**
-     * The raw materials the player still needs to make {@code target}. Returns
-     * {@link ShortfallView#unavailable()} for unplannable recipes.
+     * The raw materials the player still needs to make {@code target}; an open station's storage counts
+     * as material already gathered. Returns {@link ShortfallView#unavailable()} for unplannable recipes.
      */
     public static ShortfallView shortfall(ServerPlayerEntity player, IRecipe<?> target, GridContext grid) {
         if (McRecipe.of(target) == null) {
             return ShortfallView.unavailable();
         }
-        return session(player.getServer().getRecipeManager(), player.inventory, grid).shortfall(target);
+        StationStorage station = StationStorages.open(player);
+        return session(player.getServer().getRecipeManager(), player.inventory, grid,
+                station == null ? Collections.<Item, Long>emptyMap() : station.counts()).shortfall(target);
     }
 
     /**
@@ -127,7 +138,16 @@ public final class CraftPlanner {
      * reload) is cached per {@link RecipeManager}; only the inventory snapshot is per call.
      */
     public static Session session(RecipeManager recipes, PlayerInventory inventory, GridContext grid) {
-        return new Session(recipes, grid, ProducerIndex.forGrid(recipes, grid), snapshotInventory(inventory));
+        return session(recipes, inventory, grid, Collections.<Item, Long>emptyMap());
+    }
+
+    /**
+     * {@link #session(RecipeManager, PlayerInventory, GridContext)} with an open crafting station's
+     * plain-item counts ({@link StationStorage}) added to the pool; empty for none.
+     */
+    public static Session session(RecipeManager recipes, PlayerInventory inventory, GridContext grid,
+                                  Map<Item, Long> station) {
+        return new Session(recipes, grid, ProducerIndex.forGrid(recipes, grid), snapshotInventory(inventory, station));
     }
 
     /**
@@ -290,13 +310,24 @@ public final class CraftPlanner {
      * The 36 main inventory slots as an item-count multiset. Armor and offhand are deliberately
      * excluded: planning must never consume worn equipment, and execution only pulls from the main
      * slots. Damaged/enchanted/renamed stacks are skipped with the same predicate execution uses.
+     *
+     * <p>{@code station} adds an open crafting station's plain-item counts (already usable, see
+     * {@link StationStorage}); the solver counts in {@code int}, so each total is clamped at
+     * {@link Integer#MAX_VALUE} (an ME network can hold far more).
      */
-    private static Map<Item, Integer> snapshotInventory(PlayerInventory inventory) {
+    private static Map<Item, Integer> snapshotInventory(PlayerInventory inventory, Map<Item, Long> station) {
         Map<Item, Integer> counts = new HashMap<>();
         for (int i = 0; i < MAIN_SLOTS; i++) {
             ItemStack stack = inventory.getItem(i);
             if (!stack.isEmpty() && CraftExecutor.usableAsIngredient(stack)) {
                 counts.merge(stack.getItem(), stack.getCount(), Integer::sum);
+            }
+        }
+        for (Map.Entry<Item, Long> entry : station.entrySet()) {
+            long count = entry.getValue();
+            if (count > 0) {
+                counts.merge(entry.getKey(), (int) Math.min(count, Integer.MAX_VALUE),
+                        (a, b) -> (int) Math.min((long) a + b, Integer.MAX_VALUE));
             }
         }
         return counts;

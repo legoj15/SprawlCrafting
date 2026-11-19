@@ -56,6 +56,18 @@ public class FabricPlatformHelper implements IPlatformHelper {
         ServerPlayNetworking.send(player, CraftProgressPacket.ID, buf);
     }
 
+    // No crafting-station provider exists on Fabric 1.16.5 (AE2 support is Forge-only), so no job here is
+    // ever station-dependent and nothing on this loader asks either question with a station open.
+    @Override
+    public boolean canReceiveProgressStatesV2(ServerPlayerEntity player) {
+        return false;
+    }
+
+    @Override
+    public boolean serverSupportsStations() {
+        return false;
+    }
+
     @Override
     public double blockInteractionDistanceSqr(ServerPlayerEntity player) {
         return VANILLA_INTERACTION_DISTANCE_SQR;

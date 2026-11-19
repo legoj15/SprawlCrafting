@@ -56,9 +56,11 @@ public class CraftProgressToast implements IToast {
                 drawProgressBar(poseStack, job);
                 break;
             case PAUSED:
+            case PAUSED_STATION:
                 drawClipped(poseStack, font, new TranslationTextComponent("sprawlcrafting.toast.crafting",
                         job.target().getHoverName()), 7, TITLE_COLOR);
-                font.draw(poseStack, new TranslationTextComponent("sprawlcrafting.toast.paused"),
+                font.draw(poseStack, new TranslationTextComponent(job.state() == CraftProgressPacket.State.PAUSED_STATION
+                                ? "sprawlcrafting.toast.paused_station" : "sprawlcrafting.toast.paused"),
                         TEXT_X, 18, PAUSED_COLOR);
                 drawProgressBar(poseStack, job);
                 break;
