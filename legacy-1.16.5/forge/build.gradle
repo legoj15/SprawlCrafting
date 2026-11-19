@@ -102,7 +102,11 @@ dependencies {
             def jar = rename.output.get().asFile.toPath()
             def zip = java.nio.file.FileSystems.newFileSystem(jar, (ClassLoader) null)
             try {
-                java.nio.file.Files.list(zip.getPath('META-INF')).withCloseable { entries ->
+                def metaInf = zip.getPath('META-INF')
+                if (!java.nio.file.Files.isDirectory(metaInf)) {
+                    return // unsigned jar, nothing to strip
+                }
+                java.nio.file.Files.list(metaInf).withCloseable { entries ->
                     entries.filter { it.fileName.toString() ==~ /(?i).+\.(SF|RSA|DSA|EC)/ }
                             .collect(java.util.stream.Collectors.toList())
                             .each { java.nio.file.Files.delete(it) }

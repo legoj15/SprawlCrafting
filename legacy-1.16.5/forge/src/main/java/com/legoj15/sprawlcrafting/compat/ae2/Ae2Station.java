@@ -165,7 +165,11 @@ public final class Ae2Station implements StationStorages.Provider {
         return key;
     }
 
-    /** Whether {@code stack} is AE2-equal to the fresh stack of its item: the only identity the station uses. */
+    /**
+     * Whether {@code stack} is AE2-equal to the fresh stack of its item: the only identity the station uses.
+     * Amount-free: in 8.4.7 {@code AEItemStack.equals} is {@code isSameType}, which compares only the shared
+     * item definition (javap), so a size-1 canonical matches a network entry of any size.
+     */
     private static boolean plain(IStorageChannel<IAEItemStack> channel, IAEItemStack stack) {
         IAEItemStack canonical = canonical(channel, stack.getItem());
         return canonical != null && canonical.equals(stack);
