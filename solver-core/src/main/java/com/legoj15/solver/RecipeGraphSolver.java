@@ -140,8 +140,8 @@ public final class RecipeGraphSolver<R, K> {
              * @param layouts per step (aligned 1:1 with {@code steps}), the step's {@link SlotLayout}
              *                runs, or an empty list for "no layout": consecutive crafts with identical
              *                layouts compressed, so adjacent runs never list equal items; every run of
-             *                a step lists the same number of slots; a non-empty step's runs sum to its
-             *                crafts
+             *                a step lists the same number of slots; a non-empty run list sums to the
+             *                step's crafts
              * @throws IllegalArgumentException when the two lists are not aligned 1:1 or a step's
              *                                  runs break those invariants
              */
@@ -639,6 +639,11 @@ public final class RecipeGraphSolver<R, K> {
         final List<SlotLayout<K>> runs;
 
         Step(RecipeInfo<R, K> recipe, long crafts, List<SlotLayout<K>> runs) {
+            // Success accepts an empty list as "no layout"; a solver step must never produce one, or
+            // its consumption would go unchecked in replays().
+            if (runs.isEmpty()) {
+                throw new IllegalStateException("a recorded step has no layout runs");
+            }
             this.recipe = recipe;
             this.crafts = crafts;
             this.runs = runs;
