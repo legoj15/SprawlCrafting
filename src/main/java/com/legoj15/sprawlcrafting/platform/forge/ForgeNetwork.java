@@ -3,7 +3,9 @@ package com.legoj15.sprawlcrafting.platform.forge;
 import com.legoj15.sprawlcrafting.Constants;
 import com.legoj15.sprawlcrafting.client.ClientJobTracker;
 import com.legoj15.sprawlcrafting.craft.ClientCraftingView;
+import com.legoj15.sprawlcrafting.craft.CraftQueueManager;
 import com.legoj15.sprawlcrafting.craft.CraftRequests;
+import com.legoj15.sprawlcrafting.network.CancelCraftPayload;
 import com.legoj15.sprawlcrafting.network.CraftProgressPayload;
 import com.legoj15.sprawlcrafting.network.CraftingScreenStatePayload;
 import com.legoj15.sprawlcrafting.network.StartDeferredCraftPayload;
@@ -53,7 +55,9 @@ import net.minecraftforge.network.simple.SimpleChannel;*/
  * {@code SimpleChannel} ({@code sprawlcrafting:main}, discriminators 0-2, frozen — append new messages
  * only) whose version predicates accept everything, including {@code ABSENT} (peer lacks the channel)
  * and {@code ACCEPTVANILLA} (vanilla peer), so it is optional both ways. Presence is per channel on that
- * line, not per payload ({@link #isRemotePresent}).
+ * line, not per payload ({@link #isRemotePresent}). {@code CancelCraftPayload} arrived after that
+ * freeze, so on this line it rides its own {@code sprawlcrafting:cancel_craft} channel (discriminator 0)
+ * built with the same predicates, and answers presence through {@link #isCancelRemotePresent}.
  */
 final class ForgeNetwork {
 
@@ -86,6 +90,13 @@ final class ForgeNetwork {
                             ServerPlayer sender = context.getSender();
                             if (sender != null) {
                                 ClientCraftingView.update(sender.getUUID(), payload.gridWidth(), payload.gridHeight());
+                            }
+                        })
+                .addMain(CancelCraftPayload.TYPE, widen(CancelCraftPayload.STREAM_CODEC),
+                        (payload, context) -> {
+                            ServerPlayer sender = context.getSender();
+                            if (sender != null) {
+                                CraftQueueManager.cancel(sender);
                             }
                         })
                 //? if >=1.21.11 {
@@ -164,10 +175,12 @@ final class ForgeNetwork {
 
     private static SimpleChannel channel;
 
+    private static SimpleChannel cancelChannel;
+
     private ForgeNetwork() {
     }
 
-    // Builds the channel. Must run during mod construction: Forge locks the registry after that.
+    // Builds the channels. Must run during mod construction: Forge locks the registry after that.
     static void register() {
         channel = NetworkRegistry.ChannelBuilder
                 .named(ResourceLocation.fromNamespaceAndPath(Constants.MOD_ID, "main"))
@@ -205,16 +218,45 @@ final class ForgeNetwork {
                 .decoder(CraftProgressPayload::read)
                 .consumerMainThread((payload, context) -> ClientJobTracker.accept(payload))
                 .add();
+        // The cancel payload cannot append to main (its discriminators 0-2 are frozen: a peer on an
+        // older jar would fail on an unknown discriminator 3), so it rides its own channel with a
+        // fresh discriminator space — same accept-all predicates, so optional both ways too.
+        cancelChannel = NetworkRegistry.ChannelBuilder
+                .named(ResourceLocation.fromNamespaceAndPath(Constants.MOD_ID, "cancel_craft"))
+                .networkProtocolVersion(() -> PROTOCOL)
+                .clientAcceptedVersions(version -> true)
+                .serverAcceptedVersions(version -> true)
+                .simpleChannel();
+        cancelChannel.messageBuilder(CancelCraftPayload.class, 0, NetworkDirection.PLAY_TO_SERVER)
+                .encoder(CancelCraftPayload::write)
+                .decoder(CancelCraftPayload::read)
+                .consumerMainThread((payload, context) -> {
+                    ServerPlayer sender = context.get().getSender();
+                    if (sender != null) {
+                        CraftQueueManager.cancel(sender);
+                    }
+                })
+                .add();
     }
 
     static SimpleChannel channel() {
         return channel;
     }
 
+    static SimpleChannel cancelChannel() {
+        return cancelChannel;
+    }
+
     // Whether the peer on this connection registered the channel. A vanilla or modless peer never does,
     // so nothing is ever sent to it.
     static boolean isRemotePresent(Connection connection) {
         return channel.isRemotePresent(connection);
+    }
+
+    // Same, for the cancel payload's own channel: a server on an older jar (before the cancel key)
+    // never negotiates it, so the client's key stays inert against it.
+    static boolean isCancelRemotePresent(Connection connection) {
+        return cancelChannel.isRemotePresent(connection);
     }*/
     //?}
 }

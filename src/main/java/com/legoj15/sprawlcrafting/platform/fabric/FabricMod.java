@@ -5,6 +5,7 @@ import com.legoj15.sprawlcrafting.craft.ClientCraftingView;
 import com.legoj15.sprawlcrafting.craft.CraftQueueManager;
 import com.legoj15.sprawlcrafting.craft.CraftRequests;
 import com.legoj15.sprawlcrafting.craft.DeferredCraftSync;
+import com.legoj15.sprawlcrafting.network.CancelCraftPayload;
 import com.legoj15.sprawlcrafting.network.CraftPreviewPayload;
 import com.legoj15.sprawlcrafting.network.CraftProgressPayload;
 import com.legoj15.sprawlcrafting.network.CraftingScreenStatePayload;
@@ -39,6 +40,8 @@ public class FabricMod implements ModInitializer {
                 StartDeferredCraftPayload.TYPE, StartDeferredCraftPayload.STREAM_CODEC);
         c2s().register(
                 CraftingScreenStatePayload.TYPE, CraftingScreenStatePayload.STREAM_CODEC);
+        c2s().register(
+                CancelCraftPayload.TYPE, CancelCraftPayload.STREAM_CODEC);
         s2c().register(
                 CraftProgressPayload.TYPE, CraftProgressPayload.STREAM_CODEC);
         // Capability marker only (never sent): the client's receiver tells the server it decodes PAUSED_STATION.
@@ -50,6 +53,8 @@ public class FabricMod implements ModInitializer {
         ServerPlayNetworking.registerGlobalReceiver(CraftingScreenStatePayload.TYPE,
                 (payload, context) -> ClientCraftingView.update(
                         context.player().getUUID(), payload.gridWidth(), payload.gridHeight()));
+        ServerPlayNetworking.registerGlobalReceiver(CancelCraftPayload.TYPE,
+                (payload, context) -> CraftQueueManager.cancel(context.player()));
         //?} else {
         /*// Pre-1.20.5 Fabric networking: channel id + raw buffer, and receivers run on the netty
         // thread — decode there, then hop to the server thread (the 1.20.5+ API does that for us).
@@ -64,7 +69,11 @@ public class FabricMod implements ModInitializer {
                     CraftingScreenStatePayload payload = CraftingScreenStatePayload.read(buf);
                     server.execute(() -> ClientCraftingView.update(
                             player.getUUID(), payload.gridWidth(), payload.gridHeight()));
-                });*/
+                });
+        // Nothing to decode, but the netty-thread hop is still needed before touching the queue.
+        ServerPlayNetworking.registerGlobalReceiver(CancelCraftPayload.ID,
+                (server, player, handler, buf, responseSender) ->
+                        server.execute(() -> CraftQueueManager.cancel(player)));*/
         //?}
 
         // 26.x server-driven recipe-book layer: the deferred-craftability sync + display-keyed

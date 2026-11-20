@@ -1,5 +1,6 @@
 package com.legoj15.sprawlcrafting.platform.forge;
 
+import com.legoj15.sprawlcrafting.client.CancelCraftKey;
 import com.legoj15.sprawlcrafting.client.ClientJobTracker;
 import com.legoj15.sprawlcrafting.client.CraftingScreenWatcher;
 import com.legoj15.sprawlcrafting.client.DeferredClickState;
@@ -10,6 +11,7 @@ import com.legoj15.sprawlcrafting.config.SprawlConfig;
 
 import net.minecraftforge.client.ConfigScreenHandler;
 import net.minecraftforge.client.event.ClientPlayerNetworkEvent;
+import net.minecraftforge.client.event.RegisterKeyMappingsEvent;
 //? if <1.21.11 {
 import net.minecraftforge.common.MinecraftForge;
 //?}
@@ -49,6 +51,14 @@ final class ForgeClient {
         MinecraftForge.EVENT_BUS.addListener(ForgeClient::onLoggingOut);
         MinecraftForge.EVENT_BUS.addListener(ForgeClient::onClientTick);
         //?}
+        // The cancel key, registered through the loader's key-registration event (never added to
+        // Options by hand). Forge 26 (EventBus 7) made it a game-bus event on its own static BUS;
+        // before that it is a mod-bus event.
+        //? if >=1.21.11 {
+        /*RegisterKeyMappingsEvent.BUS.addListener((RegisterKeyMappingsEvent e) -> e.register(CancelCraftKey.KEY));*/
+        //?} else {
+        context.getModEventBus().addListener((RegisterKeyMappingsEvent e) -> e.register(CancelCraftKey.KEY));
+        //?}
         ForgeMixinSelfCheck.runIfRequested(); // dev/agent only: SC_MIXIN_SELFTEST=1
     }
 
@@ -65,12 +75,14 @@ final class ForgeClient {
     //? if >=1.20.5 {
     private static void onClientTick(TickEvent.ClientTickEvent.Post event) {
         CraftingScreenWatcher.clientTick();
+        CancelCraftKey.clientTick();
     }
     //?} else {
     /*// Forge 47 has no Pre/Post subclasses: one event per phase, END = post.
     private static void onClientTick(TickEvent.ClientTickEvent event) {
         if (event.phase == TickEvent.Phase.END) {
             CraftingScreenWatcher.clientTick();
+            CancelCraftKey.clientTick();
         }
     }*/
     //?}

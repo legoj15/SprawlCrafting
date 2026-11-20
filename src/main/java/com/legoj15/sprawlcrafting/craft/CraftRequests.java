@@ -102,7 +102,10 @@ public final class CraftRequests {
         } else if (outcome instanceof StartOutcome.Rejected rejected) {
             feedback = describeRejection(holder, rejected.outcome());
         } else {
-            feedback = Component.translatable("sprawlcrafting.craft.busy").withStyle(ChatFormatting.RED);
+            // Keybind, not a literal: resolves to the player's own binding (or the unbound-key
+            // placeholder) on the client, on every version.
+            feedback = Component.translatable("sprawlcrafting.craft.busy",
+                    Component.keybind("key.sprawlcrafting.cancel_craft")).withStyle(ChatFormatting.RED);
         }
         notify(player, feedback);
     }

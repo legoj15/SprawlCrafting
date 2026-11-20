@@ -1,5 +1,6 @@
 package com.legoj15.sprawlcrafting.platform.fabric;
 
+import com.legoj15.sprawlcrafting.client.CancelCraftKey;
 import com.legoj15.sprawlcrafting.client.ClientJobTracker;
 import com.legoj15.sprawlcrafting.client.CraftingScreenWatcher;
 import com.legoj15.sprawlcrafting.client.DeferredClickState;
@@ -56,9 +57,19 @@ public class FabricClient implements ClientModInitializer {
                         payload.token(), payload.targetItem(), payload.targetCount(),
                         payload.approximate(), payload.saturated(), payload.demands()));*/
         //?}
+        // The cancel key, registered through the loader's key-registration hook (never added to
+        // Options by hand). Fabric renamed the helper along with 26.x's KeyMapping rename.
+        //? if >=1.21.11 {
+        /*net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper.registerKeyMapping(CancelCraftKey.KEY);*/
+        //?} else {
+        net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper.registerKeyBinding(CancelCraftKey.KEY);
+        //?}
         // Tell the server which crafting grid is on screen (only while a job is active), so a
         // deferred craft's final step can be handed off to it for the player to grab.
-        ClientTickEvents.END_CLIENT_TICK.register(client -> CraftingScreenWatcher.clientTick());
+        ClientTickEvents.END_CLIENT_TICK.register(client -> {
+            CraftingScreenWatcher.clientTick();
+            CancelCraftKey.clientTick();
+        });
         // Drop all per-session client state on disconnect so a stale toast, a synced
         // deferred-craftable set, or a pending preview can't leak into the next world.
         ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {

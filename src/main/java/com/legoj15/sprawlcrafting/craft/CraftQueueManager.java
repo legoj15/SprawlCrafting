@@ -9,6 +9,8 @@ import com.legoj15.sprawlcrafting.network.CraftProgressPayload;
 import com.legoj15.sprawlcrafting.network.ProgressStatesV2Payload;
 import com.legoj15.sprawlcrafting.platform.Services;
 
+import com.legoj15.solver.CountFormat;
+
 import net.minecraft.ChatFormatting;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
@@ -47,6 +49,28 @@ public final class CraftQueueManager {
             return false;
         }
         sync(player, job, CraftProgressPayload.State.CRAFTING, ItemStack.EMPTY);
+        return true;
+    }
+
+    /**
+     * Cancels the player's running or paused job at their request ({@code CancelCraftPayload},
+     * the cancel key). Every payload handler runs on the server thread, and {@link #tick(ServerPlayer)}
+     * is only called from the loaders' end-of-tick player loop, so a cancel always lands between two
+     * whole crafts — no step-boundary logic is needed. The crafts already applied stay in the
+     * inventory, as on any other terminal path.
+     *
+     * @return false if the player has no job to cancel.
+     */
+    public static boolean cancel(ServerPlayer player) {
+        CraftJob job = ACTIVE.remove(player.getUUID());
+        if (job == null) {
+            return false;
+        }
+        sync(player, job, CraftProgressPayload.State.CANCELLED, ItemStack.EMPTY);
+        notify(player, Component.translatable("sprawlcrafting.craft.cancelled",
+                job.targetResult().getHoverName(),
+                CountFormat.format(job.craftsDone()),
+                CountFormat.format(job.totalCrafts())).withStyle(ChatFormatting.YELLOW));
         return true;
     }
 

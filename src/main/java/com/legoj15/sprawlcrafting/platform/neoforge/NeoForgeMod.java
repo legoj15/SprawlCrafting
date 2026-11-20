@@ -10,6 +10,7 @@ import com.legoj15.sprawlcrafting.craft.ClientCraftingView;
 import com.legoj15.sprawlcrafting.craft.CraftQueueManager;
 import com.legoj15.sprawlcrafting.craft.CraftRequests;
 import com.legoj15.sprawlcrafting.craft.DeferredCraftSync;
+import com.legoj15.sprawlcrafting.network.CancelCraftPayload;
 import com.legoj15.sprawlcrafting.network.CraftPreviewPayload;
 import com.legoj15.sprawlcrafting.network.CraftProgressPayload;
 import com.legoj15.sprawlcrafting.network.CraftingScreenStatePayload;
@@ -63,6 +64,14 @@ public class NeoForgeMod {
                 (payload, context) -> {
                     if (context.player() instanceof ServerPlayer serverPlayer) {
                         ClientCraftingView.update(serverPlayer.getUUID(), payload.gridWidth(), payload.gridHeight());
+                    }
+                });
+        registrar.playToServer(
+                CancelCraftPayload.TYPE,
+                CancelCraftPayload.STREAM_CODEC,
+                (payload, context) -> {
+                    if (context.player() instanceof ServerPlayer serverPlayer) {
+                        CraftQueueManager.cancel(serverPlayer);
                     }
                 });
         registrar.playToClient(

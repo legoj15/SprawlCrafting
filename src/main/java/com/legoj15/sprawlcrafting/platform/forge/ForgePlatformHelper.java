@@ -44,18 +44,22 @@ public class ForgePlatformHelper implements IPlatformHelper {
 
     // The remote's registered-channel list is what it sent in Forge's channel-registration payload; a
     // vanilla or modless peer never sends one, so it is empty and nothing is ever sent to it.
-    // Forge 47 (1.20.1) tracks presence per SimpleChannel, and all the payloads share the one channel
+    // Forge 47 (1.20.1) tracks presence per SimpleChannel, and most payloads share the one channel
     // (discriminators 0-2, frozen), so payloadId cannot narrow the answer there. Channel presence only
     // proves the peer has the original messages, so it must never vouch for a capability that is
     // told apart by its own id: ProgressStatesV2Payload (the marker for newer progress states) is not
     // registered on this line, and a 1.0.x client has the channel yet cannot decode those states. It
-    // answers false, so the server always sends such a client the original state.
+    // answers false, so the server always sends such a client the original state. CancelCraftPayload
+    // is the one payload with its own channel on that line, so it answers for itself.
     private static boolean remoteHas(Connection connection, ResourceLocation payloadId) {
         //? if >=1.20.5 {
         return NetworkContext.get(connection).getRemoteChannels().contains(payloadId);
         //?} else {
         /*if (com.legoj15.sprawlcrafting.network.ProgressStatesV2Payload.ID.equals(payloadId)) {
             return false;
+        }
+        if (com.legoj15.sprawlcrafting.network.CancelCraftPayload.ID.equals(payloadId)) {
+            return ForgeNetwork.isCancelRemotePresent(connection);
         }
         return ForgeNetwork.isRemotePresent(connection);*/
         //?}
@@ -66,7 +70,12 @@ public class ForgePlatformHelper implements IPlatformHelper {
         //? if >=1.20.5 {
         ForgeNetwork.channel().send(payload, PacketDistributor.SERVER.noArg());
         //?} else {
-        /*ForgeNetwork.channel().send(PacketDistributor.SERVER.noArg(), payload);*/
+        /*// On Forge 47 the cancel payload rides its own channel (main's discriminators are frozen).
+        if (payload instanceof com.legoj15.sprawlcrafting.network.CancelCraftPayload) {
+            ForgeNetwork.cancelChannel().send(PacketDistributor.SERVER.noArg(), payload);
+            return;
+        }
+        ForgeNetwork.channel().send(PacketDistributor.SERVER.noArg(), payload);*/
         //?}
     }
 

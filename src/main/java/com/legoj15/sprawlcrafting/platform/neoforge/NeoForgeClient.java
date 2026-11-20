@@ -1,6 +1,7 @@
 package com.legoj15.sprawlcrafting.platform.neoforge;
 
 import com.legoj15.sprawlcrafting.Constants;
+import com.legoj15.sprawlcrafting.client.CancelCraftKey;
 import com.legoj15.sprawlcrafting.client.ClientJobTracker;
 import com.legoj15.sprawlcrafting.client.CraftingScreenWatcher;
 import com.legoj15.sprawlcrafting.client.DeferredClickState;
@@ -15,6 +16,7 @@ import net.neoforged.fml.ModContainer;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent;
 import net.neoforged.neoforge.client.event.ClientTickEvent;
+import net.neoforged.neoforge.client.event.RegisterKeyMappingsEvent;
 import net.neoforged.neoforge.client.gui.IConfigScreenFactory;
 import net.neoforged.neoforge.common.NeoForge;
 
@@ -35,6 +37,9 @@ public class NeoForgeClient {
         container.registerExtensionPoint(IConfigScreenFactory.class, configScreen);
         NeoForge.EVENT_BUS.addListener(NeoForgeClient::onLoggingOut);
         NeoForge.EVENT_BUS.addListener(NeoForgeClient::onClientTick);
+        // The cancel key, registered through the loader's key-registration event (never added to
+        // Options by hand).
+        modEventBus.addListener((RegisterKeyMappingsEvent e) -> e.register(CancelCraftKey.KEY));
     }
 
     private static void onLoggingOut(ClientPlayerNetworkEvent.LoggingOut event) {
@@ -49,5 +54,6 @@ public class NeoForgeClient {
     // deferred craft's final step can be handed off to it for the player to grab.
     private static void onClientTick(ClientTickEvent.Post event) {
         CraftingScreenWatcher.clientTick();
+        CancelCraftKey.clientTick();
     }
 }
