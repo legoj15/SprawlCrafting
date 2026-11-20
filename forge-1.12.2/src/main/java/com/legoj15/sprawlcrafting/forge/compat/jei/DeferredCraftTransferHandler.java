@@ -5,6 +5,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import com.legoj15.solver.SlotAssignment;
 import com.legoj15.sprawlcrafting.forge.SprawlConfig;
 import com.legoj15.sprawlcrafting.forge.client.ClientPlanCache;
 import com.legoj15.sprawlcrafting.forge.client.PendingGatherScreen;
@@ -319,11 +320,43 @@ public class DeferredCraftTransferHandler<C extends Container> implements IRecip
                 recipeLayout.getItemStacks().getGuiIngredients();
         // Grouped by full stack identity (item + meta + NBT), not ItemKey: fluid-in-NBT buckets
         // must neither match an empty same-(item, meta) bucket nor merge with a different fluid's
-        // bucket into one drag. Templates are copies of the matched INVENTORY stack, so the pick
+        // bucket into one drag. Templates are copies of the matched INVENTORY stack, so the drag
         // phase below is guaranteed to find them again.
         List<ItemStack> dragTemplates = new ArrayList<ItemStack>();
         List<List<Integer>> dragSlotGroups = new ArrayList<List<Integer>>();
+        // The inventory's distinct usable stack identities (item + meta + NBT) and how many of each
+        // it holds. Damaged, enchanted and renamed stacks are left out, as the planner leaves them
+        // out: they differ in meta or NBT, so the drag below never touches them either.
+        List<ItemStack> identities = new ArrayList<ItemStack>();
+        Map<Integer, Integer> stock = new HashMap<Integer, Integer>();
+        for (int inv : invSlotIndices) {
+            ItemStack inSlot = container.getSlot(inv).getStack();
+            if (inSlot.isEmpty() || !CraftExecutor.usableAsIngredient(inSlot)) {
+                continue;
+            }
+            int id = identities.size();
+            for (int i = 0; i < identities.size(); i++) {
+                if (sameStackIdentity(identities.get(i), inSlot)) {
+                    id = i;
+                    break;
+                }
+            }
+            if (id == identities.size()) {
+                identities.add(inSlot.copy());
+            }
+            Integer have = stock.get(Integer.valueOf(id));
+            stock.put(Integer.valueOf(id), Integer.valueOf((have == null ? 0 : have.intValue()) + inSlot.getCount()));
+        }
 
+        // Each cell's acceptable identities in preference order. Exact matches (NBT included)
+        // first, then (item, meta) matches against tag-LESS options — a tagged option (filled
+        // bucket) is never satisfied by a stack whose tag differs (the empty bucket). Only for a
+        // cell with neither: the legacy any-option (item, meta) match — recipes lenient about NBT
+        // (vanilla Ingredient.apply ignores tags) crafted fine from such stacks before, and this
+        // client-side path has no server verify to recover a refusal, so never do worse than the
+        // pre-NBT-aware behavior.
+        List<Integer> cellSlots = new ArrayList<Integer>();
+        List<List<Integer>> cellAlternatives = new ArrayList<List<Integer>>();
         for (int jeiSlot = 1; jeiSlot <= 9; jeiSlot++) {
             IGuiIngredient<ItemStack> gui = guiIngredients.get(Integer.valueOf(jeiSlot));
             if (gui == null || !gui.isInput()) {
@@ -333,56 +366,36 @@ public class DeferredCraftTransferHandler<C extends Container> implements IRecip
             if (options == null || options.isEmpty()) {
                 continue;
             }
-
             int jeiRow = (jeiSlot - 1) / 3;
             int jeiCol = (jeiSlot - 1) % 3;
             if (jeiCol >= gridWidth || jeiRow >= gridHeight) {
                 continue;
             }
-            int containerSlot = gridSlotIndices.get(jeiRow * gridWidth + jeiCol).intValue();
-
-            // Pass 1: a stack that matches an option exactly (NBT included). Pass 2: the
-            // (item, meta) match against tag-LESS options — a tagged option (filled bucket)
-            // must not be satisfied by a stack whose tag differs (the empty bucket) while a
-            // better source could exist. Pass 3, only when nothing else matched anywhere: the
-            // legacy any-option (item, meta) match — recipes lenient about NBT (vanilla
-            // Ingredient.apply ignores tags) crafted fine from such stacks before, and this
-            // client-side path has no server verify to recover a refusal, so never do worse
-            // than the pre-NBT-aware behavior.
-            ItemStack match = ItemStack.EMPTY;
-            for (int pass = 0; pass < 3 && match.isEmpty(); pass++) {
-                for (int inv : invSlotIndices) {
-                    ItemStack inSlot = container.getSlot(inv).getStack();
-                    if (inSlot.isEmpty()) {
-                        continue;
-                    }
-                    for (ItemStack option : options) {
-                        if (option.isEmpty()) {
-                            continue;
-                        }
-                        boolean hit;
-                        if (pass == 0) {
-                            hit = sameStackIdentity(inSlot, option);
-                        } else if (pass == 1) {
-                            hit = !option.hasTagCompound()
-                                    && ItemKey.of(inSlot).equals(ItemKey.of(option));
-                        } else {
-                            hit = ItemKey.of(inSlot).equals(ItemKey.of(option));
-                        }
-                        if (hit) {
-                            match = inSlot.copy();
-                            break;
-                        }
-                    }
-                    if (!match.isEmpty()) {
-                        break;
-                    }
-                }
+            List<Integer> alternatives = new ArrayList<Integer>();
+            addAlternatives(alternatives, 0, options, identities);
+            addAlternatives(alternatives, 1, options, identities);
+            if (alternatives.isEmpty()) {
+                addAlternatives(alternatives, 2, options, identities);
             }
-
-            if (match.isEmpty()) {
+            if (alternatives.isEmpty()) {
                 return false;
             }
+            cellSlots.add(gridSlotIndices.get(jeiRow * gridWidth + jeiCol));
+            cellAlternatives.add(alternatives);
+        }
+
+        // Which identity fills which cell is the planner's own rule (SlotAssignment: most
+        // constrained cell first, non-scarce alternative, augmenting re-route), so no two cells
+        // count on one lone stack and a layout is found whenever one exists. No full layout
+        // means the caller hands the craft to the engine (on a server without the mod: its
+        // missing-mod notice; the grid was already swept into the inventory, so nothing is lost).
+        List<Integer> chosen = SlotAssignment.assign(cellAlternatives, stock);
+        for (int c = 0; c < cellSlots.size(); c++) {
+            if (chosen.get(c) == null) {
+                return false;
+            }
+            int containerSlot = cellSlots.get(c).intValue();
+            ItemStack match = identities.get(chosen.get(c).intValue());
 
             List<Integer> slots = null;
             for (int t = 0; t < dragTemplates.size(); t++) {
@@ -454,6 +467,34 @@ public class DeferredCraftTransferHandler<C extends Container> implements IRecip
         }
 
         return true;
+    }
+
+    /**
+     * Appends to {@code alternatives}, in the recipe's option order (the planner's preference
+     * order), every identity not yet listed that matches an option under {@code pass}: 0 exact,
+     * 1 (item, meta) against a tag-less option, 2 legacy (item, meta) against any option.
+     */
+    private static void addAlternatives(List<Integer> alternatives, int pass, List<ItemStack> options,
+                                        List<ItemStack> identities) {
+        for (ItemStack option : options) {
+            if (option.isEmpty()) {
+                continue;
+            }
+            for (int i = 0; i < identities.size(); i++) {
+                ItemStack identity = identities.get(i);
+                boolean hit;
+                if (pass == 0) {
+                    hit = sameStackIdentity(identity, option);
+                } else if (pass == 1) {
+                    hit = !option.hasTagCompound() && ItemKey.of(identity).equals(ItemKey.of(option));
+                } else {
+                    hit = ItemKey.of(identity).equals(ItemKey.of(option));
+                }
+                if (hit && !alternatives.contains(Integer.valueOf(i))) {
+                    alternatives.add(Integer.valueOf(i));
+                }
+            }
+        }
     }
 
     /** Same item, same metadata, same NBT — count-independent (the drag-fill's match identity). */

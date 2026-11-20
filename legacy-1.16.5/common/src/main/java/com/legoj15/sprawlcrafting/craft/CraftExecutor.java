@@ -797,19 +797,16 @@ public final class CraftExecutor {
                 stock.merge(stack.getItem(), stack.getCount(), Integer::sum);
             }
         }
-        List<List<Item>> slots = new ArrayList<>();
-        List<Integer> cells = new ArrayList<>();
-        for (int n = 0; n < ingredients.size(); n++) {
-            Ingredient ingredient = ingredients.get(n);
-            if (ingredient != null && !ingredient.isEmpty()) {
-                slots.add(CraftPlanner.slotAlternatives(ingredient));
-                cells.add(n);
-            }
+        List<List<Item>> cells = new ArrayList<>();
+        for (Ingredient ingredient : ingredients) {
+            cells.add(ingredient == null || ingredient.isEmpty() ? null : CraftPlanner.slotAlternatives(ingredient));
         }
         if (pool != null) {
             Set<Item> candidates = new HashSet<>();
-            for (List<Item> slot : slots) {
-                candidates.addAll(slot);
+            for (List<Item> cell : cells) {
+                if (cell != null) {
+                    candidates.addAll(cell);
+                }
             }
             for (Item item : candidates) {
                 long inStation = pool.count(item);
@@ -819,12 +816,7 @@ public final class CraftExecutor {
                 }
             }
         }
-        List<Item> chosen = SlotAssignment.assign(slots, stock);
-        Item[] preferred = new Item[ingredients.size()];
-        for (int s = 0; s < cells.size(); s++) {
-            preferred[cells.get(s)] = chosen.get(s);
-        }
-        return preferred;
+        return SlotAssignment.assignCells(cells, stock).toArray(new Item[0]);
     }
 
     /**
