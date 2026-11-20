@@ -1,12 +1,11 @@
 package com.legoj15.sprawlcrafting.forge.compat.jei;
 
 import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import com.legoj15.solver.SlotAssignment;
 import com.legoj15.sprawlcrafting.forge.SprawlConfig;
 import com.legoj15.sprawlcrafting.forge.client.ClientPlanCache;
 import com.legoj15.sprawlcrafting.forge.client.PendingGatherScreen;
@@ -325,20 +324,37 @@ public class DeferredCraftTransferHandler<C extends Container> implements IRecip
         // phase below is guaranteed to find them again.
         List<ItemStack> dragTemplates = new ArrayList<ItemStack>();
         List<List<Integer>> dragSlotGroups = new ArrayList<List<Integer>>();
-        Map<Integer, Integer> reserved = new HashMap<Integer, Integer>();
+        // The inventory's distinct stack identities (item + meta + NBT) and how many of each it holds.
+        List<ItemStack> identities = new ArrayList<ItemStack>();
+        Map<Integer, Integer> stock = new HashMap<Integer, Integer>();
+        for (int inv : invSlotIndices) {
+            ItemStack inSlot = container.getSlot(inv).getStack();
+            if (inSlot.isEmpty()) {
+                continue;
+            }
+            int id = identities.size();
+            for (int i = 0; i < identities.size(); i++) {
+                if (sameStackIdentity(identities.get(i), inSlot)) {
+                    id = i;
+                    break;
+                }
+            }
+            if (id == identities.size()) {
+                identities.add(inSlot.copy());
+            }
+            Integer have = stock.get(Integer.valueOf(id));
+            stock.put(Integer.valueOf(id), Integer.valueOf((have == null ? 0 : have.intValue()) + inSlot.getCount()));
+        }
 
-        // Each cell's pass is fixed by the whole inventory, before anything is reserved. Pass 0: a
-        // stack that matches an option exactly (NBT included). Pass 1: the (item, meta) match
-        // against tag-LESS options — a tagged option (filled bucket) must not be satisfied by a
-        // stack whose tag differs (the empty bucket) while a better source could exist. Pass 2,
-        // only when nothing else matched anywhere: the legacy any-option (item, meta) match —
-        // recipes lenient about NBT (vanilla Ingredient.apply ignores tags) crafted fine from such
-        // stacks before, and this client-side path has no server verify to recover a refusal, so
-        // never do worse than the pre-NBT-aware behavior.
+        // Each cell's acceptable identities in preference order. Exact matches (NBT included)
+        // first, then (item, meta) matches against tag-LESS options — a tagged option (filled
+        // bucket) is never satisfied by a stack whose tag differs (the empty bucket). Only for a
+        // cell with neither: the legacy any-option (item, meta) match — recipes lenient about NBT
+        // (vanilla Ingredient.apply ignores tags) crafted fine from such stacks before, and this
+        // client-side path has no server verify to recover a refusal, so never do worse than the
+        // pre-NBT-aware behavior.
         List<Integer> cellSlots = new ArrayList<Integer>();
-        List<List<ItemStack>> cellOptions = new ArrayList<List<ItemStack>>();
-        List<Integer> cellPasses = new ArrayList<Integer>();
-        List<Integer> cellSupply = new ArrayList<Integer>();
+        List<List<Integer>> cellAlternatives = new ArrayList<List<Integer>>();
         for (int jeiSlot = 1; jeiSlot <= 9; jeiSlot++) {
             IGuiIngredient<ItemStack> gui = guiIngredients.get(Integer.valueOf(jeiSlot));
             if (gui == null || !gui.isInput()) {
@@ -353,64 +369,33 @@ public class DeferredCraftTransferHandler<C extends Container> implements IRecip
             if (jeiCol >= gridWidth || jeiRow >= gridHeight) {
                 continue;
             }
-            int pass = -1;
-            int supply = 0;
-            for (int p = 0; p < 3 && supply == 0; p++) {
-                for (int inv : invSlotIndices) {
-                    ItemStack inSlot = container.getSlot(inv).getStack();
-                    if (passHit(p, inSlot, options)) {
-                        pass = p;
-                        supply += inSlot.getCount();
+            List<Integer> alternatives = new ArrayList<Integer>();
+            for (int pass = 0; pass < 3 && (pass < 2 || alternatives.isEmpty()); pass++) {
+                for (int i = 0; i < identities.size(); i++) {
+                    if (!alternatives.contains(Integer.valueOf(i)) && passHit(pass, identities.get(i), options)) {
+                        alternatives.add(Integer.valueOf(i));
                     }
                 }
             }
-            if (pass < 0) {
+            if (alternatives.isEmpty()) {
                 return false;
             }
             cellSlots.add(gridSlotIndices.get(jeiRow * gridWidth + jeiCol));
-            cellOptions.add(options);
-            cellPasses.add(Integer.valueOf(pass));
-            cellSupply.add(Integer.valueOf(supply));
+            cellAlternatives.add(alternatives);
         }
 
-        // Each cell reserves one item from the stack it takes, so two cells never both count on a
-        // lone stack, and the scarcest cells pick first (SlotAssignment's most-constrained rule):
-        // oak-only before oak-or-birch, so one oak and one birch fill both. A cell whose own pass
-        // is used up fails rather than drop to a laxer pass (a wrong-fluid bucket); the caller
-        // then hands the craft to the engine (on a server without the mod: its missing-mod notice;
-        // the grid was already swept into the inventory, so nothing is lost).
-        Integer[] order = new Integer[cellSlots.size()];
-        for (int c = 0; c < order.length; c++) {
-            order[c] = Integer.valueOf(c);
-        }
-        final List<Integer> supplies = cellSupply;
-        Arrays.sort(order, new Comparator<Integer>() {
-            @Override
-            public int compare(Integer a, Integer b) {
-                return Integer.compare(supplies.get(a.intValue()).intValue(), supplies.get(b.intValue()).intValue());
-            }
-        });
-        for (Integer cell : order) {
-            int c = cell.intValue();
-            int containerSlot = cellSlots.get(c).intValue();
-            int pass = cellPasses.get(c).intValue();
-            ItemStack match = ItemStack.EMPTY;
-            int matchedInv = -1;
-            for (int inv : invSlotIndices) {
-                ItemStack inSlot = container.getSlot(inv).getStack();
-                Integer taken = reserved.get(Integer.valueOf(inv));
-                if (inSlot.getCount() - (taken == null ? 0 : taken.intValue()) > 0
-                        && passHit(pass, inSlot, cellOptions.get(c))) {
-                    match = inSlot.copy();
-                    matchedInv = inv;
-                    break;
-                }
-            }
-            if (match.isEmpty()) {
+        // Which identity fills which cell is the planner's own rule (SlotAssignment: most
+        // constrained cell first, non-scarce alternative, augmenting re-route), so no two cells
+        // count on one lone stack and the layout never depends on inventory order. No full layout
+        // means the caller hands the craft to the engine (on a server without the mod: its
+        // missing-mod notice; the grid was already swept into the inventory, so nothing is lost).
+        List<Integer> chosen = SlotAssignment.assign(cellAlternatives, stock);
+        for (int c = 0; c < cellSlots.size(); c++) {
+            if (chosen.get(c) == null) {
                 return false;
             }
-            Integer taken = reserved.get(Integer.valueOf(matchedInv));
-            reserved.put(Integer.valueOf(matchedInv), Integer.valueOf(taken == null ? 1 : taken.intValue() + 1));
+            int containerSlot = cellSlots.get(c).intValue();
+            ItemStack match = identities.get(chosen.get(c).intValue());
 
             List<Integer> slots = null;
             for (int t = 0; t < dragTemplates.size(); t++) {
