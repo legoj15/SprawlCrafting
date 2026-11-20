@@ -8,6 +8,7 @@ import com.legoj15.sprawlcrafting.client.DeferredClickState;
 import com.legoj15.sprawlcrafting.client.DeferredCraftableCache;
 import com.legoj15.sprawlcrafting.client.MissingIngredients;
 import com.legoj15.sprawlcrafting.client.SprawlConfigScreen;
+import com.legoj15.sprawlcrafting.client.ToastCancelClick;
 import com.legoj15.sprawlcrafting.config.SprawlConfig;
 
 import net.neoforged.api.distmarker.Dist;
@@ -17,6 +18,7 @@ import net.neoforged.fml.common.Mod;
 import net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent;
 import net.neoforged.neoforge.client.event.ClientTickEvent;
 import net.neoforged.neoforge.client.event.RegisterKeyMappingsEvent;
+import net.neoforged.neoforge.client.event.ScreenEvent;
 import net.neoforged.neoforge.client.gui.IConfigScreenFactory;
 import net.neoforged.neoforge.common.NeoForge;
 
@@ -37,6 +39,13 @@ public class NeoForgeClient {
         container.registerExtensionPoint(IConfigScreenFactory.class, configScreen);
         NeoForge.EVENT_BUS.addListener(NeoForgeClient::onLoggingOut);
         NeoForge.EVENT_BUS.addListener(NeoForgeClient::onClientTick);
+        // Clicking the progress toast while any screen is open cancels the craft (issue #34):
+        // canceling the Pre event keeps the press from the screen underneath.
+        NeoForge.EVENT_BUS.addListener((ScreenEvent.MouseButtonPressed.Pre e) -> {
+            if (ToastCancelClick.onScreenClick(e.getMouseX(), e.getMouseY(), e.getButton())) {
+                e.setCanceled(true);
+            }
+        });
         // The cancel key, registered through the loader's key-registration event (never added to
         // Options by hand).
         modEventBus.addListener((RegisterKeyMappingsEvent e) -> e.register(CancelCraftKey.KEY));
@@ -48,6 +57,7 @@ public class NeoForgeClient {
         DeferredCraftableCache.invalidate(); // drop the synced/solved craftable set
         DeferredClickState.clear();          // drop any pending click preview
         MissingIngredients.reset();          // drop any pending/cached gather list
+        ToastCancelClick.clear();            // the toast's clickable rectangle dies with the job state
     }
 
     // Tell the server which crafting grid is on screen (only while a job is active), so a

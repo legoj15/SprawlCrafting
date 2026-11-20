@@ -6,6 +6,7 @@ import com.legoj15.sprawlcrafting.client.CraftingScreenWatcher;
 import com.legoj15.sprawlcrafting.client.DeferredClickState;
 import com.legoj15.sprawlcrafting.client.DeferredCraftableCache;
 import com.legoj15.sprawlcrafting.client.MissingIngredients;
+import com.legoj15.sprawlcrafting.client.ToastCancelClick;
 import com.legoj15.sprawlcrafting.config.SprawlConfig;
 import com.legoj15.sprawlcrafting.network.CraftPreviewPayload;
 import com.legoj15.sprawlcrafting.network.CraftProgressPayload;
@@ -17,6 +18,8 @@ import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
+import net.fabricmc.fabric.api.client.screen.v1.ScreenEvents;
+import net.fabricmc.fabric.api.client.screen.v1.ScreenMouseEvents;
 
 public class FabricClient implements ClientModInitializer {
 
@@ -64,6 +67,18 @@ public class FabricClient implements ClientModInitializer {
         //?} else {
         net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper.registerKeyBinding(CancelCraftKey.KEY);
         //?}
+        // Clicking the progress toast while any screen is open cancels the craft (issue #34):
+        // returning false from allowMouseClick vetoes the screen's own handling of the press.
+        // 26.x's fabric screen api hands the handler a MouseButtonEvent instead of raw coords.
+        //? if >=1.21.11 {
+        /*ScreenEvents.AFTER_INIT.register((client, screen, width, height) ->
+                ScreenMouseEvents.allowMouseClick(screen).register((mouseScreen, event) ->
+                        !ToastCancelClick.onScreenClick(event.x(), event.y(), event.button())));*/
+        //?} else {
+        ScreenEvents.AFTER_INIT.register((client, screen, width, height) ->
+                ScreenMouseEvents.allowMouseClick(screen).register((mouseScreen, mouseX, mouseY, button) ->
+                        !ToastCancelClick.onScreenClick(mouseX, mouseY, button)));
+        //?}
         // Tell the server which crafting grid is on screen (only while a job is active), so a
         // deferred craft's final step can be handed off to it for the player to grab.
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
@@ -78,6 +93,7 @@ public class FabricClient implements ClientModInitializer {
             DeferredCraftableCache.invalidate();
             DeferredClickState.clear();
             MissingIngredients.reset();
+            ToastCancelClick.clear(); // the toast's clickable rectangle dies with the job state
         });
     }
 }
