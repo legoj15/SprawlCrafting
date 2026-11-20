@@ -27,6 +27,11 @@ val hasRei = project.findProperty("rei_version") != null
 // Mod Menu (Fabric config-screen button) is present only on nodes that pin a modmenu_version. The
 // 26.1.x line pins 18.x (a pre-release; see gradle.properties), so hasModMenu is true here.
 val hasModMenu = project.findProperty("modmenu_version") != null
+// The AE2 station's JEI pieces (fabric.mod.json: the compat.ae2.jei.StationJeiPlugin entrypoint and
+// the sprawlcrafting.ae2jei.mixins.json guard config) need a node that pins BOTH ae2_version and
+// jei_version. None of these nodes (1.21.1 / 26.x Fabric) pins ae2_version, so this is false here;
+// it must still be defined or fabric.mod.json's expand() fails on the unknown variable.
+val hasAe2Jei = project.findProperty("ae2_version") != null && project.findProperty("jei_version") != null
 
 // ─── Stonecutter source replacements ─────────────────────────────────────────────────────────
 // The forward-port regex tiers (ResourceLocation -> Identifier, Minecraft.screen -> gui.screen(),
@@ -151,10 +156,12 @@ tasks.withType<JavaCompile>().configureEach {
     if (!hasModMenu) {
         exclude("**/*ModMenu*") // no Mod Menu build for this node → drop the integration class
     }
-    // AE2 Crafting Terminal station (issue #2): compiled only where a node pins ae2_version (none on
-    // Fabric yet; the compileOnly AE2 dependency above is wired). Opting in also needs a new
-    // "jei_mod_plugin" entrypoint in fabric.mod.json for compat.ae2.jei.StationJeiPlugin (NeoForge finds
-    // it by annotation scan; Fabric does not), and an AE2 build for that MC version (#27).
+    // AE2 Crafting Terminal station (issue #2): compiled only where a node pins ae2_version — none on
+    // these nodes (1.21.1 / 26.x Fabric; the compileOnly AE2 dependency above is wired). The Fabric
+    // opt-in is 1.20.1-fabric (build.fabric-o.gradle.kts, AE2 15.4.12, issue #27): there has_ae2_jei
+    // emits the compat.ae2.jei.StationJeiPlugin entrypoint and the guard-mixin config in
+    // fabric.mod.json (Fabric finds JEI plugins only through entrypoints, unlike Forge/NeoForge
+    // annotation scan).
     if (project.findProperty("ae2_version") == null) {
         exclude("**/compat/ae2/**")
     }
@@ -177,13 +184,20 @@ tasks.processResources {
         "license" to modLicense,
         "fabric_loader_min" to fabricLoaderMin,
         "minecraft_version" to minecraftVersion,
-        "java_version" to javaVersion.toString()
+        "java_version" to javaVersion.toString(),
+        // Defined (false) even where no AE2 station ships, or expand() fails on the unknown variable.
+        "has_ae2_jei" to hasAe2Jei
     )
     inputs.properties(replaceProperties)
     filesMatching("fabric.mod.json") { expand(replaceProperties) }
     // Don't ship the NeoForge or Forge metadata in the Fabric jar.
     exclude("META-INF/neoforge.mods.toml")
     exclude("META-INF/mods.toml")
+    // The AE2/JEI guard-mixin config ships only where its class is compiled (hasAe2Jei above): a jar
+    // without compat/ae2/jei must not name a config whose class is absent.
+    if (!hasAe2Jei) {
+        exclude("sprawlcrafting.ae2jei.mixins.json")
+    }
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 }
 

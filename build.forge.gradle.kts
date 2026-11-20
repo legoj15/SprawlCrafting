@@ -329,6 +329,10 @@ tasks.processResources {
     // Ship ONLY Forge's metadata: not Fabric's, and not NeoForge's (a different file).
     exclude("fabric.mod.json")
     exclude("META-INF/neoforge.mods.toml")
+    // Fabric-only JEI-ordering guard (Fabric Loader guarantees no plugin order); its class compiles
+    // on 1.20.1 with the rest of compat/ae2/jei, but Forge ships no config for it: the optional AFTER
+    // dependency on ae2 already wins JEI's last-registered race.
+    exclude("sprawlcrafting.ae2jei.mixins.json")
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 }
 
