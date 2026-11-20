@@ -50,6 +50,15 @@ class ProducedLedgerTest {
         ledger.produced("block", Long.MAX_VALUE);
         ledger.produced("block", 10);
         assertEquals(Long.MAX_VALUE, ledger.outstanding("block"));
+
+        // Held counts saturate too: a baseline that wrapped negative would admit the player's own copy.
+        ProducedLedger<String, String> swords = new ProducedLedger<>();
+        LedgerTally<String, String> baseline = new LedgerTally<>();
+        baseline.held("sword", "sword#named", Integer.MAX_VALUE);
+        baseline.held("sword", "sword#named", 1);
+        baseline.open(swords);
+        swords.produced("sword", 1);
+        assertFalse(tally(swords, "sword", "sword#named", Integer.MAX_VALUE).admits("sword", "sword#named"));
     }
 
     @Test
