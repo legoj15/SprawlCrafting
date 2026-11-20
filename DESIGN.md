@@ -94,9 +94,11 @@ behind its `srgRuntime` flag (`<1.20.6`), so the other Forge nodes' builds are u
   opt-in dev runtime (`-Psc.sophisticated=true`); see "Sophisticated crafting upgrade".
 - **Networking.** Forge 47 has no payload channels: one `SimpleChannel` `sprawlcrafting:main` (the same
   name as legacy 1.16.5), discriminators 0 start craft (C2S), 1 screen state (C2S), 2 progress (S2C),
-  frozen (append only). Both version predicates accept every value, `ABSENT` and `ACCEPTVANILLA`
-  included, so it is optional both ways. Presence is per channel on this line, so
-  `canReceive`/`canSendToServer` are `isRemotePresent(connection)` and ignore the payload id.
+  frozen with nothing appendable (a peer on an older jar fails on any id it lacks). Both version
+  predicates accept every value, `ABSENT` and `ACCEPTVANILLA` included, so it is optional both ways.
+  Presence is per channel on this line, so `canReceive`/`canSendToServer` are
+  `isRemotePresent(connection)`, except for payloads that got a channel of their own: the cancel
+  request (#31) rides `sprawlcrafting:cancel_craft` and answers through `isCancelRemotePresent`.
 - **Loader API branches** (`//? if >=1.20.5` in `platform/forge`): no-arg `@Mod` constructor with
   `FMLJavaModLoadingContext.get()`; `ModLoadingContext.get().registerExtensionPoint` for the config
   screen; tick events are single classes with `phase == END` instead of `.Post`;
@@ -334,7 +336,7 @@ crafting upgrade").
   offered and an old client never gets the new ordinal. Fabric 1.16.5 has no station.
 - **Accepted limits.** A connected but power-starved network can still cancel a job (counts are
   simulated per item, not in aggregate; no item loss). Items in the terminal's own 3x3 grid are
-  not counted. A paused job has no player cancel yet (#31). A newer 1.21.1 client on an older
+  not counted. The player's "Cancel deferred craft" key cancels a paused job (#31). A newer 1.21.1 client on an older
   SprawlCrafting server counts the network client-side and offers crafts the server then refuses
   with a message (no client-visible server capability exists for it; harmless).
 
@@ -478,7 +480,9 @@ Design points specific to it:
 - **Networking** is a `SimpleNetworkWrapper` channel; grid-hand-off and screen-state
   messages ride a **second** channel (`sprawlcrafting2`) behind a hello handshake, so mixed
   old/new client and server versions can never desync or kick. The main channel's message
-  ids are frozen.
+  ids are frozen. The cancel request (#31) is `sprawlcrafting2` id 4. It is gated on the hello's
+  `CAP_CANCEL_CRAFT` bit, not on channel presence, because FML kicks on an unknown id of a known
+  channel (an unknown channel is silently dropped). Any later id 5+ needs a capability bit the same way.
 - **Chest sourcing.** Grid placement can also draw from a modded station's bound chest (e.g.
   a TConstruct Crafting Station), matching those stations' own JEI behavior.
 - **AE2 Crafting Terminal (issue #2).** Rule: every item a craft draws from must be visible

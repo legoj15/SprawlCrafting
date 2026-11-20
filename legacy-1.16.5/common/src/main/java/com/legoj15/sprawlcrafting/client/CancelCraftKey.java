@@ -24,9 +24,9 @@ public final class CancelCraftKey {
     }
 
     public static void clientTick() {
-        // Drain the click queue however many presses queued up, but send at most one request per tick:
-        // the server cancels the whole job, and the CANCELLED snapshot it sends back clears
-        // hasActiveJob() before the next tick could send a duplicate.
+        // Drain the click queue however many presses queued up, but send at most one request per tick.
+        // A second send while the CANCELLED snapshot is still in flight is harmless: the server finds
+        // no job and does nothing.
         boolean pressed = false;
         while (KEY.consumeClick()) {
             pressed = true;
