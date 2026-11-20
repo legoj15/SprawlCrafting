@@ -1,5 +1,6 @@
 package com.legoj15.sprawlcrafting.forge.client;
 
+import java.util.ArrayList;
 import java.util.List;
 
 import net.minecraft.client.gui.GuiScreen;
@@ -38,7 +39,10 @@ public final class DeferredPreviewRenderer {
             if (book != null && book.isVisible()) {
                 List<String> preview = DeferredClickState.previewLines();
                 if (!preview.isEmpty()) {
-                    gui.drawHoveringText(preview, event.getMouseX(), event.getMouseY());
+                    // A copy: the cached preview is unmodifiable, and drawHoveringText hands its
+                    // list to RenderTooltipEvent listeners, which may edit it.
+                    gui.drawHoveringText(new ArrayList<String>(preview),
+                            event.getMouseX(), event.getMouseY());
                 }
             }
         } catch (Throwable ignored) {

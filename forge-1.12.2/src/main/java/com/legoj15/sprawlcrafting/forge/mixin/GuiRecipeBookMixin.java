@@ -3,6 +3,7 @@ package com.legoj15.sprawlcrafting.forge.mixin;
 import java.util.List;
 
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.Redirect;
@@ -29,6 +30,7 @@ import net.minecraft.client.multiplayer.PlayerControllerMP;
 import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.inventory.InventoryCrafting;
 import net.minecraft.inventory.Slot;
+import net.minecraft.item.ItemStack;
 import net.minecraft.item.crafting.IRecipe;
 import net.minecraft.util.ResourceLocation;
 
@@ -46,10 +48,11 @@ import net.minecraft.util.ResourceLocation;
  *       servers.</li>
  * </ul>
  * Stale armed state and stale ghosts are also cleaned up here: init disarms whatever the previous
- * screen left armed ({@link #sprawlcrafting$resetOnInit}), and a ghost found sitting over a real
- * grid item is cleared before it can render ({@link #sprawlcrafting$clearGhostOverItems}).
- * All injectors are guarded so they can never throw from the click/render path, and carry
- * {@code require = 0} so a mapping mismatch degrades to vanilla rather than crashing.
+ * screen left armed ({@link #sprawlcrafting$resetOnInit}), and a ghost is cleared as soon as a
+ * real item arrives under it ({@link #sprawlcrafting$clearGhostOverItems}).
+ * Our own logic in every injector is guarded so it can never throw from the click/render path
+ * (the guard redirect still makes vanilla's own {@code isCraftable} call), and every injector
+ * carries {@code require = 0} so a mapping mismatch degrades to vanilla rather than crashing.
  */
 @Mixin(GuiRecipeBook.class)
 public class GuiRecipeBookMixin {
@@ -126,8 +129,12 @@ public class GuiRecipeBookMixin {
      * click sets exactly that ghost ({@code setupGhostRecipe}), so without this the confirm click
      * never reaches {@link #sprawlcrafting$divertClick}. A deferred recipe passes the guard; vanilla
      * then clears the ghost just before the place call we redirect — which is also what clears the
-     * preview ghost on confirm. {@link RecipeBookHighlight#isDeferred} already swallows its own
-     * failures. {@code isCraftable} is called only once in {@code mouseClicked}.
+     * preview ghost on confirm. The armed recipe passes too, even once it stops being deferred
+     * (its materials left the inventory): our preview ghost still holds it, and a grouped button
+     * stays locked onto it, so swallowing the click would strand the button until the screen
+     * reopens; passing lets {@code divertClick} route it as red (gather screen) or white and
+     * disarm. {@link RecipeBookHighlight#isDeferred} already swallows its own failures.
+     * {@code isCraftable} is called only once in {@code mouseClicked}.
      */
     @Redirect(
             method = "mouseClicked",
@@ -136,7 +143,8 @@ public class GuiRecipeBookMixin {
                             + "isCraftable(Lnet/minecraft/item/crafting/IRecipe;)Z"),
             require = 0)
     private boolean sprawlcrafting$deferredPassesGhostGuard(RecipeList list, IRecipe recipe) {
-        return list.isCraftable(recipe) || RecipeBookHighlight.isDeferred(recipe);
+        return list.isCraftable(recipe) || DeferredClickState.isArmedFor(recipe)
+                || RecipeBookHighlight.isDeferred(recipe);
     }
 
     /**
@@ -163,37 +171,64 @@ public class GuiRecipeBookMixin {
         DeferredClickState.disarm();
     }
 
+    /** The ghost recipe whose covered slots {@link #sprawlcrafting$ghostStacks} tracks. */
+    @Unique
+    private IRecipe sprawlcrafting$trackedGhost;
+
+    /** Per ghost ingredient, the stack last seen in the slot under it (EMPTY when none). */
+    @Unique
+    private ItemStack[] sprawlcrafting$ghostStacks;
+
     /**
-     * A ghost is only ever meant to sit over an <em>empty</em> grid (vanilla's server placer
-     * empties the grid before sending one), so a ghost found over a real item is always stale —
-     * whoever set it (our preview, a server ghost packet) and however the item arrived (the
-     * deferred craft's grid hand-off, a JEI start). The ghost's ingredient positions are slot
-     * {@code xPos}/{@code yPos} ({@code setupGhostRecipe} stores exactly those), so matching them
-     * against the open container's slots finds the overlap; clearing once is enough.
+     * Clears a ghost once a real item lands under it. Vanilla only clears the ghost on a grid-slot
+     * click or another recipe click, so the stack the deferred craft's grid hand-off lays in (or a
+     * JEI start) was drawn underneath a stale red ghost. Triggered by an ARRIVAL, not by mere
+     * overlap: vanilla sends its own not-craftable ghost before the slot updates that empty the
+     * grid (a tick later on a modless server), so the ghost briefly sits over items that are about
+     * to leave and must survive that. Each frame compares the stack under every ghost ingredient
+     * with the one seen last frame: a non-empty stack that is a new object (the client replaces a
+     * slot's stack on every server update) is an arrival. A first sighting of a ghost only records.
+     * The ghost's positions are slot {@code xPos}/{@code yPos} ({@code setupGhostRecipe} stores
+     * exactly those), so matching them against the open container's slots finds what is under it.
      */
     @Inject(method = "renderGhostRecipe", at = @At("HEAD"), require = 0)
     private void sprawlcrafting$clearGhostOverItems(int left, int top, boolean bigResultSlot,
                                                     float partialTicks, CallbackInfo ci) {
         try {
             GhostRecipe ghost = ((GuiRecipeBookAccessor) (Object) this).sprawlcrafting$getGhostRecipe();
-            if (ghost == null || ghost.size() == 0) {
-                return;
-            }
             EntityPlayer player = Minecraft.getMinecraft().player;
-            if (player == null || player.openContainer == null) {
+            if (ghost == null || ghost.size() == 0 || player == null || player.openContainer == null) {
+                sprawlcrafting$trackedGhost = null;
                 return;
             }
             List<Slot> slots = player.openContainer.inventorySlots;
-            for (int i = 0; i < ghost.size(); i++) {
+            int size = ghost.size();
+            ItemStack[] now = new ItemStack[size];
+            for (int i = 0; i < size; i++) {
                 GhostRecipe.GhostIngredient ingredient = ghost.get(i);
+                now[i] = ItemStack.EMPTY;
                 for (Slot slot : slots) {
                     if (slot.xPos == ingredient.getX() && slot.yPos == ingredient.getY()
                             && slot.getHasStack()) {
-                        ghost.clear();
-                        return;
+                        now[i] = slot.getStack();
+                        break;
                     }
                 }
             }
+            ItemStack[] seen = sprawlcrafting$ghostStacks;
+            if (ghost.getRecipe() != sprawlcrafting$trackedGhost || seen == null || seen.length != size) {
+                sprawlcrafting$trackedGhost = ghost.getRecipe();
+                sprawlcrafting$ghostStacks = now;
+                return;
+            }
+            for (int i = 0; i < size; i++) {
+                if (!now[i].isEmpty() && now[i] != seen[i]) {
+                    ghost.clear();
+                    sprawlcrafting$trackedGhost = null;
+                    return;
+                }
+            }
+            sprawlcrafting$ghostStacks = now;
         } catch (Throwable ignored) {
             // Never let the guard break ghost rendering; vanilla draws the (possibly stale) ghost.
         }
