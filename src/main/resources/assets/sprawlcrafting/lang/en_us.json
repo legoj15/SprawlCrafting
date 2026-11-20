@@ -18,6 +18,7 @@
   "sprawlcrafting.toast.finished": "Crafted %s",
   "sprawlcrafting.toast.ready_in_grid": "%s ready in grid",
   "sprawlcrafting.toast.cancelled": "Crafting cancelled",
+  "sprawlcrafting.toast.click_to_cancel": "Click to cancel",
   "sprawlcrafting.craft.unknown_recipe": "Unknown recipe %s??",
   "sprawlcrafting.preview.hint": "Craftable from raw resources, click to preview",
   "sprawlcrafting.recipe.deferred": "Craftable from raw resources!",

@@ -32,6 +32,7 @@ sprawlcrafting.toast.paused_station=Open a crafting station!
 sprawlcrafting.toast.finished=Crafted!
 sprawlcrafting.toast.ready_in_grid=Ready in grid!
 sprawlcrafting.toast.cancelled=Crafting cancelled
+sprawlcrafting.toast.click_to_cancel=Click to cancel
 
 # --- Recipe book / deferred-craft preview ---
 sprawlcrafting.recipe.deferred=Craftable from raw resources!
