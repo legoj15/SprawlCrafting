@@ -12,7 +12,7 @@ class ProducedLedgerTest {
     void nothingProducedAdmitsNothing() {
         ProducedLedger<String, String> ledger = new ProducedLedger<>();
         assertEquals(0, ledger.outstanding("sword"));
-        assertFalse(ledger.canTake("sword", 0));
+        assertFalse(tally(ledger, "sword", "sword#ench", 2).admits("sword", "sword#ench"));
     }
 
     @Test
@@ -21,18 +21,27 @@ class ProducedLedgerTest {
         ledger.produced("sword", 2);
         ledger.produced("sword", 1);
         assertEquals(3, ledger.outstanding("sword"));
-        assertTrue(ledger.canTake("sword", 2));
-        assertFalse(ledger.canTake("sword", 3));
-        assertFalse(ledger.canTake("paxel", 0));
+        // Three outstanding, three altered copies held: each refused pick claims one, a fourth is over the cap.
+        LedgerTally<String, String> craft = tally(ledger, "sword", "sword#ench", 3);
+        assertTrue(craft.admits("sword", "sword#ench"));
+        craft.picked("sword", "sword#ench", true);
+        craft.picked("sword", "sword#ench", true);
+        assertTrue(craft.admits("sword", "sword#ench"));
+        craft.picked("sword", "sword#ench", true);
+        assertFalse(craft.admits("sword", "sword#ench"));
+        assertFalse(craft.admits("paxel", "paxel#ench"));
 
+        craft.chargeTo(ledger);
+        assertEquals(0, ledger.outstanding("sword"));
+
+        // A count already drawn down admits nothing either, and consumption floors at zero.
+        ledger.produced("sword", 2);
         ledger.consumed("sword", 2);
-        assertEquals(1, ledger.outstanding("sword"));
-        assertTrue(ledger.canTake("sword", 0));
-        assertFalse(ledger.canTake("sword", 1));
+        assertEquals(0, ledger.outstanding("sword"));
+        assertFalse(tally(ledger, "sword", "sword#ench", 1).admits("sword", "sword#ench"));
 
         ledger.consumed("sword", 5);
         assertEquals(0, ledger.outstanding("sword"));
-        assertFalse(ledger.canTake("sword", 0));
     }
 
     @Test
@@ -125,29 +134,15 @@ class ProducedLedgerTest {
     }
 
     @Test
-    void movingThePlayersOwnVariantOutMidJobStillAdmitsTheJobs() {
+    void discardingThePlayersOwnVariantMidJobStillAdmitsTheJobs() {
         // Baseline 1 renamed sword; the job produces 1 sword, a mod enchants it, and the player then
-        // moves their own renamed copy out. The pool holds only the job's enchanted variant, which a
+        // discards their own renamed copy (drops it, stores it away). The player holds only the job's
+        // enchanted variant, which a
         // per-identity baseline (held 1, baseline 1) would refuse and stall the job on.
         ProducedLedger<String, String> ledger = new ProducedLedger<>();
         tally(ledger, "sword", "sword#named", 1);
         ledger.produced("sword", 1);
         assertTrue(tally(ledger, "sword", "sword#ench", 1).admits("sword", "sword#ench"));
-    }
-
-    @Test
-    void gridReturnedRefusedStacksAreOwnedNotTheJobs() {
-        // No baseline at all; the job produced 1 sword, and the grid hand-off returned an enchanted
-        // stack that had sat in the grid (never in the 36 main slots). The tally was told it is the
-        // player's own for this craft, so it is not admitted however many the job produced.
-        ProducedLedger<String, String> ledger = new ProducedLedger<>();
-        tally(ledger, "sword", "sword#ench", 0);
-        ledger.produced("sword", 1);
-        LedgerTally<String, String> craft = new LedgerTally<>();
-        craft.held("sword", "sword#ench", 1);
-        craft.owned("sword", "sword#ench", 1);
-        craft.open(ledger);
-        assertFalse(craft.admits("sword", "sword#ench"));
     }
 
     /** A craft's tally over a pool holding {@code held} filter-rejected copies of one {@code variant}, opened against {@code ledger}. */

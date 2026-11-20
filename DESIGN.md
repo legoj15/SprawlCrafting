@@ -607,19 +607,21 @@ compression mods saturate at `Long.MAX_VALUE`. Counts are therefore `long` from 
   and renamed stacks are excluded from both planning and consumption (recipe-book parity),
   except that execution may consume such a stack up to the count the running job itself crafted
   of that item (`ProducedLedger`), because some mods alter an item right after it is inserted.
-  Rejected copies the pool held before the job produced anything are the player's own: the
-  ledger records that count per exact variant (item + damage/meta + NBT/components), and
-  `LedgerTally` admits only rejected copies of that variant above it — so the player's own
-  renamed copy is never taken in place of the job's enchanted one, and the job's copies stay
-  admissible when the player moves their own out mid-job. Refused stacks the final grid
-  hand-off returns from the crafting grid (never in the 36 main slots, so never in that
-  baseline) are likewise treated as the player's own for that craft. The executor draws the
-  count down on its own takes: every rejected take, plus plain takes beyond the job's rejected
-  copies still held (the count kept back can only describe those). What stays indistinguishable
-  from the job's altered copies is a player-owned copy of exactly the same variant
-  (interchangeable with the job's in every observable way) and altered copies that enter the
-  pool only after the job's first production; both stay bounded by the produced count. The
-  vanilla final hand-off is exempt because it never takes rejected stacks and ends the job.
+  Rejected copies the player held before the job produced anything are the player's own: the
+  ledger records that count per exact variant (item + damage/meta + NBT/components) over all the
+  player's holdings (the consumable pool plus offhand, armour, cursor, and the open crafting
+  grid), and `LedgerTally` admits only rejected copies of that variant above it — so the
+  player's own renamed copy is never taken in place of the job's enchanted one, and moving a
+  stack between the player's holdings changes nothing. A player discarding (dropping, storing
+  in a chest) their own copy of a variant the job also produced makes that many job copies of
+  that variant inadmissible (a safe stall); a discarded copy of any other variant affects
+  nothing. The executor draws the count down on its own takes: every rejected take, plus plain
+  takes beyond the job's rejected copies still held (the count kept back can only describe
+  those). What stays indistinguishable from the job's altered copies is a player-owned copy of
+  exactly the same variant (interchangeable with the job's in every observable way) and altered
+  copies that enter the player's holdings only after the job's first production; both stay
+  bounded by the produced count. The vanilla final hand-off is exempt because it never takes
+  rejected stacks and ends the job.
 - **Per-item crafting remainders.** Recipes overriding `getRemainingItems` (and NeoForge's
   stack-sensitive remainders on modded items) are approximated at the item level.
 - **NeoForge empty-tag placeholder.** Ingredients with empty tags fail at execution

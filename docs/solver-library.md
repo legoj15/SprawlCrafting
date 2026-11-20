@@ -116,11 +116,11 @@ coordinates); not boot-tested with two mods.
 Add `mavenLocal()` (local dev) or `maven("https://jitpack.io")`, or include this repo's `solver-core` as
 a composite build. Then, per loader:
 
-- Fabric Loom: `include(implementation("com.legoj15:solver:1.0.1")!!)`.
-- NeoForge MDG: `implementation("com.legoj15:solver:1.0.1")` +
-  `jarJar("com.legoj15:solver") { version { strictly("[1.0.1,2.0.0)"); prefer("1.0.1") } }`.
+- Fabric Loom: `include(implementation("com.legoj15:solver:2.0.0")!!)`.
+- NeoForge MDG: `implementation("com.legoj15:solver:2.0.0")` +
+  `jarJar("com.legoj15:solver") { version { strictly("[2.0.0,3.0.0)"); prefer("2.0.0") } }`.
 - Forge FG7: apply `net.minecraftforge.jarjar`, `jarJar.register()`, then `implementation(...)` +
-  `jarJar.configure("jarJar"("com.legoj15:solver:1.0.1")!!) { setRange("[1.0.1,2.0.0)") }`.
+  `jarJar.configure("jarJar"("com.legoj15:solver:2.0.0")!!) { setRange("[2.0.0,3.0.0)") }`.
 - Never shade it on a JarJar-era loader (see above). Use the same group/artifact (`com.legoj15:solver`)
   in jar-in-jar metadata as SprawlCrafting does, or the selector sees two different libraries and
   loads both (a split package again). A JitPack build carries `com.github.legoj15:SprawlCrafting` (verified,

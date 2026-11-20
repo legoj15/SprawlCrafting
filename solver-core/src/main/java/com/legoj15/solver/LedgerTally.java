@@ -8,26 +8,29 @@ import java.util.Set;
 
 /**
  * One craft's bookkeeping against a {@link ProducedLedger}: which exact variants ({@code V}: item +
- * damage/meta + components/NBT) the pool holds filter-rejected copies of, and which stacks the craft
- * picked, rejected or plain. The executor records the rejected copies the pool holds, opens the craft
+ * damage/meta + components/NBT) the player holds filter-rejected copies of, and which stacks the craft
+ * picked, rejected or plain. The executor records the rejected copies the player holds, opens the craft
  * with {@link #open}, asks {@link #admits} while choosing slots, records each pick with
  * {@link #picked}, and {@linkplain #chargeTo charges} the tally once the craft is applied.
  *
- * <p>Rejected copies the pool held before the job produced anything are the player's own, and the
- * ledger keeps that count per variant (the tallies opened before any production record it); so are
- * rejected stacks the grid hand-off returned to the inventory, recorded per craft as {@link #owned}
- * (they sat in the grid, never in the pool the baseline scanned). Only rejected copies above both
- * can be the job's: a rejected pick of a variant is admitted while {@link #admits} says so, which
- * caps the job's count at those copies per variant and per identity. So the player's own altered
- * copies held when the job started and the hand-off's returns are never admitted, and admissions
- * never exceed what the job produced. What remains indistinguishable from the job's altered copies
- * is a player-owned copy of exactly the same variant — interchangeable with the job's in every
- * observable way — and altered copies that enter the pool only after the job's first production (a
- * pickup, an item altered mid-job); both stay bounded by the produced count.
+ * <p>Rejected copies the player held before the job produced anything are the player's own, and the
+ * ledger keeps that count per variant (the tallies opened before any production record it). {@code held}
+ * spans all the player's holdings — the consumable pool plus the offhand, armour, cursor, and open
+ * crafting-grid slots no finder may pick from — which is what makes moving a stack between holdings
+ * neutral. Only rejected copies above the baseline can be the job's: a rejected pick of a variant is
+ * admitted while {@link #admits} says so, which caps the job's count at those copies per variant and
+ * per identity, so the player's own altered copies held when the job started are never admitted and
+ * admissions never exceed what the job produced. A player discarding (dropping, storing in a chest) a
+ * copy of a variant the job also produced makes that many of the job's copies of that variant
+ * inadmissible — a safe stall — while a discarded copy of any other variant affects nothing. What
+ * remains indistinguishable from the job's altered copies is a player-owned copy of exactly the same
+ * variant — interchangeable with the job's in every observable way — and altered copies that enter the
+ * player's holdings only after the job's first production (a pickup, an item altered mid-job); both
+ * stay bounded by the produced count.
  *
  * <p>A plain pick needs no headroom, but it may be the job's own copy, and leaving its count behind
  * is a stale count. So at charge time the count is kept back only for the job's rejected copies the
- * pool still holds after this craft, and plain picks drain anything beyond that. That one rule
+ * player still holds after this craft, and plain picks drain anything beyond that. That one rule
  * covers both a plain-only craft while the player's own altered copy is held and a craft that took
  * the rejected copy and plain copies together. A plain pick never spends headroom during the craft,
  * so it cannot block a rejected pick the same craft needs, and the total charged never exceeds the
@@ -36,30 +39,20 @@ import java.util.Set;
 public final class LedgerTally<K, V> {
 
     private final Map<V, Integer> refusedHeld = new HashMap<>();
-    /** Each identity's variants seen held or owned, to sum over them when admission or charging is per identity. */
+    /** Each identity's variants seen held, to sum over them when admission or charging is per identity. */
     private final Map<K, Set<V>> variantsOf = new HashMap<>();
-    private final Map<V, Integer> owned = new HashMap<>();
     private final Map<V, Integer> refusedTakes = new HashMap<>();
     private final Map<K, Integer> refusedTakesByKey = new HashMap<>();
     private final Map<K, Integer> plainTakes = new HashMap<>();
     private ProducedLedger<K, V> ledger;
 
-    /** The pool holds {@code count} more filter-rejected copies of this exact {@code variant}. Call before {@link #open}. */
+    /**
+     * The player holds {@code count} more filter-rejected copies of this exact {@code variant}, in the
+     * pool or in any other holding. Call before {@link #open}.
+     */
     public void held(K key, V variant, int count) {
         if (count > 0) {
             add(refusedHeld, variant, count);
-            variantsOf.computeIfAbsent(key, k -> new HashSet<>()).add(variant);
-        }
-    }
-
-    /**
-     * Rejected copies in the pool known to be the player's own for this craft only: what the grid
-     * hand-off returned to the inventory, never in the pool the job-start baseline scanned. Counted
-     * against admission like the baseline but never stored in the ledger.
-     */
-    public void owned(K key, V variant, int count) {
-        if (count > 0) {
-            add(owned, variant, count);
             variantsOf.computeIfAbsent(key, k -> new HashSet<>()).add(variant);
         }
     }
@@ -121,7 +114,7 @@ public final class LedgerTally<K, V> {
             long keep = 0;
             for (V variant : variantsOf.getOrDefault(key, Collections.<V>emptySet())) {
                 keep += Math.max(0, get(refusedHeld, variant) - get(refusedTakes, variant)
-                        - ledger.preexisting(variant) - get(owned, variant));
+                        - ledger.preexisting(variant));
             }
             long plainDrain = Math.min(plain, Math.max(0, outstanding - refused - keep));
             ledger.consumed(key, refused + plainDrain);
@@ -133,7 +126,7 @@ public final class LedgerTally<K, V> {
         if (ledger == null) {
             return 0;
         }
-        return Math.max(0, get(refusedHeld, variant) - ledger.preexisting(variant) - get(owned, variant));
+        return Math.max(0, get(refusedHeld, variant) - ledger.preexisting(variant));
     }
 
     private static <K> void add(Map<K, Integer> map, K key, int count) {

@@ -1,12 +1,9 @@
 package com.legoj15.sprawlcrafting.forge.craft;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
-import java.util.Map;
 
-import com.legoj15.solver.LedgerTally;
 import com.legoj15.solver.ProducedLedger;
 
 import it.unimi.dsi.fastutil.ints.IntArrayList;
@@ -200,12 +197,8 @@ public final class ServerGridPlacer {
                 || !CraftExecutor.assign(player, cells, ledger).complete()) {
             return HandOffResult.FALLBACK;
         }
-        // Read while the cells still hold their stacks: a refused stack that sat in the grid was never
-        // in the pool the job-start baseline scanned, so once returned it would otherwise look like
-        // the job's altered copy of that variant ({@link LedgerTally#owned}).
-        Map<CraftExecutor.LedgerVariant, Integer> gridOwned = ownedGridRefused(grid);
         returnGridToInventory(player, grid);
-        CraftExecutor.Assignment assignment = CraftExecutor.assign(player, cells, ledger, gridOwned);
+        CraftExecutor.Assignment assignment = CraftExecutor.assign(player, cells, ledger);
         if (!assignment.complete()) {
             finishSync(player, container);
             return HandOffResult.FALLBACK;
@@ -679,25 +672,6 @@ public final class ServerGridPlacer {
                 }
             }
         }
-    }
-
-    /**
-     * The grid cells' filter-rejected stacks, summed per variant: the player's own for the craft the
-     * cells are being returned for. A refused stack that sat in the grid was never in the pool the
-     * job-start baseline scanned; read before {@link #returnGridToInventory} empties the cells.
-     */
-    private static Map<CraftExecutor.LedgerVariant, Integer> ownedGridRefused(Grid grid) {
-        Map<CraftExecutor.LedgerVariant, Integer> owned = null;
-        for (Slot cell : grid.cells) {
-            ItemStack stack = cell.getStack();
-            if (!stack.isEmpty() && !CraftExecutor.usableAsIngredient(stack)) {
-                if (owned == null) {
-                    owned = new HashMap<CraftExecutor.LedgerVariant, Integer>();
-                }
-                owned.merge(CraftExecutor.variantOf(stack), stack.getCount(), Integer::sum);
-            }
-        }
-        return owned;
     }
 
     /** Merges as much of {@code stack} into a matching, non-full, stackable offhand stack. */
