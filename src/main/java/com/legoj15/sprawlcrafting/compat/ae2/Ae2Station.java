@@ -353,6 +353,20 @@ public final class Ae2Station implements StationStorages.Provider {
         }
     }
 
+    /**
+     * A stored count at or above {@link Integer#MAX_VALUE} is reported as unbounded ({@link Long#MAX_VALUE}),
+     * whatever the energy-capped simulated extraction said. Verified sources: an AE2 creative cell lists
+     * every item at exactly Integer.MAX_VALUE and extracts any amount; a Sophisticated Storage infinity
+     * upgrade (seen through a storage bus) lists Integer.MAX_VALUE per slot and extracts any amount. The
+     * energy cap would otherwise shrink the count to what one extraction could power right now, though
+     * crafts draw a few items at a time and re-check power then. The planner reads Integer.MAX_VALUE as
+     * unbounded ({@code RecipeGraphSolver.stockCount}); a real network this full is over-trusted and the
+     * job pauses or cancels mid-way if it runs dry.
+     */
+    static long unboundedIfSaturated(long stored, long deliverable) {
+        return stored >= Integer.MAX_VALUE ? Long.MAX_VALUE : deliverable;
+    }
+
     private static long saturatingAdd(long a, long b) {
         long sum = a + b;
         return sum < 0 ? Long.MAX_VALUE : sum;
@@ -394,6 +408,7 @@ public final class Ae2Station implements StationStorages.Provider {
                 //?}
                     long deliverable = deliverable(key, entry.getLongValue());
                     if (deliverable > 0) {
+                        deliverable = unboundedIfSaturated(entry.getLongValue(), deliverable);
                         counts.merge(key.getItem(), deliverable, Ae2Station::saturatingAdd);
                     }
                 }

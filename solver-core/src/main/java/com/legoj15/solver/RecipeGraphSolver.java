@@ -1131,12 +1131,24 @@ public final class RecipeGraphSolver<R, K> {
         }
     }
 
+    /**
+     * An int stock count widened for planning. {@link Integer#MAX_VALUE} means "at least that many, count
+     * unknown" (the clamp every int snapshot applies, and exactly what an AE2 creative cell or a
+     * Sophisticated Storage infinity upgrade reports while delivering any amount), so it is treated as
+     * unbounded: {@link Long#MAX_VALUE}, which every count operation here saturates at. A finite source
+     * that really holds ~2.1 billion is then over-trusted; execution re-checks every craft against the
+     * live source, so such a plan pauses or cancels mid-job instead of being refused up front.
+     */
+    static long stockCount(int count) {
+        return count == Integer.MAX_VALUE ? Long.MAX_VALUE : count;
+    }
+
     private static <T> Map<T, Long> toLong(Map<T, Integer> inventory) {
         Map<T, Long> out = new HashMap<>();
         for (Map.Entry<T, Integer> entry : inventory.entrySet()) {
             Integer count = entry.getValue();
             if (count != null && count > 0) {
-                out.put(entry.getKey(), (long) count);
+                out.put(entry.getKey(), stockCount(count));
             }
         }
         return out;
