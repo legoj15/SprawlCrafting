@@ -24,8 +24,8 @@ import net.minecraft.world.item.ItemStack;
  * ordinary recipe) keeps the Factorio-style rhythm: one craft per {@link #TICKS_PER_STEP} ticks, each
  * with its own progress update and step sound. A <em>bulk</em> step (more than {@link #BULK_THRESHOLD}
  * crafts, i.e. a batched compressed-block chain such as 6,561 crafts) waits {@link #TICKS_PER_STEP} ticks
- * once, then runs in bursts of up to {@link #MAX_CRAFTS_PER_TICK} crafts (and at most
- * {@link #BURST_BUDGET_NANOS} of server time, and all players' bursts together at most
+ * once, then runs in bursts of as many crafts as fit in
+ * {@link #BURST_BUDGET_NANOS} of server time (and all players' bursts together at most
  * {@link #SERVER_TICK_BURST_BUDGET_NANOS}), one burst per tick, until the step is done: roughly 5-16
  * seconds instead of the ~55 minutes one craft per half second would take.
  */
@@ -44,18 +44,13 @@ public final class CraftJob {
     public static final int BULK_THRESHOLD = 16;
 
     /**
-     * Most crafts one tick may perform for this player: one stack of a single-output recipe (the usual
-     * compression case), which clears a 6,561-craft step in ~103 ticks when the time budget allows.
-     */
-    public static final int MAX_CRAFTS_PER_TICK = 64;
-
-    /**
      * Wall-time budget for one player's burst; the burst stops at whichever of this and
-     * {@link #MAX_CRAFTS_PER_TICK} comes first (always at least one craft). Measured on 1.21.1
+     * the step boundary comes first (always at least one craft; there is no count cap, so this is what
+     * bounds a burst). Measured on 1.21.1
      * NeoForge (game-test server, mock player, 9-ingredient iron_block recipe with the ingots behind 27
      * filler stacks — the worst slot-scan layout): a 64-craft burst took 15.4 ms cold, then 2.5-6.1 ms
      * warm (~40-95 us per craft). Unbounded, that is up to a third of a 50 ms tick for one player, so the
-     * budget caps it at 2 ms (4% of a tick): a cheap recipe still runs the full 64, a costly one ~20-50.
+     * budget caps it at 2 ms (4% of a tick): at ~40-95 us a craft that is ~20-50 crafts a tick, and a cheaper recipe runs more.
      * This is the per-job ceiling; {@link #SERVER_TICK_BURST_BUDGET_NANOS} bounds all players together.
      */
     public static final long BURST_BUDGET_NANOS = 2_000_000L;
@@ -200,8 +195,8 @@ public final class CraftJob {
     /**
      * Advances the job timer by one tick.
      *
-     * @return true if a craft is due now: one craft for a paced step, a burst of up to
-     *         {@link #MAX_CRAFTS_PER_TICK} for a bulk step (the caller calls {@link #onCraftPerformed()}
+     * @return true if a craft is due now: one craft for a paced step, a burst bounded by
+     *         {@link #BURST_BUDGET_NANOS} for a bulk step (the caller calls {@link #onCraftPerformed()}
      *         after each)
      */
     public boolean tick() {

@@ -158,16 +158,18 @@ is decided by the node's `gradle.properties` plus `//? if >=1.21.11` branches in
   `CraftJob.BULK_THRESHOLD` (16) crafts keeps the Factorio-style rhythm: one craft per
   `CraftJob.TICKS_PER_STEP` (10 ticks, 0.5 s), each with its own progress update and step sound. A
   bigger step (a batched compressed-block chain, e.g. 6,561 crafts) waits `TICKS_PER_STEP` once,
-  then runs one burst per tick until it is done. A burst stops at
-  `CraftJob.MAX_CRAFTS_PER_TICK` (64, one stack of a single-output recipe) or its time budget
-  (below), whichever comes first, and always does at least one craft; it takes ~5-16 s instead of
+  then runs one burst per tick until it is done. A burst has no craft-count
+  cap: it stops when its time budget (below) is spent or the step ends, and always does at least
+  one craft (an earlier 64-craft cap was removed: with AE2 storage a step can need millions of
+  crafts, and the time budget alone already bounds the tick); it takes ~5-16 s instead of
   ~55 minutes at one craft per half second. Every craft in a burst is still validated and applied on its own
   (`CraftExecutor.craftOnce`), so per-craft ingredient checks and graceful cancellation are
   unchanged. **Measured** (1.21.1 NeoForge game-test server, mock player, 9-ingredient
   `iron_block` recipe with the ingots behind 27 filler stacks, i.e. the worst slot-scan layout): a
-  64-craft burst took 15.4 ms cold, then 2.5-6.1 ms warm (~40-95 µs per craft). Uncapped, one
-  player's burst could take a third of a 50 ms tick, hence the time budget: 2 ms is 4% of a tick,
-  so a cheap recipe still runs the full 64 and a costly one ~20-50.
+  64-craft burst took 15.4 ms cold, then 2.5-6.1 ms warm (~40-95 µs per craft). Without the time
+  budget a burst would run until its step ends (a 6,561-craft step is ~0.3-0.6 s of server time at
+  that cost, a million-craft AE2 step far more), hence the budget: 2 ms is 4% of a tick,
+  so a burst runs ~20-50 crafts of that worst-case recipe and more of a cheap one.
   **The time budget is shared across players.** `CraftJob.BURST_BUDGET_NANOS` (2 ms) caps one
   player's burst; `CraftJob.SERVER_TICK_BURST_BUDGET_NANOS` (10 ms, a fifth of a tick) is what ALL
   players' bursts together may spend in one server tick, so N players bursting at once cost about
@@ -182,7 +184,7 @@ is decided by the node's `gradle.properties` plus `//? if >=1.21.11` branches in
   nothing has to rotate. Each burst is charged the time it used, clamped to its grant: the clock
   is checked after a craft, so a burst runs up to one craft past its grant, and charging that
   overshoot would shrink every later player's slice in the fixed loop order (the last pinned to
-  one craft per tick); time a burst leaves unused (64-craft cap, step boundary) stays in the
+  one craft per tick); time a burst leaves unused (step boundary, job finished) stays in the
   window for a burst the count missed, and the time charged to the window never exceeds 10 ms.
   The clock is checked after a craft, never before, so every job makes at least one craft per
   eligible tick even with the budget spent (no starvation); the bound is therefore soft (the budget plus at most one
@@ -237,7 +239,7 @@ than a full exponential search — see "Known limitations".
    (recipe × count). Held items are used before any sub-craft is planned.
 3. **Execution (server, `CraftQueueManager` / `CraftExecutor`).** Each step starts 10 ticks
    after the previous one; a step of ≤ 16 crafts then runs one craft per 10 ticks, a bigger one in
-   bursts (≤ 64 crafts per tick, within a 10 ms per-tick time budget shared by all players); every craft re-checks and
+   bursts (as many crafts as fit a 2 ms per-player, 10 ms per-tick time budget shared by all players); every craft re-checks and
    consumes its ingredients from the live inventory and inserts its output as real items.
    Shortfall → cancel + notify.
 4. **Progress toast (client).** While a job runs with the inventory closed, a vanilla toast

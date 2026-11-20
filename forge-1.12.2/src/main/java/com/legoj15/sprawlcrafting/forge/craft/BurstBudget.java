@@ -17,8 +17,8 @@ import java.util.function.IntSupplier;
  * <p>A burst is charged the time it used <em>up to its grant</em>, never its overshoot. The burst loop
  * checks the clock after each craft, so every burst runs up to one craft past its grant; charging that
  * overshoot to the shared window would shrink the slice of every player later in the fixed loop order
- * (the last one pinned to the one-craft floor every tick). A burst that ends early (64-craft cap, step
- * boundary) is charged only what it used, and the rest stays in the window for any burst the job count
+ * (the last one pinned to the one-craft floor every tick). A burst that ends early (step boundary, job
+ * finished) is charged only what it used, and the rest stays in the window for any burst the job count
  * missed (one that starts later in the same tick). The time charged to the window never exceeds the
  * budget; grants are sized from the job count, so their sum stays within it only while that count matches
  * the bursts that actually run.

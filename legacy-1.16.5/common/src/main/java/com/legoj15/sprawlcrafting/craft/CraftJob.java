@@ -24,8 +24,8 @@ import net.minecraft.item.ItemStack;
  * ordinary recipe) keeps the Factorio-style rhythm: one craft per {@link #TICKS_PER_STEP} ticks, each
  * with its own progress update and step sound. A <em>bulk</em> step (more than {@link #BULK_THRESHOLD}
  * crafts, i.e. a batched compressed-block chain such as 6,561 crafts) waits {@link #TICKS_PER_STEP} ticks
- * once, then runs in bursts of up to {@link #MAX_CRAFTS_PER_TICK} crafts (and at most
- * {@link #BURST_BUDGET_NANOS} of server time, and all players' bursts together at most
+ * once, then runs in bursts of as many crafts as fit in
+ * {@link #BURST_BUDGET_NANOS} of server time (and all players' bursts together at most
  * {@link #SERVER_TICK_BURST_BUDGET_NANOS}), one burst per tick, until the step is done: roughly 5-16
  * seconds instead of the ~55 minutes one craft per half second would take.
  */
@@ -44,15 +44,9 @@ public final class CraftJob {
     public static final int BULK_THRESHOLD = 16;
 
     /**
-     * Most crafts one tick may perform for this player — same cap and reasoning as the modern tree: one
-     * craft is a recipe lookup, an ingredient match over the 36 main slots and an insert (microseconds),
-     * so 64 (a stack of a single-output recipe) stays far below the 50 ms tick.
-     */
-    public static final int MAX_CRAFTS_PER_TICK = 64;
-
-    /**
      * Wall-time budget for one player's burst; the burst stops at whichever of this and
-     * {@link #MAX_CRAFTS_PER_TICK} comes first (always at least one craft). Same value as the modern
+     * the step boundary comes first (always at least one craft; there is no count cap, so this is what
+     * bounds a burst). Same value as the modern
      * tree, where a worst-case 64-craft burst of a 9-ingredient recipe measured 2.5-6.1 ms warm and
      * 15.4 ms cold on the 1.21.1 game-test server: 2 ms keeps one player's burst to 4% of a tick.
      * This is the per-job ceiling; {@link #SERVER_TICK_BURST_BUDGET_NANOS} bounds all players together.
@@ -198,8 +192,8 @@ public final class CraftJob {
     /**
      * Advances the job timer by one tick.
      *
-     * @return true if a craft is due now: one craft for a paced step, a burst of up to
-     *         {@link #MAX_CRAFTS_PER_TICK} for a bulk step (the caller calls {@link #onCraftPerformed()}
+     * @return true if a craft is due now: one craft for a paced step, a burst bounded by
+     *         {@link #BURST_BUDGET_NANOS} for a bulk step (the caller calls {@link #onCraftPerformed()}
      *         after each)
      */
     public boolean tick() {
