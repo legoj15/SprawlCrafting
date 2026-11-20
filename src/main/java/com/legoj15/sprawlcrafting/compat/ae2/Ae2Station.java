@@ -452,5 +452,20 @@ public final class Ae2Station implements StationStorages.Provider {
             }
             return inserted >= stack.getCount() ? ItemStack.EMPTY : stack.copyWithCount(stack.getCount() - (int) inserted);
         }
+
+        @Override
+        public long acceptable(ItemStack stack, long limit) {
+            // insert()'s own checks and power-capped move, simulated for limit items.
+            AEItemKey key = stack.isEmpty() || limit <= 0 ? null : AEItemKey.of(stack);
+            //? if >=1.20.5 {
+            if (key == null || key.hasComponents() || !menu.isKeyVisible(key)) {
+            //?} else {
+            /*if (key == null || !plain(key) || !menu.isKeyVisible(key)) {*/
+            //?}
+                return 0;
+            }
+            return Math.max(0, StorageHelper.poweredInsert(energy, storage, key, limit, source,
+                    Actionable.SIMULATE));
+        }
     }
 }
