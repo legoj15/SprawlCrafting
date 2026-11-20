@@ -244,9 +244,7 @@ jar {
 // Note: a pack.mcmeta (pack_format 3) is included in src/main/resources so that FML does NOT wrap
 // the mod's resource pack in a LegacyV2Adapter. Without it, FML's dummy pack.mcmeta says format 2,
 // the adapter's fudgePath transforms "lang/en_us.lang" lookups into "lang/en_US.lang", and the
-// lang file (correctly named en_us.lang for 1.12.2) silently fails to load. In the dev environment,
-// a separate issue exists (RFG splits classes and resources into different directories, so
-// FMLFolderResourcePack can't find assets at all) — DevLangInjector handles that case.
+// lang file (correctly named en_us.lang for 1.12.2) silently fails to load.
 
 // -------------------------------------------------------------------------------------
 // Mixin annotation-processor refmap wiring (RFG).

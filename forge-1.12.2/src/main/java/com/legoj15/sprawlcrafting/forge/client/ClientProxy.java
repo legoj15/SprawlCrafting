@@ -31,13 +31,6 @@ public class ClientProxy extends CommonProxy {
         // Unbound by default (KEY_NONE): the cancel key claims no binding until the player gives
         // it one in Controls, so it cannot clash with an existing save or another mod.
         ClientRegistry.registerKeyBinding(CancelCraftKey.KEY);
-        // Dev-only: RFG loads mod classes from build/classes/ but resources live in build/resources/,
-        // so FMLFolderResourcePack can't serve the lang file. DevLangInjector injects from the
-        // classpath instead. Production uses pack.mcmeta (pack_format 3) to avoid the
-        // LegacyV2Adapter wrapping that would otherwise transform en_us → en_US lookups.
-        if (FMLLaunchHandler.isDeobfuscatedEnvironment()) {
-            MinecraftForge.EVENT_BUS.register(new DevLangInjector());
-        }
     }
 
     /**
