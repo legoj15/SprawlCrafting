@@ -438,7 +438,14 @@ public final class Ae2Station implements StationStorages.Provider {
             offer.setStackSize(limit);
             IAEItemStack leftover = Platform.poweredInsert(energy, monitor, offer, source, Actionable.SIMULATE);
             long rest = leftover == null ? 0 : Math.max(0, leftover.getStackSize());
-            return Math.max(0, limit - rest);
+            // AE2 inserts in two passes over each priority group: first the storages that already hold
+            // (or are partitioned for) the item, then every storage, those again included. A SIMULATE
+            // insert stores nothing, so the second pass counts those storages' free space a second time:
+            // the answer can be up to twice the real room (seen in play: a batch sized on it dropped
+            // ten million items once the drives were nearly full). Real room R and the simulated S obey
+            // S <= 2R, so R >= ceil(S / 2): plan on that, never on S.
+            long simulated = Math.max(0, limit - rest);
+            return (simulated + 1) / 2;
         }
     }
 }
