@@ -88,12 +88,19 @@ own copy of the library under the same identifier and range, the bot-mod situati
 scanned, one was loaded, no split-package error. Fabric was not production-tested (Knot loads nested
 jars the same way in dev and production).
 
-### Windows trap: a lingering daemon locks the library jar
+### Build output: one directory per including build
 
-Every build that includes `solver-core` must run with `org.gradle.daemon=false` (root, legacy-1.16.5
-and forge-1.12.2 all do). A leftover daemon keeps `solver-core/build/libs/solver-<v>.jar` open and the
-next build fails with "Unable to delete file". forge-1.12.2 runs Gradle 9.5.1 while the others run
-9.5.0, so switching between them recompiles solver-core (task history is per Gradle version).
+Three separate Gradle builds include `solver-core` (root, legacy-1.16.5, forge-1.12.2). Each writes
+its own `solver-core/build/<including build's root project name>/`; only a standalone
+`-p solver-core` run (release script, JitPack) uses plain `solver-core/build/`. So the builds can run
+in parallel in one checkout and switching between them does not recompile the library (#22; verified
+2026-11-20 with all three building the jar at once).
+
+Before that split they shared one directory, and a leftover daemon from one build held
+`build/libs/solver-<v>.jar` open so the next failed with "Unable to delete file". That is why all four
+`gradle.properties` files set `org.gradle.daemon=false`. The lock reason is gone; the setting was left
+in place and turning the daemon back on is an unmeasured, separate decision (idle daemons at 3 GB
+each across many worktrees).
 
 Shading is only acceptable where no other mod nests the library: on Forge/NeoForge with JarJar, FML
 loads a nested plain jar as a JPMS module, and two mods that SHADE the same package crash the game as

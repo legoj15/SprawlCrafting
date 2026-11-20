@@ -9,6 +9,14 @@ plugins {
 group = "com.legoj15"
 version = property("solver_version") as String
 
+// Three separate Gradle builds include this one (the root Stonecutter build, legacy-1.16.5/ and
+// forge-1.12.2/). Each gets its own output directory, build/<including build's name>/, so they never
+// overwrite or lock each other's classes and jar (#22). Built alone (-p solver-core: the release
+// script, JitPack) it keeps plain build/.
+gradle.parent?.let { includer ->
+    layout.buildDirectory.set(layout.projectDirectory.dir("build/${includer.rootProject.name}"))
+}
+
 java {
     // Compile AND run the JUnit suite on a real Java 8 runtime: proves the library works on the
     // 1.12.2/1.16.5 runtimes, not just that it emits Java 8 class files.
