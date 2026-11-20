@@ -218,8 +218,13 @@ public final class CraftQueueManager {
                 }
                 if (stepDone || !bulk) {
                     // A step boundary, or the one craft a paced step does per due tick: report it now
-                    // (progress bar + step sound), exactly as every craft was reported before bursts.
-                    sync(player, job, CraftProgressPayload.State.CRAFTING, lastCrafted);
+                    // (progress bar + step sound), exactly as every craft was reported before bursts. A boundary
+                    // into another bulk step is the exception: batching finishes a bulk step in one tick and the
+                    // next one starts on the next tick, so syncing every boundary would pop the step sound up to
+                    // 20 times a second on a deep tree. It keeps the half-second cadence of a mid-step update.
+                    if (!(stepDone && bulk && job.isBulkStep()) || job.progressSyncDue()) {
+                        sync(player, job, CraftProgressPayload.State.CRAFTING, lastCrafted);
+                    }
                     return;
                 }
                 if (System.nanoTime() - deadline >= 0) {
