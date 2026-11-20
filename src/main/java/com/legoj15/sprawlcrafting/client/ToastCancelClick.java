@@ -47,7 +47,8 @@ public final class ToastCancelClick {
     /** Drops the rectangle — called when the toast hides and on disconnect. */
     public static void clear() {
         recorded = false;
-        swallowRelease = false;
+        // swallowRelease stays: the toast can hide while the consumed press is still held, and its
+        // release must still be dropped. The next left press resets it anyway.
     }
 
     /** True inside the recorded rectangle, and only while it is still fresh. */
