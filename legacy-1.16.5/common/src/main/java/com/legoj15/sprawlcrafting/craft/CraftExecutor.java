@@ -146,6 +146,12 @@ public final class CraftExecutor {
         if (plan == null) {
             return CraftResult.recipeGone();
         }
+        return applyOnce(player, plan);
+    }
+
+    /** {@link #craftOnce} from an already {@link #prepare}d plan (the batch's fallback reuses its own). */
+    private static CraftResult applyOnce(ServerPlayerEntity player, Plan plan) {
+        ProducedLedger<Item> ledger = plan.ledger;
         Assignment assignment = plan.assignment;
         if (assignment.missing != null) {
             return CraftResult.missing(describe(assignment.missing));
@@ -277,8 +283,10 @@ public final class CraftExecutor {
     }
 
     /**
-     * Up to {@code maxCrafts} crafts of the recipe as ONE operation, leaving exactly the inventory,
-     * station and ledger state that many successive {@link #craftOnce} calls would: one recipe
+     * Up to {@code maxCrafts} crafts of the recipe as ONE operation, leaving the same per-item totals
+     * (inventory plus station), ledger state and drops (none) as that many successive
+     * {@link #craftOnce} calls would; with a station open, outputs can be split differently between the
+     * inventory and the station (see {@link #batchPlan}). One recipe
      * lookup, one station open, one assignment scan, one station draw and one insert per output
      * instead of one of each per craft. The batch applies the very assignment {@link #prepare} just
      * made {@code k} times, which is only provably the same as k single crafts while
@@ -298,7 +306,7 @@ public final class CraftExecutor {
         }
         Batch batch = batchPlan(player, plan, maxCrafts);
         if (batch == null) {
-            return craftOnce(player, recipeId, ledger, stationPlanned);
+            return applyOnce(player, plan); // nothing has moved yet: the plan is still this craft's
         }
         return applyBatch(player, plan, batch);
     }
@@ -383,6 +391,22 @@ public final class CraftExecutor {
                 return null;
             }
         }
+        // The batch consumes a preferred item from any usable stack of it, by item alone; a single craft
+        // also asks the cell's ingredient (findPreferredSlot), which an NBT-matching ingredient can refuse
+        // for some stacks of the same item. Batch only when every such stack passes every cell taking it.
+        for (int n = 0; n < plan.ingredients.size(); n++) {
+            Ingredient ingredient = plan.ingredients.get(n);
+            if (ingredient == null || ingredient.isEmpty()) {
+                continue;
+            }
+            for (int i = 0; i < MAIN_SLOTS; i++) {
+                ItemStack stack = inventory.getItem(i);
+                if (!stack.isEmpty() && stack.getItem() == assignment.preferred[n] && usableAsIngredient(stack)
+                        && !ingredient.test(stack)) {
+                    return null;
+                }
+            }
+        }
         long k = SlotAssignment.stableRepeats(slots, item -> count(assignment.stock, item), use, made, maxCrafts);
         Map<Item, Long> usableInventory = new LinkedHashMap<>();
         for (Map.Entry<Item, Long> entry : use.entrySet()) {
@@ -402,16 +426,28 @@ public final class CraftExecutor {
             // Station draws and the ledger's counted picks are int-sized.
             k = Math.min(k, Integer.MAX_VALUE / perCraft);
         }
-        k = Math.min(k, Integer.MAX_VALUE / Math.max(1, result.getCount()));
-        if (plan.station == null) {
-            if (!remainders.isEmpty()) {
-                // Remainders could drop at the feet (the station is not open to catch them); one craft
-                // keeps that the per-craft case.
-                return null;
-            }
-            // Room for the result computed before the consumption that frees slots, so it is
-            // conservative: k crafts the results provably fit never drop any at the feet.
-            k = Math.min(k, outputRoom(inventory, result) / Math.max(1, result.getCount()));
+        int perResult = Math.max(1, result.getCount());
+        k = Math.min(k, Integer.MAX_VALUE / perResult);
+        for (long perCraft : remainders.values()) {
+            k = Math.min(k, Integer.MAX_VALUE / perCraft); // summed remainders are inserted as one int stack
+        }
+        if (plan.station == null && !remainders.isEmpty()) {
+            // Remainders could drop at the feet (no station is open to catch them); one craft keeps
+            // that the per-craft case.
+            return null;
+        }
+        // Output room: a batch never plans to drop anything at the feet (single crafts would spread such
+        // drops over many ticks; a batch would land them all in one). Room is the inventory's, read before
+        // the consumption that frees slots (conservative), plus what an open station says it would take.
+        // Empty slots count for the result only, so a remainder never counts a slot the result fills.
+        // With a station, outputs may end up split differently between inventory and station than single
+        // crafts would leave them (a single craft overflows before the next one frees a slot); the
+        // per-item totals across the two are the same, and nothing is dropped or lost.
+        k = Math.min(k, outputRoom(inventory, plan.station, result, k * perResult, true) / perResult);
+        for (Map.Entry<Item, Long> remainder : remainders.entrySet()) {
+            long perCraft = remainder.getValue();
+            k = Math.min(k, outputRoom(inventory, plan.station, new ItemStack(remainder.getKey()),
+                    k * perCraft, false) / perCraft);
         }
         if (k <= 1) {
             return null;
@@ -443,21 +479,32 @@ public final class CraftExecutor {
     }
 
     /**
-     * Room for {@code stack} in the 36 main slots: the free space of same item+tag stacks plus a full
-     * stack per empty slot. Read before any consumption, so slots the craft is about to empty do not
-     * count yet — an underestimate, which is the safe side for bounding a batch.
+     * Room for up to {@code needed} of {@code stack} (never reports more): the free space of same
+     * item+tag stacks in the 36 main slots, a full stack per empty slot when {@code emptySlots}, then
+     * what {@code station} (null for none) says it would accept of the rest. Read before any
+     * consumption, so slots the craft is about to empty do not count yet: an underestimate, the safe
+     * side for bounding a batch.
      */
-    private static long outputRoom(PlayerInventory inventory, ItemStack stack) {
+    private static long outputRoom(PlayerInventory inventory, StationStorage station, ItemStack stack,
+                                   long needed, boolean emptySlots) {
         long room = 0;
-        for (int i = 0; i < MAIN_SLOTS; i++) {
+        int max = Math.max(1, stack.getMaxStackSize());
+        for (int i = 0; i < MAIN_SLOTS && room < needed; i++) {
             ItemStack existing = inventory.getItem(i);
             if (existing.isEmpty()) {
-                room += stack.getMaxStackSize();
+                room += emptySlots ? max : 0;
             } else if (sameItemSameTag(existing, stack)) {
-                room += Math.max(0, stack.getMaxStackSize() - existing.getCount());
+                room += Math.max(0, max - existing.getCount());
             }
         }
-        return room;
+        if (room < needed && station != null) {
+            try {
+                room += station.acceptable(stack, needed - room);
+            } catch (RuntimeException | LinkageError e) {
+                Constants.LOG.warn("SprawlCrafting: crafting station insert check failed, not batching into it", e);
+            }
+        }
+        return Math.min(room, needed);
     }
 
     /** Applies a worked-out batch: the single-craft phases of {@link #craftOnce}, scaled to k crafts. */
@@ -567,14 +614,14 @@ public final class CraftExecutor {
 
     /** Returns {@code count} plain {@code item} to the station, overflowing into the inventory, then the feet. */
     private static void giveBack(ServerPlayerEntity player, StationStorage station, Item item, int count) {
-        int maxStack = new ItemStack(item).getMaxStackSize();
-        for (int left = count; left > 0; ) {
-            int chunk = Math.min(left, maxStack);
-            left -= chunk;
-            ItemStack rest = insertIntoStation(station, new ItemStack(item, chunk));
-            if (!rest.isEmpty()) {
-                insertIntoMainInventory(player, rest, null);
-            }
+        if (count <= 0) {
+            return;
+        }
+        // One insert for the whole count (a batch's share can be millions; StationStorage takes it by
+        // count); insertIntoMainInventory splits whatever the station refuses into normal stacks.
+        ItemStack rest = insertIntoStation(station, new ItemStack(item, count));
+        if (!rest.isEmpty()) {
+            insertIntoMainInventory(player, rest, null);
         }
     }
 
@@ -1281,7 +1328,7 @@ public final class CraftExecutor {
         // A batch's stack can be far over the max stack size: drop it as ordinary stacks, never one
         // oversized item entity.
         while (!stack.isEmpty()) {
-            ItemStack chunk = copyWithCount(stack, Math.min(stack.getCount(), stack.getMaxStackSize()));
+            ItemStack chunk = copyWithCount(stack, Math.min(stack.getCount(), Math.max(1, stack.getMaxStackSize())));
             stack.shrink(chunk.getCount());
             player.drop(chunk, false);
         }

@@ -282,8 +282,9 @@ public final class CraftJob {
     }
 
     /**
-     * Whether a full-grid step should run the full crafting-table scan before this craft. Always true for a
-     * step's first craft (it waited a full half second), then once per half second while a bulk step
+     * Whether a full-grid step should run the full crafting-table scan before this craft. True for a step's
+     * first craft when that step waited its half second (a bulk step that follows another bulk step does
+     * not wait, and keeps the previous step's scan cadence), then once per half second while a bulk step
      * keeps bursting every tick: the scan is the expensive part, and the pre-burst cadence checked it
      * once per half second too. Between scans the burst re-validates the table the scan found with the
      * cheap {@code CraftingTableReach.isStillInReach} instead.

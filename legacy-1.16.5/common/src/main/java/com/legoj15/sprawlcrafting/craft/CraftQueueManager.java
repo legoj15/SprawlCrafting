@@ -151,7 +151,8 @@ public final class CraftQueueManager {
     /**
      * Performs the crafts due this tick: one for a paced step; for a bulk one, batches of as many
      * crafts as fit before {@code deadline} or the step boundary (there is no count cap: the time
-     * budget alone bounds the tick). Each batch is validated and applied by
+     * budget bounds the tick, checked between batches; one batch is a single unit of work whose cost
+     * is a fixed number of storage calls, not proportional to its crafts). Each batch is validated and applied by
      * {@link CraftExecutor#craftBatch} against the live inventory — one recipe lookup, slot scan and
      * station draw for many crafts, applying an assignment only while it provably equals that many
      * single crafts, and falling back to a single {@link CraftExecutor#craftOnce} otherwise. The

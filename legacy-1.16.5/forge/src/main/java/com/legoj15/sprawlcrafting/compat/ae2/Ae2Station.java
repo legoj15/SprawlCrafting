@@ -427,5 +427,18 @@ public final class Ae2Station implements StationStorages.Provider {
             rest.setCount((int) leftover.getStackSize());
             return rest;
         }
+
+        @Override
+        public long acceptable(ItemStack stack, long limit) {
+            // insert()'s own checks and power-capped move, simulated for limit items.
+            IAEItemStack offer = stack.isEmpty() || limit <= 0 ? null : channel.createStack(stack);
+            if (offer == null || !plain(channel, offer) || !shown(filter, offer)) {
+                return 0;
+            }
+            offer.setStackSize(limit);
+            IAEItemStack leftover = Platform.poweredInsert(energy, monitor, offer, source, Actionable.SIMULATE);
+            long rest = leftover == null ? 0 : Math.max(0, leftover.getStackSize());
+            return Math.max(0, limit - rest);
+        }
     }
 }

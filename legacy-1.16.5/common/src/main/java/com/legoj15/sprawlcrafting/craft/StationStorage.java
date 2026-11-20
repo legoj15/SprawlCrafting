@@ -50,4 +50,11 @@ public interface StationStorage {
      * @return what was not accepted ({@link ItemStack#EMPTY} when all of it went in)
      */
     ItemStack insert(ItemStack stack);
+
+    /**
+     * How many of {@code stack}'s item and tag {@link #insert} would accept right now, at most
+     * {@code limit} (simulated, no change). A batched craft bounds its output by this so it never plans
+     * to drop items at the player's feet.
+     */
+    long acceptable(ItemStack stack, long limit);
 }
