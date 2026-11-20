@@ -472,11 +472,13 @@ public final class Ae2Station implements StationStorages.Provider {
             // the answer can be up to twice the real room (seen on 1.16.5's AE2, which inserts the same
             // way: a batch sized on it dropped ten million items once the drives were nearly full; the
             // same two-pass insert is assumed here, and halving is safe either way). Real room R and the
-            // simulated S obey
-            // S <= 2R, so R >= ceil(S / 2): plan on that, never on S.
-            long simulated = Math.max(0, StorageHelper.poweredInsert(energy, storage, key, limit, source,
+            // simulated S obey S <= 2R, so R >= ceil(S / 2): plan on that, never on S. Halving a probe of
+            // the request itself would cap every answer at half of it, even on a network with ample room;
+            // probing twice the request (limit is int-bounded by every caller, so it fits) keeps that case
+            // exact and only underestimates when the network is nearly full.
+            long simulated = Math.max(0, StorageHelper.poweredInsert(energy, storage, key, 2 * limit, source,
                     Actionable.SIMULATE));
-            return (simulated + 1) / 2;
+            return Math.min(limit, (simulated + 1) / 2);
         }
     }
 }
