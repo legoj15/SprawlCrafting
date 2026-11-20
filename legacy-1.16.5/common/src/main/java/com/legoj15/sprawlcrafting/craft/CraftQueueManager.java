@@ -85,9 +85,13 @@ public final class CraftQueueManager {
      * {@link CraftJob#TICKS_PER_STEP} ticks; a bulk step performs a burst of crafts
      * (bounded only by time: {@link CraftJob#BURST_BUDGET_NANOS}, and within
      * its share of the {@link CraftJob#SERVER_TICK_BURST_BUDGET_NANOS} all players split, see
-     * {@link BurstBudget}) every tick until it is done. Each craft is validated and applied by
-     * {@link CraftExecutor#craftOnce} against the live inventory, exactly as a lone craft is. A burst ends
-     * at a step boundary so the next step still waits its half second.
+     * {@link BurstBudget}) every tick until it is done. Each craft is validated against the live
+     * inventory, exactly as a lone craft is: a paced craft one at a time through
+     * {@link CraftExecutor#craftOnce}, a bulk burst in batches through
+     * {@link CraftExecutor#craftBatch}, each batch an assignment provably equal to that many single
+     * crafts (a single craft otherwise). A burst ends at a step boundary so the next step still
+     * waits its half second — except into another bulk step, which continues on the next tick
+     * (see {@link CraftJob#onCraftsPerformed(int)}).
      */
     public static void tick(ServerPlayerEntity player) {
         CraftJob job = ACTIVE.get(player.getUUID());
@@ -145,10 +149,14 @@ public final class CraftQueueManager {
     }
 
     /**
-     * Performs the crafts due this tick: one for a paced step; for a bulk one, as many as fit before
-     * {@code deadline} or the step boundary (there is no count cap: the time budget alone bounds the
-     * tick). The clock is checked after a craft, never before, so a job always makes at least one
-     * craft of progress even when its {@code deadline} (nanoTime) has already passed.
+     * Performs the crafts due this tick: one for a paced step; for a bulk one, batches of as many
+     * crafts as fit before {@code deadline} or the step boundary (there is no count cap: the time
+     * budget alone bounds the tick). Each batch is validated and applied by
+     * {@link CraftExecutor#craftBatch} against the live inventory — one recipe lookup, slot scan and
+     * station draw for many crafts, applying an assignment only while it provably equals that many
+     * single crafts, and falling back to a single {@link CraftExecutor#craftOnce} otherwise. The
+     * clock is checked after a batch, never before, so a job always makes at least one craft of
+     * progress even when its {@code deadline} (nanoTime) has already passed.
      */
     private static void craftBurst(ServerPlayerEntity player, CraftJob job, boolean bulk, long deadline) {
         ItemStack lastCrafted = ItemStack.EMPTY;
@@ -176,8 +184,10 @@ public final class CraftQueueManager {
                 }
                 // FALLBACK: couldn't hand off (recipe locked, grid uncleanable, …) — auto-craft below.
             }
-            CraftExecutor.CraftResult result = CraftExecutor.craftOnce(player, job.currentStep().recipeId(),
-                    job.produced(), job.stationDependent());
+            CraftExecutor.CraftResult result = bulk
+                    ? craftBulk(player, job)
+                    : CraftExecutor.craftOnce(player, job.currentStep().recipeId(),
+                            job.produced(), job.stationDependent());
             switch (result.kind()) {
                 case SUCCESS:
                     if (result.usedStation()) {
@@ -187,7 +197,7 @@ public final class CraftQueueManager {
                         job.setStationDependent(true);
                     }
                     lastCrafted = result.crafted();
-                    boolean stepDone = job.onCraftPerformed();
+                    boolean stepDone = job.onCraftsPerformed(result.crafts());
                     if (job.isFinished()) {
                         ACTIVE.remove(player.getUUID());
                         sync(player, job, CraftProgressPacket.State.FINISHED, lastCrafted);
@@ -237,6 +247,26 @@ public final class CraftQueueManager {
         if (job.progressSyncDue()) {
             sync(player, job, CraftProgressPacket.State.CRAFTING, lastCrafted);
         }
+    }
+
+    /**
+     * One batched craft call for a bulk step: as many crafts as the step has left, except on the
+     * final step one fewer when that leaves at least 1, so the job's very last craft still goes
+     * through the grid hand-off check one craft at a time (see the top of {@link #craftBurst}). A
+     * step with a single craft left, batch or not, is a plain {@link CraftExecutor#craftOnce} —
+     * {@link CraftExecutor#craftBatch} would only fall back to it anyway.
+     */
+    private static CraftExecutor.CraftResult craftBulk(ServerPlayerEntity player, CraftJob job) {
+        int maxCrafts = job.craftsLeftInStep();
+        if (job.isFinalStep() && maxCrafts > 1) {
+            maxCrafts--;
+        }
+        if (maxCrafts <= 1) {
+            return CraftExecutor.craftOnce(player, job.currentStep().recipeId(),
+                    job.produced(), job.stationDependent());
+        }
+        return CraftExecutor.craftBatch(player, job.currentStep().recipeId(),
+                job.produced(), job.stationDependent(), maxCrafts);
     }
 
     /**

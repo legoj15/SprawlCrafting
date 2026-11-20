@@ -27,7 +27,11 @@ import net.minecraft.item.ItemStack;
  * once, then runs in bursts of as many crafts as fit in
  * {@link #BURST_BUDGET_NANOS} of server time (and all players' bursts together at most
  * {@link #SERVER_TICK_BURST_BUDGET_NANOS}), one burst per tick, until the step is done: roughly 5-16
- * seconds instead of the ~55 minutes one craft per half second would take.
+ * seconds instead of the ~55 minutes one craft per half second would take. A burst applies its crafts
+ * in batches ({@code CraftExecutor#craftBatch}) wherever one assignment provably covers many crafts;
+ * at the boundary between two bulk steps the next step is due on the very next tick rather than
+ * waiting another half second, so a compression chain runs as one long burst split only by the
+ * time budget.
  */
 public final class CraftJob {
 
@@ -159,6 +163,11 @@ public final class CraftJob {
         return craftsDoneInStep == currentStep().crafts() - 1;
     }
 
+    /** How many crafts of the current step are still to run ({@link #onCraftsPerformed} accepts at most this many). */
+    public int craftsLeftInStep() {
+        return currentStep().crafts() - craftsDoneInStep;
+    }
+
     /**
      * True when the current step has more than {@link #BULK_THRESHOLD} crafts and so runs in bursts;
      * false for a paced step (one craft per {@link #TICKS_PER_STEP}). Read before
@@ -193,8 +202,8 @@ public final class CraftJob {
      * Advances the job timer by one tick.
      *
      * @return true if a craft is due now: one craft for a paced step, a burst bounded by
-     *         {@link #BURST_BUDGET_NANOS} for a bulk step (the caller calls {@link #onCraftPerformed()}
-     *         after each)
+     *         {@link #BURST_BUDGET_NANOS} for a bulk step (the caller records what it applied with
+     *         {@link #onCraftsPerformed(int)})
      */
     public boolean tick() {
         ticksSinceSync++;
@@ -218,15 +227,38 @@ public final class CraftJob {
      *
      * @return true if that craft completed the step. The half-second wait restarts after every craft of
      *         a paced step and only at the step boundary of a bulk step (whose remaining crafts stay due,
-     *         so the next burst runs on the following tick).
+     *         so the next burst runs on the following tick — or immediately so at a bulk-to-bulk
+     *         boundary, see {@link #onCraftsPerformed(int)}).
      */
     public boolean onCraftPerformed() {
+        return onCraftsPerformed(1);
+    }
+
+    /**
+     * Called after {@code n} crafts of the current step were successfully applied to the inventory in
+     * one batched operation ({@code CraftExecutor#craftBatch}): the same semantics as {@code n} calls
+     * of {@link #onCraftPerformed()}, recorded in one go.
+     *
+     * @param n how many crafts were applied, 1..{@link #craftsLeftInStep()}
+     * @return true if those crafts completed the step. The half-second wait restarts after every craft
+     *         of a paced step and at a step boundary — except the boundary of a bulk step whose next
+     *         step is bulk too, where the next step is due on the very next tick
+     *         ({@code progressTicks = TICKS_PER_STEP - 1}) instead of restarting the half-second wait
+     *         between two parts of what is really one long burst.
+     */
+    public boolean onCraftsPerformed(int n) {
+        if (n < 1 || n > craftsLeftInStep()) {
+            throw new IllegalArgumentException("crafts performed must be in [1, " + craftsLeftInStep() + "], got " + n);
+        }
         boolean paced = !isBulkStep();
-        if (++craftsDoneInStep >= currentStep().crafts()) {
+        craftsDoneInStep += n;
+        if (craftsDoneInStep >= currentStep().crafts()) {
+            boolean nextBulkContinues = isBulkStep() && stepIndex + 1 < steps.size()
+                    && steps.get(stepIndex + 1).crafts() > BULK_THRESHOLD;
             craftsBeforeStep = saturatingAdd(craftsBeforeStep, craftsDoneInStep);
             craftsDoneInStep = 0;
             stepIndex++;
-            progressTicks = 0;
+            progressTicks = nextBulkContinues ? TICKS_PER_STEP - 1 : 0;
             return true;
         }
         if (paced) {

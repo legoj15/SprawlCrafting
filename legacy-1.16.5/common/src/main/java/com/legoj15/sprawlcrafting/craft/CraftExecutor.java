@@ -56,20 +56,23 @@ public final class CraftExecutor {
         private final ItemStack crafted;
         private final ITextComponent missing;
         private final boolean usedStation;
+        private final int crafts;
 
-        private CraftResult(Kind kind, ItemStack crafted, ITextComponent missing, boolean usedStation) {
+        private CraftResult(Kind kind, ItemStack crafted, ITextComponent missing, boolean usedStation,
+                            int crafts) {
             this.kind = kind;
             this.crafted = crafted;
             this.missing = missing;
             this.usedStation = usedStation;
+            this.crafts = crafts;
         }
 
         static CraftResult missing(ITextComponent missing) {
-            return new CraftResult(Kind.MISSING_INGREDIENT, ItemStack.EMPTY, missing, false);
+            return new CraftResult(Kind.MISSING_INGREDIENT, ItemStack.EMPTY, missing, false, 0);
         }
 
         static CraftResult recipeGone() {
-            return new CraftResult(Kind.RECIPE_GONE, ItemStack.EMPTY, null, false);
+            return new CraftResult(Kind.RECIPE_GONE, ItemStack.EMPTY, null, false, 0);
         }
 
         public Kind kind() {
@@ -92,6 +95,11 @@ public final class CraftExecutor {
          */
         public boolean usedStation() {
             return usedStation;
+        }
+
+        /** How many crafts this result applied: 1 per {@link #craftOnce}, k for a batch, 0 for failures. */
+        public int crafts() {
+            return crafts;
         }
     }
 
@@ -131,35 +139,19 @@ public final class CraftExecutor {
      */
     public static CraftResult craftOnce(ServerPlayerEntity player, ResourceLocation recipeId,
                                         ProducedLedger<Item> ledger, boolean stationPlanned) {
-        IRecipe<?> recipe = RecipeIds.byId(player.getServer().getRecipeManager(), recipeId).orElse(null);
-        if (!(recipe instanceof ICraftingRecipe)) {
+        // Phase 1: look the recipe up and match every ingredient slot to an inventory slot (or a
+        // crafting station's storage) without mutating, so a shortfall discovered at slot N leaves
+        // slots 1..N-1 untouched.
+        Plan plan = prepare(player, recipeId, ledger, stationPlanned);
+        if (plan == null) {
             return CraftResult.recipeGone();
         }
-        ItemStack result = RecipeIds.resultOf(recipe);
-        if (result.isEmpty()) {
-            return CraftResult.recipeGone();
-        }
-
-        // Phase 1: match every ingredient slot to an inventory slot (or a crafting station's storage)
-        // without mutating, so a shortfall discovered at slot N leaves slots 1..N-1 untouched.
-        PlayerInventory inventory = player.inventory;
-        List<Ingredient> ingredients = recipe.getIngredients();
-        // A crafting station open right now (AE2 Crafting Terminal) adds its storage to the pool. It is
-        // re-opened for every craft, so a closed or offline station stops being drawn from at once.
-        final StationStorage station = StationStorages.open(player);
-        Assignment assignment = null;
-        if (station == null || !stationPlanned) {
-            assignment = assign(inventory, ingredients, ledger, null);
-            if (assignment.missing != null && station != null) {
-                assignment = null; // the inventory alone fell short: let the open station supply the rest
-            }
-        }
-        if (assignment == null) {
-            assignment = assign(inventory, ingredients, ledger, station);
-        }
+        Assignment assignment = plan.assignment;
         if (assignment.missing != null) {
             return CraftResult.missing(describe(assignment.missing));
         }
+        PlayerInventory inventory = player.inventory;
+        StationStorage station = plan.station;
 
         // Phase 2a: the station's share first, all or nothing. Its storage can change under us (another
         // player or automation drained it since the simulated check): a short extraction gives back
@@ -220,10 +212,345 @@ public final class CraftExecutor {
         for (ItemStack remainder : remainders) {
             storedInStation |= insertIntoMainInventory(player, remainder, station);
         }
-        ItemStack crafted = result.copy();
-        storedInStation |= insertIntoMainInventory(player, result.copy(), station);
+        ItemStack crafted = plan.result.copy();
+        storedInStation |= insertIntoMainInventory(player, plan.result.copy(), station);
         ledger.produced(crafted.getItem(), crafted.getCount());
-        return new CraftResult(CraftResult.Kind.SUCCESS, crafted, null, !stationTakes.isEmpty() || storedInStation);
+        return new CraftResult(CraftResult.Kind.SUCCESS, crafted, null, !stationTakes.isEmpty() || storedInStation, 1);
+    }
+
+    /**
+     * Phase 1 of both craft paths: recipe lookup, station open and the two-pass assignment —
+     * everything up to (but not including) the first mutation of inventory or station, so both a
+     * single craft and a batch start from the very same assignment a {@link #craftOnce} would make
+     * right now. Returns null when the recipe is gone; otherwise the assignment's {@code missing}
+     * carries the first ingredient nothing could satisfy, if any.
+     */
+    private static Plan prepare(ServerPlayerEntity player, ResourceLocation recipeId,
+                                ProducedLedger<Item> ledger, boolean stationPlanned) {
+        IRecipe<?> recipe = RecipeIds.byId(player.getServer().getRecipeManager(), recipeId).orElse(null);
+        if (!(recipe instanceof ICraftingRecipe)) {
+            return null;
+        }
+        ItemStack result = RecipeIds.resultOf(recipe);
+        if (result.isEmpty()) {
+            return null;
+        }
+        PlayerInventory inventory = player.inventory;
+        List<Ingredient> ingredients = recipe.getIngredients();
+        // A crafting station open right now (AE2 Crafting Terminal) adds its storage to the pool. It is
+        // re-opened for every craft, so a closed or offline station stops being drawn from at once.
+        final StationStorage station = StationStorages.open(player);
+        Assignment assignment = null;
+        if (station == null || !stationPlanned) {
+            assignment = assign(inventory, ingredients, ledger, null);
+            if (assignment.missing != null && station != null) {
+                assignment = null; // the inventory alone fell short: let the open station supply the rest
+            }
+        }
+        if (assignment == null) {
+            assignment = assign(inventory, ingredients, ledger, station);
+        }
+        return new Plan(recipeId, ledger, stationPlanned, result, ingredients, station, assignment);
+    }
+
+    /** What {@link #prepare} looked up: the inputs plus the assignment both craft paths start from. */
+    private static final class Plan {
+        final ResourceLocation recipeId;
+        final ProducedLedger<Item> ledger;
+        final boolean stationPlanned;
+        final ItemStack result;
+        final List<Ingredient> ingredients;
+        final StationStorage station;
+        final Assignment assignment;
+
+        Plan(ResourceLocation recipeId, ProducedLedger<Item> ledger, boolean stationPlanned,
+             ItemStack result, List<Ingredient> ingredients,
+             StationStorage station, Assignment assignment) {
+            this.recipeId = recipeId;
+            this.ledger = ledger;
+            this.stationPlanned = stationPlanned;
+            this.result = result;
+            this.ingredients = ingredients;
+            this.station = station;
+            this.assignment = assignment;
+        }
+    }
+
+    /**
+     * Up to {@code maxCrafts} crafts of the recipe as ONE operation, leaving exactly the inventory,
+     * station and ledger state that many successive {@link #craftOnce} calls would: one recipe
+     * lookup, one station open, one assignment scan, one station draw and one insert per output
+     * instead of one of each per craft. The batch applies the very assignment {@link #prepare} just
+     * made {@code k} times, which is only provably the same as k single crafts while
+     * {@link SlotAssignment#stableRepeats} says the choice holds and every cell took its preferred
+     * item; any case that cannot be proven — a fallback pick, a ledger-held candidate stack,
+     * remainders with no station open, output that would not fit — runs a plain
+     * {@link #craftOnce} (k = 1) instead, with exactly its result, message and partial progress.
+     */
+    public static CraftResult craftBatch(ServerPlayerEntity player, ResourceLocation recipeId,
+                                         ProducedLedger<Item> ledger, boolean stationPlanned, int maxCrafts) {
+        Plan plan = prepare(player, recipeId, ledger, stationPlanned);
+        if (plan == null) {
+            return CraftResult.recipeGone();
+        }
+        if (plan.assignment.missing != null) {
+            return CraftResult.missing(describe(plan.assignment.missing));
+        }
+        Batch batch = batchPlan(player, plan, maxCrafts);
+        if (batch == null) {
+            return craftOnce(player, recipeId, ledger, stationPlanned);
+        }
+        return applyBatch(player, plan, batch);
+    }
+
+    /** A batched craft worked out ahead of applying it. */
+    private static final class Batch {
+        /** How many crafts this batch applies (at least 2). */
+        final int crafts;
+        /** Per-item consumption of ONE craft (one of every non-blank cell's preferred item). */
+        final Map<Item, Long> use;
+        /** Per-craft crafting remainders, by item. */
+        final Map<Item, Long> remainders;
+        /** Usable counts of the used items in the 36 main slots, read before anything moved. */
+        final Map<Item, Long> usableInventory;
+        /** The station's share of the whole batch (empty when the inventory covers it all). */
+        final Map<Item, Integer> stationTakes;
+
+        Batch(int crafts, Map<Item, Long> use, Map<Item, Long> remainders,
+              Map<Item, Long> usableInventory, Map<Item, Integer> stationTakes) {
+            this.crafts = crafts;
+            this.use = use;
+            this.remainders = remainders;
+            this.usableInventory = usableInventory;
+            this.stationTakes = stationTakes;
+        }
+    }
+
+    /**
+     * Works out the batch of up to {@code maxCrafts} crafts, or null when this call may not batch
+     * (k = 1: a plain {@link #craftOnce}). k is the minimum of the caller's ceiling, the supply of
+     * every ingredient, {@link SlotAssignment#stableRepeats} over the assignment's own stock view,
+     * int safety and — with no station open to catch overflow — the room the result has in the 36
+     * main slots. Every cap is chosen so the batch's final state is exactly k single crafts'.
+     */
+    private static Batch batchPlan(ServerPlayerEntity player, Plan plan, int maxCrafts) {
+        if (maxCrafts <= 1 || !plan.assignment.preferredFilled) {
+            return null; // a fallback pick (any usable stack, any station alternative, a ledger-admitted
+            // refused stack) makes the per-craft path's picks order-dependent; do not batch them.
+        }
+        Assignment assignment = plan.assignment;
+        PlayerInventory inventory = player.inventory;
+        // One craft consumes one of every non-blank cell's preferred item (eligibility checked each
+        // cell got exactly that) and is credited the result plus one remainder per consumed cell.
+        Map<Item, Long> use = new LinkedHashMap<>();
+        List<List<Item>> slots = new ArrayList<>();
+        Set<Item> candidates = new HashSet<>();
+        for (int n = 0; n < plan.ingredients.size(); n++) {
+            Ingredient ingredient = plan.ingredients.get(n);
+            if (ingredient == null || ingredient.isEmpty()) {
+                continue;
+            }
+            List<Item> alternatives = CraftPlanner.slotAlternatives(ingredient);
+            slots.add(alternatives);
+            candidates.addAll(alternatives);
+            use.merge(assignment.preferred[n], 1L, Long::sum);
+        }
+        ItemStack result = plan.result;
+        Map<Item, Long> remainders = new LinkedHashMap<>();
+        for (Map.Entry<Item, Long> entry : use.entrySet()) {
+            if (entry.getKey().hasCraftingRemainingItem()) {
+                remainders.merge(entry.getKey().getCraftingRemainingItem(), entry.getValue(), Long::sum);
+            }
+        }
+        Map<Item, Long> made = new LinkedHashMap<>(remainders);
+        made.merge(result.getItem(), (long) result.getCount(), Long::sum);
+        // A craft credited an item it also consumes (its own result in a slot, or a remainder equal to a
+        // candidate) cannot batch: each single craft applies and inserts its output BEFORE the next craft
+        // assigns, so craft i draws stock (and charges the ledger) that craft i-1 just put back — an
+        // interleave one counted application cannot reproduce exactly.
+        for (Item credited : made.keySet()) {
+            if (use.containsKey(credited)) {
+                return null;
+            }
+        }
+        // No stack of a candidate item may be filter-refused: the ledger then holds counts against
+        // items the batch consumes, and charging k crafts' picks in one go would not match k per-craft
+        // charges against those counts. (The lookups above ran before anything was drawn, so a
+        // throwing remainder mod cannot strand items here.)
+        for (int i = 0; i < MAIN_SLOTS; i++) {
+            ItemStack stack = inventory.getItem(i);
+            if (!stack.isEmpty() && !usableAsIngredient(stack) && candidates.contains(stack.getItem())) {
+                return null;
+            }
+        }
+        long k = SlotAssignment.stableRepeats(slots, item -> count(assignment.stock, item), use, made, maxCrafts);
+        Map<Item, Long> usableInventory = new LinkedHashMap<>();
+        for (Map.Entry<Item, Long> entry : use.entrySet()) {
+            Item item = entry.getKey();
+            long perCraft = entry.getValue();
+            // The station's stock counts only when its pool was part of this assignment, so a batch of
+            // a non-station-planned job the inventory covers never touches the network. The limit is
+            // Integer.MAX_VALUE (StationPool.count's precedent): the int caps below bound k*perCraft
+            // anyway, so anything a bigger limit could report is never reachable.
+            long inInventory = usableCount(inventory, item);
+            long available = inInventory;
+            if (assignment.stationPooled) {
+                available += plan.station.available(item, Integer.MAX_VALUE);
+            }
+            usableInventory.put(item, inInventory);
+            k = Math.min(k, available / perCraft);
+            // Station draws and the ledger's counted picks are int-sized.
+            k = Math.min(k, Integer.MAX_VALUE / perCraft);
+        }
+        k = Math.min(k, Integer.MAX_VALUE / Math.max(1, result.getCount()));
+        if (plan.station == null) {
+            if (!remainders.isEmpty()) {
+                // Remainders could drop at the feet (the station is not open to catch them); one craft
+                // keeps that the per-craft case.
+                return null;
+            }
+            // Room for the result computed before the consumption that frees slots, so it is
+            // conservative: k crafts the results provably fit never drop any at the feet.
+            k = Math.min(k, outputRoom(inventory, result) / Math.max(1, result.getCount()));
+        }
+        if (k <= 1) {
+            return null;
+        }
+        int crafts = (int) k;
+        Map<Item, Integer> stationTakes = new LinkedHashMap<>();
+        for (Map.Entry<Item, Long> entry : use.entrySet()) {
+            // Inventory first, exactly as the per-cell order takes: the station covers only what the
+            // inventory cannot supply of the whole batch.
+            long need = (long) crafts * entry.getValue();
+            long fromInventory = Math.min(usableInventory.get(entry.getKey()), need);
+            if (need > fromInventory) {
+                stationTakes.put(entry.getKey(), (int) (need - fromInventory));
+            }
+        }
+        return new Batch(crafts, use, remainders, usableInventory, stationTakes);
+    }
+
+    /** How many items the 36 main slots hold in stacks {@link #usableAsIngredient} accepts. */
+    private static long usableCount(PlayerInventory inventory, Item item) {
+        long count = 0;
+        for (int i = 0; i < MAIN_SLOTS; i++) {
+            ItemStack stack = inventory.getItem(i);
+            if (!stack.isEmpty() && stack.getItem() == item && usableAsIngredient(stack)) {
+                count += stack.getCount();
+            }
+        }
+        return count;
+    }
+
+    /**
+     * Room for {@code stack} in the 36 main slots: the free space of same item+tag stacks plus a full
+     * stack per empty slot. Read before any consumption, so slots the craft is about to empty do not
+     * count yet — an underestimate, which is the safe side for bounding a batch.
+     */
+    private static long outputRoom(PlayerInventory inventory, ItemStack stack) {
+        long room = 0;
+        for (int i = 0; i < MAIN_SLOTS; i++) {
+            ItemStack existing = inventory.getItem(i);
+            if (existing.isEmpty()) {
+                room += stack.getMaxStackSize();
+            } else if (sameItemSameTag(existing, stack)) {
+                room += Math.max(0, stack.getMaxStackSize() - existing.getCount());
+            }
+        }
+        return room;
+    }
+
+    /** Applies a worked-out batch: the single-craft phases of {@link #craftOnce}, scaled to k crafts. */
+    private static CraftResult applyBatch(ServerPlayerEntity player, Plan plan, Batch batch) {
+        PlayerInventory inventory = player.inventory;
+        StationStorage station = plan.station;
+        // Phase 2a: the station's share first, all or nothing, exactly as one craft's draw. A short
+        // draw has been given back; the per-craft path then reports the item missing itself, so hand
+        // the whole craft over to it rather than inventing a batch-specific message.
+        Map<Item, Integer> stationTakes = batch.stationTakes;
+        if (!stationTakes.isEmpty() && drawFromStation(player, station, stationTakes) != null) {
+            return craftOnce(player, plan.recipeId, plan.ledger, plan.stationPlanned);
+        }
+        // Phase 2b: apply. The consumption is the same as k per-craft passes: per item, the batch's
+        // share drains usable stacks in slot order, the order findPreferredSlot walks.
+        try {
+            for (Map.Entry<Item, Long> entry : batch.use.entrySet()) {
+                long toConsume = Math.min(batch.usableInventory.get(entry.getKey()),
+                        (long) batch.crafts * entry.getValue());
+                for (int i = 0; i < MAIN_SLOTS && toConsume > 0; i++) {
+                    ItemStack stack = inventory.getItem(i);
+                    if (stack.isEmpty() || stack.getItem() != entry.getKey() || !usableAsIngredient(stack)) {
+                        continue;
+                    }
+                    int take = (int) Math.min(toConsume, stack.getCount());
+                    stack.shrink(take);
+                    toConsume -= take;
+                    if (stack.isEmpty()) {
+                        inventory.setItem(i, ItemStack.EMPTY);
+                    }
+                }
+            }
+        } catch (Throwable failure) {
+            // Any Throwable, even an Error, as in craftOnce: the drawn share is real either way.
+            for (Map.Entry<Item, Integer> take : stationTakes.entrySet()) {
+                try {
+                    giveBack(player, station, take.getKey(), take.getValue());
+                } catch (Throwable giveBackFailure) {
+                    failure.addSuppressed(giveBackFailure);
+                }
+            }
+            throw failure;
+        }
+        inventory.setChanged();
+        // The ledger charge: k crafts' picks counted in one tally. Eligibility left no refused
+        // candidate stack, so every pick is plain and one counted charge of k*m equals k charges of m.
+        if (plan.ledger != null) {
+            LedgerTally<Item> tally = new LedgerTally<>();
+            countRefused(inventory, tally);
+            tally.admissible(plan.ledger);
+            for (Map.Entry<Item, Long> entry : batch.use.entrySet()) {
+                tally.picked(entry.getKey(), false, (int) ((long) batch.crafts * entry.getValue()));
+            }
+            tally.chargeTo(plan.ledger);
+        }
+        // Results and remainders go to the main inventory as always; with a station open, what would
+        // otherwise drop at the player's feet goes into its storage first (craftOnce's order:
+        // remainders, then the result).
+        boolean storedInStation = false;
+        for (Map.Entry<Item, Long> remainder : batch.remainders.entrySet()) {
+            storedInStation |= insertCopies(player, station, new ItemStack(remainder.getKey()),
+                    (long) batch.crafts * remainder.getValue());
+        }
+        ItemStack crafted = plan.result.copy();
+        storedInStation |= insertCopies(player, station, plan.result, (long) batch.crafts * crafted.getCount());
+        if (plan.ledger != null) {
+            plan.ledger.produced(crafted.getItem(), (long) batch.crafts * crafted.getCount());
+        }
+        return new CraftResult(CraftResult.Kind.SUCCESS, crafted, null,
+                !stationTakes.isEmpty() || storedInStation, batch.crafts);
+    }
+
+    /**
+     * Inserts {@code count} copies of {@code template} (its item and tag) in stacks of at most its
+     * max stack size, through {@link #insertIntoMainInventory} so overflow goes to the open station,
+     * then the feet.
+     *
+     * @return whether the station took any of it
+     */
+    private static boolean insertCopies(ServerPlayerEntity player, StationStorage station,
+                                        ItemStack template, long count) {
+        boolean stored = false;
+        for (long left = count; left > 0; ) {
+            int chunk = (int) Math.min(left, template.getMaxStackSize());
+            left -= chunk;
+            stored |= insertIntoMainInventory(player, copyWithCount(template, chunk), station);
+        }
+        return stored;
+    }
+
+    private static long count(Map<Item, Integer> stock, Item item) {
+        Integer have = stock.get(item);
+        return have == null ? 0 : have.longValue();
     }
 
     /**
@@ -656,7 +983,11 @@ public final class CraftExecutor {
         }
         StationPool pool = station == null ? null : new StationPool(station);
         Map<Item, Integer> taken = pool == null ? Collections.<Item, Integer>emptyMap() : pool.taken;
-        Item[] preferred = preferredItems(inventory, ingredients, pool);
+        Map<Item, Integer> stock = new HashMap<>();
+        Item[] preferred = preferredItems(inventory, ingredients, pool, stock);
+        // Whether every non-blank cell took its preferred item straight from an inventory stack or the
+        // station pool (no fallback): only then is one assignment provably k crafts' worth of picks.
+        boolean preferredFilled = true;
         for (int n = 0; n < slots.length; n++) {
             Ingredient ingredient = ingredients.get(n);
             if (ingredient == null || ingredient.isEmpty()) {
@@ -666,7 +997,15 @@ public final class CraftExecutor {
             int slot;
             Item fromStation = null;
             if (pool == null) {
-                slot = findMatchingSlot(inventory, ingredient, preferred[n], reserved, admitting, ledgerTakes);
+                if (preferred[n] != null) {
+                    slot = findPreferredSlot(inventory, ingredient, preferred[n], reserved);
+                } else {
+                    slot = -1;
+                }
+                if (slot < 0) {
+                    preferredFilled = false;
+                    slot = findMatchingSlot(inventory, ingredient, preferred[n], reserved, admitting, ledgerTakes);
+                }
             } else {
                 slot = preferred[n] == null ? -1 : findPreferredSlot(inventory, ingredient, preferred[n], reserved);
                 if (slot < 0) {
@@ -674,6 +1013,9 @@ public final class CraftExecutor {
                             preferred[n] == null ? null : Collections.singletonList(preferred[n]));
                 }
                 if (slot < 0 && fromStation == null) {
+                    // Fallbacks below (any usable stack, any station alternative, a ledger-admitted
+                    // refused stack) depend on more than the shared slot rule; they rule out batching.
+                    preferredFilled = false;
                     slot = findUsableSlot(inventory, ingredient, reserved);
                 }
                 if (slot < 0 && fromStation == null) {
@@ -692,7 +1034,8 @@ public final class CraftExecutor {
                 continue;
             }
             if (slot < 0) {
-                return new Assignment(slots, tally, ingredient, taken, stationItems);
+                return new Assignment(slots, tally, ingredient, taken, stationItems, preferred, stock,
+                        pool != null, preferredFilled);
             }
             reserved[slot]++;
             slots[n] = slot;
@@ -701,7 +1044,8 @@ public final class CraftExecutor {
                 tally.picked(stack.getItem(), !usableAsIngredient(stack));
             }
         }
-        return new Assignment(slots, tally, null, taken, stationItems);
+        return new Assignment(slots, tally, null, taken, stationItems, preferred, stock,
+                pool != null, preferredFilled);
     }
 
     /**
@@ -758,7 +1102,11 @@ public final class CraftExecutor {
      * {@code stationTakes}: plain items per kind the station supplies to this craft (cells marked
      * {@link #STATION_CELL}), empty without a station. {@code stationItems}: the item each of those cells gets
      * (null elsewhere) — {@link #craftOnce} consumes by kind, but the grid hand-off places the station's share
-     * into its cells one by one.
+     * into its cells one by one. {@code preferred}/{@code stock}: the per-cell items
+     * {@link #preferredItems} chose and the exact counts it chose them over (kept for
+     * {@link SlotAssignment#stableRepeats} at {@link #craftBatch}); {@code stationPooled}: whether the
+     * station's stock joined those counts; {@code preferredFilled}: whether every non-blank cell took
+     * its preferred item outright, the precondition for a batch.
      */
     private static final class Assignment {
         final int[] slots;
@@ -766,14 +1114,23 @@ public final class CraftExecutor {
         final Ingredient missing;
         final Map<Item, Integer> stationTakes;
         final Item[] stationItems;
+        final Item[] preferred;
+        final Map<Item, Integer> stock;
+        final boolean stationPooled;
+        final boolean preferredFilled;
 
         Assignment(int[] slots, LedgerTally<Item> tally, Ingredient missing, Map<Item, Integer> stationTakes,
-                   Item[] stationItems) {
+                   Item[] stationItems, Item[] preferred, Map<Item, Integer> stock,
+                   boolean stationPooled, boolean preferredFilled) {
             this.slots = slots;
             this.tally = tally;
             this.missing = missing;
             this.stationTakes = stationTakes;
             this.stationItems = stationItems;
+            this.preferred = preferred;
+            this.stock = stock;
+            this.stationPooled = stationPooled;
+            this.preferredFilled = preferredFilled;
         }
 
         void chargeTo(ProducedLedger<Item> ledger) {
@@ -787,10 +1144,11 @@ public final class CraftExecutor {
      * rule over the same slot lists ({@link CraftPlanner#slotAlternatives}) and counts, so each craft takes
      * what the plan counted on, not whichever stack sits first in the inventory. With a crafting station open
      * ({@code pool} non-null) its stock of every candidate item joins the counts, as it joined the plan's
-     * snapshot.
+     * snapshot. {@code stock} receives those exact counts, so a later
+     * {@link SlotAssignment#stableRepeats} reads the same view the choice was made over.
      */
-    private static Item[] preferredItems(PlayerInventory inventory, List<Ingredient> ingredients, StationPool pool) {
-        Map<Item, Integer> stock = new HashMap<>();
+    private static Item[] preferredItems(PlayerInventory inventory, List<Ingredient> ingredients, StationPool pool,
+                                         Map<Item, Integer> stock) {
         for (int i = 0; i < MAIN_SLOTS; i++) {
             ItemStack stack = inventory.getItem(i);
             if (!stack.isEmpty() && usableAsIngredient(stack)) {

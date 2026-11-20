@@ -138,16 +138,6 @@ public final class PlanSimulator {
                                UnaryOperator<K> remainder, boolean stopAtShort) {
         List<List<K>> slots = nonEmptySlots(recipe);
         Batch<K> batch = new Batch<>(slots);
-        // How many slots list each alternative: the choice reads no count beyond that.
-        Map<K, Integer> listing = new LinkedHashMap<>();
-        for (List<K> slot : slots) {
-            for (int a = 0; a < slot.size(); a++) {
-                K item = slot.get(a);
-                if (slot.indexOf(item) == a) {
-                    listing.merge(item, 1, Integer::sum);
-                }
-            }
-        }
         K result = recipe.result();
         long yield = Math.max(0, recipe.resultCount());
         long left = crafts;
@@ -187,25 +177,9 @@ public final class PlanSimulator {
                     }
                 }
             }
-            // Repeat this assignment while no listed alternative's capped count moves.
-            long repeat = left;
-            for (Map.Entry<K, Integer> entry : listing.entrySet()) {
-                K item = entry.getKey();
-                long cap = entry.getValue();
-                long drop = use.getOrDefault(item, 0L) - made.getOrDefault(item, 0L);
-                if (drop == 0) {
-                    continue;
-                }
-                long have = count(inv, item);
-                if (have < cap) {
-                    repeat = 1;
-                    break;
-                }
-                if (drop > 0) {
-                    repeat = Math.min(repeat, (have - cap) / drop + 1);
-                }
-            }
-            repeat = Math.max(1, repeat);
+            // Repeat this assignment while no listed alternative's capped count moves
+            // (SlotAssignment.stableRepeats, the rule shared with the executors' batched craft).
+            long repeat = SlotAssignment.stableRepeats(slots, item -> count(inv, item), use, made, left);
             // Net each item's change per craft before applying it: a craft can consume an item it is
             // also credited (its own result in a slot, a remainder equal to an alternative), and
             // booking the two separately would clamp the consumption at zero and inflate the stock.

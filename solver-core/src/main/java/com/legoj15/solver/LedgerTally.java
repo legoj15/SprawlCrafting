@@ -62,7 +62,17 @@ public final class LedgerTally<K> {
 
     /** One item of {@code key} was picked for this craft; {@code refused}: the filter rejects it. */
     public void picked(K key, boolean refused) {
-        add(refused ? refusedTakes : plainTakes, key, 1);
+        picked(key, refused, 1);
+    }
+
+    /**
+     * {@link #picked} for a batch: records {@code count} picks of {@code key} at once, equivalent to
+     * calling {@link #picked(K, boolean)} {@code count} times ({@code count <= 0} is a no-op).
+     */
+    public void picked(K key, boolean refused, int count) {
+        if (count > 0) {
+            add(refused ? refusedTakes : plainTakes, key, count);
+        }
     }
 
     /** Read-only live per-identity count of rejected picks so far: the {@code alreadyClaimed} for {@code admissible(ledger).canTake}. */
