@@ -435,10 +435,22 @@ public final class Ae2Station implements StationStorages.Provider {
             if (offer == null || !plain(channel, offer) || !shown(filter, offer)) {
                 return 0;
             }
-            offer.setStackSize(limit);
+            // Probe twice the request (see below): limit is int-bounded by every caller, so 2 * limit fits.
+            offer.setStackSize(2 * limit);
             IAEItemStack leftover = Platform.poweredInsert(energy, monitor, offer, source, Actionable.SIMULATE);
             long rest = leftover == null ? 0 : Math.max(0, leftover.getStackSize());
-            return Math.max(0, limit - rest);
+            long simulated = Math.max(0, 2 * limit - rest);
+            // AE2 inserts in two passes over each priority group: first the storages that already hold
+            // (or are partitioned for) the item, then every storage, those again included. A SIMULATE
+            // insert stores nothing, so the second pass counts those storages' free space a second time:
+            // the answer can be up to twice the real room (seen in play: a batch sized on it dropped
+            // ten million items once the drives were nearly full). Real room R and the simulated S obey
+            // S <= 2R, so R >= ceil(S / 2): plan on that, never on S. Halving a probe of the request itself
+            // would cap every answer at half of it, even on a network with ample room; probing twice the
+            // request keeps that case exact (S = 2 * limit means R >= limit) and only underestimates when
+            // the network is nearly full (room under twice the request)
+            // or lacks the energy to move twice it; an underestimate only shrinks a batch or stops a step.
+            return Math.min(limit, (simulated + 1) / 2);
         }
     }
 }

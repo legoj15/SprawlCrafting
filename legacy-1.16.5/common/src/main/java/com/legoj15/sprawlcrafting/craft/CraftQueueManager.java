@@ -281,12 +281,19 @@ public final class CraftQueueManager {
             maxCrafts--;
         }
         maxCrafts = Math.min(maxCrafts, job.craftsLeftInLayoutRun());
-        if (maxCrafts <= 1) {
-            return CraftExecutor.craftOnce(player, job.currentStep().recipeId(),
-                    job.produced(), job.stationDependent(), job.currentCraftLayout(), true);
+        CraftExecutor.takeDropped(); // forget drops from anything before this call
+        CraftExecutor.CraftResult result = maxCrafts <= 1
+                ? CraftExecutor.craftOnce(player, job.currentStep().recipeId(),
+                        job.produced(), job.stationDependent(), job.currentCraftLayout(), true)
+                : CraftExecutor.craftBatch(player, job.currentStep().recipeId(),
+                        job.produced(), job.stationDependent(), job.currentCraftLayout(), maxCrafts, true);
+        // Last line of defence: the room checks should leave nothing to drop, but if anything still
+        // landed at the feet, stop the job here (as NO_ROOM) instead of repeating it every craft.
+        ITextComponent dropped = CraftExecutor.takeDropped();
+        if (dropped != null && result.kind() == CraftExecutor.CraftResult.Kind.SUCCESS) {
+            return CraftExecutor.CraftResult.noRoom(dropped);
         }
-        return CraftExecutor.craftBatch(player, job.currentStep().recipeId(),
-                job.produced(), job.stationDependent(), job.currentCraftLayout(), maxCrafts, true);
+        return result;
     }
 
     /**

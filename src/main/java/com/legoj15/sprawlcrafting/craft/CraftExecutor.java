@@ -68,7 +68,9 @@ public final class CraftExecutor {
 
         /**
          * A bulk step refused this craft before anything moved: its result or a remainder had nowhere
-         * to go ({@code item} names what did not fit; see {@code craftOnce}'s {@code refuseSpill}).
+         * to go ({@code item} names what did not fit; see {@code craftOnce}'s {@code refuseSpill}). Also
+         * returned by {@code CraftQueueManager.craftBulk} after a craft that applied but still dropped
+         * {@code item} at the feet, so the job stops instead of repeating the drop.
          */
         record NoRoom(Component item) implements CraftResult {}
 
@@ -1686,6 +1688,9 @@ public final class CraftExecutor {
             stack = insertIntoStation(station, stack);
             stored = stack.getCount() < before;
         }
+        if (!stack.isEmpty()) {
+            noteDrop(stack, station, stored);
+        }
         // A batch's stack can be far over the max stack size: drop it as ordinary stacks, never one
         // oversized item entity.
         while (!stack.isEmpty()) {
@@ -1700,6 +1705,47 @@ public final class CraftExecutor {
             //?}
         }
         return stored;
+    }
+
+    /** The first stack dropped at the feet since the last {@link #takeDropped}; server thread only. */
+    private static ItemStack firstDrop = ItemStack.EMPTY;
+
+    /**
+     * Records the first drop and logs it once with what the station still claims it would accept, so a
+     * check-versus-insert disagreement (the #35 spill that a bulk step's room checks did not predict)
+     * shows its cause in the log, along with the call path that dropped.
+     */
+    private static void noteDrop(ItemStack overflow, StationStorage station, boolean stationTookSome) {
+        if (!firstDrop.isEmpty()) {
+            return;
+        }
+        firstDrop = overflow.copy();
+        long stillAcceptable = -1;
+        if (station != null) {
+            try {
+                stillAcceptable = station.acceptable(overflow, overflow.getCount());
+            } catch (RuntimeException | Error ignored) {
+                // Diagnostics only: whatever the station's mod throws, the overflow must still drop below.
+            }
+        }
+        Constants.LOG.warn("SprawlCrafting: dropping {} x{} at the player's feet (station: {}, took part of it: {},"
+                        + " now says it would accept: {})", overflow.getItem(), overflow.getCount(),
+                station == null ? "none" : station.getClass().getName(), stationTookSome, stillAcceptable,
+                new Throwable("drop site"));
+    }
+
+    /**
+     * The name of the first output dropped at the player's feet since the last call (then forgotten), or
+     * null. A bulk step checks it after every craft call and stops on any drop, so a room check that
+     * disagreed with the real insert costs one batch, never a spill repeated every tick.
+     */
+    static Component takeDropped() {
+        if (firstDrop.isEmpty()) {
+            return null;
+        }
+        Component name = firstDrop.getHoverName();
+        firstDrop = ItemStack.EMPTY;
+        return name;
     }
 
     private static Component describe(Ingredient ingredient) {
