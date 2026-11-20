@@ -1,6 +1,8 @@
 package com.legoj15.sprawlcrafting.forge.compat.jei;
 
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -325,6 +327,18 @@ public class DeferredCraftTransferHandler<C extends Container> implements IRecip
         List<List<Integer>> dragSlotGroups = new ArrayList<List<Integer>>();
         Map<Integer, Integer> reserved = new HashMap<Integer, Integer>();
 
+        // Each cell's pass is fixed by the whole inventory, before anything is reserved. Pass 0: a
+        // stack that matches an option exactly (NBT included). Pass 1: the (item, meta) match
+        // against tag-LESS options — a tagged option (filled bucket) must not be satisfied by a
+        // stack whose tag differs (the empty bucket) while a better source could exist. Pass 2,
+        // only when nothing else matched anywhere: the legacy any-option (item, meta) match —
+        // recipes lenient about NBT (vanilla Ingredient.apply ignores tags) crafted fine from such
+        // stacks before, and this client-side path has no server verify to recover a refusal, so
+        // never do worse than the pre-NBT-aware behavior.
+        List<Integer> cellSlots = new ArrayList<Integer>();
+        List<List<ItemStack>> cellOptions = new ArrayList<List<ItemStack>>();
+        List<Integer> cellPasses = new ArrayList<Integer>();
+        List<Integer> cellSupply = new ArrayList<Integer>();
         for (int jeiSlot = 1; jeiSlot <= 9; jeiSlot++) {
             IGuiIngredient<ItemStack> gui = guiIngredients.get(Integer.valueOf(jeiSlot));
             if (gui == null || !gui.isInput()) {
@@ -334,59 +348,64 @@ public class DeferredCraftTransferHandler<C extends Container> implements IRecip
             if (options == null || options.isEmpty()) {
                 continue;
             }
-
             int jeiRow = (jeiSlot - 1) / 3;
             int jeiCol = (jeiSlot - 1) % 3;
             if (jeiCol >= gridWidth || jeiRow >= gridHeight) {
                 continue;
             }
-            int containerSlot = gridSlotIndices.get(jeiRow * gridWidth + jeiCol).intValue();
-
-            // Pass 1: a stack that matches an option exactly (NBT included). Pass 2: the
-            // (item, meta) match against tag-LESS options — a tagged option (filled bucket)
-            // must not be satisfied by a stack whose tag differs (the empty bucket) while a
-            // better source could exist. Pass 3, only when nothing else matched anywhere: the
-            // legacy any-option (item, meta) match — recipes lenient about NBT (vanilla
-            // Ingredient.apply ignores tags) crafted fine from such stacks before, and this
-            // client-side path has no server verify to recover a refusal, so never do worse
-            // than the pre-NBT-aware behavior.
-            // Each cell reserves one item from the stack it matched, so two cells never both count
-            // on a lone stack (oak-or-birch plus oak-only over one oak and one birch would
-            // otherwise lay out a half-filled grid). Short here means the engine crafts instead.
-            ItemStack match = ItemStack.EMPTY;
-            int matchedInv = -1;
-            for (int pass = 0; pass < 3 && match.isEmpty(); pass++) {
+            int pass = -1;
+            int supply = 0;
+            for (int p = 0; p < 3 && supply == 0; p++) {
                 for (int inv : invSlotIndices) {
                     ItemStack inSlot = container.getSlot(inv).getStack();
-                    Integer taken = reserved.get(Integer.valueOf(inv));
-                    if (inSlot.isEmpty() || inSlot.getCount() - (taken == null ? 0 : taken.intValue()) <= 0) {
-                        continue;
-                    }
-                    for (ItemStack option : options) {
-                        if (option.isEmpty()) {
-                            continue;
-                        }
-                        boolean hit;
-                        if (pass == 0) {
-                            hit = sameStackIdentity(inSlot, option);
-                        } else if (pass == 1) {
-                            hit = !option.hasTagCompound()
-                                    && ItemKey.of(inSlot).equals(ItemKey.of(option));
-                        } else {
-                            hit = ItemKey.of(inSlot).equals(ItemKey.of(option));
-                        }
-                        if (hit) {
-                            match = inSlot.copy();
-                            matchedInv = inv;
-                            break;
-                        }
-                    }
-                    if (!match.isEmpty()) {
-                        break;
+                    if (passHit(p, inSlot, options)) {
+                        pass = p;
+                        supply += inSlot.getCount();
                     }
                 }
             }
+            if (pass < 0) {
+                return false;
+            }
+            cellSlots.add(gridSlotIndices.get(jeiRow * gridWidth + jeiCol));
+            cellOptions.add(options);
+            cellPasses.add(Integer.valueOf(pass));
+            cellSupply.add(Integer.valueOf(supply));
+        }
 
+        // Each cell reserves one item from the stack it takes, so two cells never both count on a
+        // lone stack, and the scarcest cells pick first (SlotAssignment's most-constrained rule):
+        // oak-only before oak-or-birch, so one oak and one birch fill both. A cell whose own pass
+        // is used up fails rather than drop to a laxer pass (a wrong-fluid bucket); the caller
+        // then hands the craft to the engine (on a server without the mod: its missing-mod notice;
+        // the grid was already swept into the inventory, so nothing is lost).
+        Integer[] order = new Integer[cellSlots.size()];
+        for (int c = 0; c < order.length; c++) {
+            order[c] = Integer.valueOf(c);
+        }
+        final List<Integer> supplies = cellSupply;
+        Arrays.sort(order, new Comparator<Integer>() {
+            @Override
+            public int compare(Integer a, Integer b) {
+                return Integer.compare(supplies.get(a.intValue()).intValue(), supplies.get(b.intValue()).intValue());
+            }
+        });
+        for (Integer cell : order) {
+            int c = cell.intValue();
+            int containerSlot = cellSlots.get(c).intValue();
+            int pass = cellPasses.get(c).intValue();
+            ItemStack match = ItemStack.EMPTY;
+            int matchedInv = -1;
+            for (int inv : invSlotIndices) {
+                ItemStack inSlot = container.getSlot(inv).getStack();
+                Integer taken = reserved.get(Integer.valueOf(inv));
+                if (inSlot.getCount() - (taken == null ? 0 : taken.intValue()) > 0
+                        && passHit(pass, inSlot, cellOptions.get(c))) {
+                    match = inSlot.copy();
+                    matchedInv = inv;
+                    break;
+                }
+            }
             if (match.isEmpty()) {
                 return false;
             }
@@ -463,6 +482,30 @@ public class DeferredCraftTransferHandler<C extends Container> implements IRecip
         }
 
         return true;
+    }
+
+    /** Whether {@code inSlot} matches any of {@code options} under the drag-fill's {@code pass} (0 exact, 1 tag-less, 2 legacy). */
+    private static boolean passHit(int pass, ItemStack inSlot, List<ItemStack> options) {
+        if (inSlot.isEmpty()) {
+            return false;
+        }
+        for (ItemStack option : options) {
+            if (option.isEmpty()) {
+                continue;
+            }
+            boolean hit;
+            if (pass == 0) {
+                hit = sameStackIdentity(inSlot, option);
+            } else if (pass == 1) {
+                hit = !option.hasTagCompound() && ItemKey.of(inSlot).equals(ItemKey.of(option));
+            } else {
+                hit = ItemKey.of(inSlot).equals(ItemKey.of(option));
+            }
+            if (hit) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** Same item, same metadata, same NBT — count-independent (the drag-fill's match identity). */
