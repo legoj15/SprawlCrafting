@@ -6,3 +6,4 @@
 - {1.20.1, 1.21.1} With an AE2 Crafting Terminal open, the final item of a craft is placed in the terminal's crafting grid for you to take, like at a crafting table; starting a craft moves anything left in that grid into your inventory
 - Very large crafts (thousands to millions of repeats, e.g. from an ME network) now finish much faster: each tick crafts as many as fit in its time limit instead of stopping at 64
 - {1.16.5, 1.20.1, 1.21.1} Huge crafts no longer show as "not enough resources" when your ME network or storage has an infinite source (AE2 creative cells, Sophisticated Storage infinity upgrade)
+- {1.12.2} Fixed the recipe book's yellow recipes: the second click now starts the craft (it often did nothing until you reopened the crafting table), the craft preview only shows while you hover that recipe, and the faded recipe outline no longer hides finished items in the crafting grid
