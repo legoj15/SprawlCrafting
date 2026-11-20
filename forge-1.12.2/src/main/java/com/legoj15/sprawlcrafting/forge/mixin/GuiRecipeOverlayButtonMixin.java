@@ -5,6 +5,7 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
+import com.legoj15.sprawlcrafting.forge.client.DeferredClickState;
 import com.legoj15.sprawlcrafting.forge.client.RecipeBookHighlight;
 
 import net.minecraft.client.Minecraft;
@@ -34,6 +35,14 @@ public abstract class GuiRecipeOverlayButtonMixin {
         try {
             Object self = this;
             GuiRecipeOverlayButtonAccessor fields = (GuiRecipeOverlayButtonAccessor) self;
+            // Vanilla draws no tooltip for the alternates bubble (RecipeBookPage.renderTooltip skips
+            // while it is open), so the preview for a bubble-armed recipe is drawn by
+            // DeferredPreviewRenderer, gated on this per-frame hover mark. Vanilla's overlay button
+            // sets hovered in its drawButton, which isMouseOver() returns.
+            if (((GuiButton) self).isMouseOver()
+                    && DeferredClickState.isArmedFor(fields.sprawlcrafting$getRecipe())) {
+                DeferredClickState.markOverlayHover();
+            }
             // The frame colour is a snapshot taken when the bubble opened; the outline is live. Only
             // outline a grey-framed button, so a recipe that turns deferred while the bubble is open
             // never shows the red-plus-yellow look (it gets the outline on the next open).

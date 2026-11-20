@@ -11,6 +11,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 import com.legoj15.sprawlcrafting.forge.client.ClientPlanCache;
+import com.legoj15.sprawlcrafting.forge.client.DeferredClickState;
 import com.legoj15.sprawlcrafting.forge.client.RecipeBookHighlight;
 import com.legoj15.sprawlcrafting.forge.craft.CraftPlanner;
 import com.legoj15.sprawlcrafting.forge.craft.GridContext;
@@ -66,10 +67,14 @@ public class GuiButtonRecipeMixin {
     }
 
     /**
-     * Discoverability, appended to the button's hover tooltip (modern parity): a yellow
+     * Discoverability, appended to the button's hover tooltip (modern parity): the armed recipe's
+     * plan preview ({@link DeferredClickState#previewLines()}) while this exact recipe is armed —
+     * part of vanilla's single button tooltip, so it shows only while hovering that button, drawn
+     * where vanilla draws it (after the container slots, so not clipped). Otherwise a yellow
      * "craftable from raw materials" line on deferred recipes, and — needs-helper-gated — a gold
      * "click to see what you need" hint on red ones, which is how a player learns the
-     * missing-resources screen exists at all.
+     * missing-resources screen exists at all. An empty preview (nothing plannable right now) falls
+     * through to the plain hints.
      */
     @Inject(method = "getToolTipText", at = @At("RETURN"), require = 0)
     private void sprawlcrafting$appendHints(net.minecraft.client.gui.GuiScreen screen,
@@ -86,6 +91,13 @@ public class GuiButtonRecipeMixin {
             IRecipe recipe = ((GuiButtonRecipe) (Object) this).getRecipe();
             if (recipe == null || recipe.getRegistryName() == null) {
                 return;
+            }
+            if (DeferredClickState.isArmedFor(recipe)) {
+                List<String> preview = DeferredClickState.previewLines();
+                if (!preview.isEmpty()) {
+                    lines.addAll(preview);
+                    return;
+                }
             }
             GridContext grid = GridContext.current(mc.player);
             CraftPlanner.Craftability craftability =
@@ -132,16 +144,27 @@ public class GuiButtonRecipeMixin {
     }
 
     /**
-     * Index guard for {@code getRecipe} and {@code getToolTipText}: both index the ordered list with
-     * the {@code currentIndex} the last draw computed. If the list shrank since (a status change
-     * processed in the tick before a click), wrap the index instead of throwing.
+     * Variant lock + index guard for the ordered-list {@code List.get(int)} calls in
+     * {@code drawButton} (which picks the displayed recipe), {@code getRecipe} and
+     * {@code getToolTipText}. A grouped button cycles its displayed recipe every 1.5 s, so the
+     * recipe a click resolves could be a different variant than the one previewed; while a recipe
+     * from this button's list is armed, always show that one, so its icon and tooltip present the
+     * previewed variant and the confirm click (which resolves {@code getRecipe()}) hits it even
+     * though the cycle would have moved on. The list holds {@link IRecipe}s, compared by identity.
+     * Otherwise both read paths index the list with the {@code currentIndex} the last draw
+     * computed; if the list shrank since (a status change processed in the tick before a click),
+     * wrap the index instead of throwing.
      */
     @Redirect(
-            method = {"getRecipe", "getToolTipText"},
+            method = {"drawButton", "getRecipe", "getToolTipText"},
             at = @At(value = "INVOKE", target = "Ljava/util/List;get(I)Ljava/lang/Object;",
                     remap = false),
             require = 0)
     private Object sprawlcrafting$wrapIndex(List<?> list, int index) {
+        IRecipe armed = DeferredClickState.armed();
+        if (armed != null && list.contains(armed)) {
+            return armed;
+        }
         int size = list.size();
         return size == 0 ? list.get(index) : list.get(Math.floorMod(index, size));
     }
