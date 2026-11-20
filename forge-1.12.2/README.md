@@ -131,6 +131,7 @@ Run the wrapper on **JDK 25** (`JAVA_HOME` must point at a 25.x JDK; the machine
 ./gradlew setupDecompWorkspace   # one-time: decompile/deobf the 1.12.2 client (~2 min, large download)
 ./gradlew build                  # compile the mod (+ the solver library) and reobf the jar
 ./gradlew runClient              # launch a dev client with the mod
+./gradlew runClient -Psc.jei=true   # same, with JEI loaded
 ./gradlew runClient -Psc.ae2=<path to an AE2 1.12.2 jar>   # same, with that AE2 loaded
 ```
 
@@ -179,4 +180,4 @@ here; it now runs in `../solver-core`'s own build, still on a Java 8 runtime.)
 highlights, orange → gather screen), the recipe-book trigger/filter/tooltips/ghost, the progress
 toast and step sound, the config screen, the final-step grid hand-off, and chest sourcing at modded
 stations have all been exercised in a live 1.12.2 client and merged to `main`. To re-run a dev
-client, `./gradlew runClient` on JDK 25 (MixinBooter and JEI are already on the dev classpath).
+client, `./gradlew runClient` on JDK 25 (MixinBooter is on the dev classpath; add `-Psc.jei=true` to load JEI).

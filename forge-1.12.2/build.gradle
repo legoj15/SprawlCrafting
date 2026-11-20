@@ -167,6 +167,11 @@ dependencies {
     // deobfProvided gives compile-time access to the deobfuscated JEI API without bundling
     // JEI into the mod or forcing it at runtime.
     compileOnly rfg.deobf("mezz.jei:jei_1.12.2:${project.jei_version}")
+    // Dev runs only: -Psc.jei=true puts that same JEI on the runClient classpath (it is compileOnly
+    // otherwise, so a plain runClient has no JEI and every JEI feature is untestable).
+    if (project.hasProperty('sc.jei')) {
+        runtimeOnly rfg.deobf("mezz.jei:jei_1.12.2:${project.jei_version}")
+    }
 
     // --- Applied Energistics 2 integration (compile dependency; optional at runtime) --------
     // The AE2 Crafting Terminal support (forge.compat.ae2) compiles against AE2 Unofficial Extended
