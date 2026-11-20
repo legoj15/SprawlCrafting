@@ -15,7 +15,7 @@ if (legacyJavaVersion < 21) {
     val mixinJava = "JAVA_$legacyJavaVersion"
     tasks.named<ProcessResources>("processResources") {
         inputs.property("mixin_java", mixinJava)
-        filesMatching(listOf("$legacyModId.mixins.json", "$legacyModId.ae2jei.mixins.json")) { filter { it.replace("\"JAVA_21\"", "\"$mixinJava\"") } }
+        filesMatching(listOf("$legacyModId.mixins.json", "sprawlcrafting.ae2jei.mixins.json")) { filter { it.replace("\"JAVA_21\"", "\"$mixinJava\"") } }
     }
 }
 
