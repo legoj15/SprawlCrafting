@@ -70,7 +70,7 @@ public final class ToastCancelClick {
         record(MODEL_VIEW.get(12), MODEL_VIEW.get(13), toastWidth, toastHeight);
     }
 
-    /** Drops the rectangle — called when the toast hides. */
+    /** Drops the rectangle — called when the toast hides and on disconnect. */
     public static void clear() {
         recorded = false;
         // swallowRelease stays: the toast can hide while the consumed press is still held, and its
