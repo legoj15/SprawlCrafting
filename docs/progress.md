@@ -221,3 +221,29 @@ Unbound "Cancel deferred craft" keybind on every tree. The server's `CraftQueueM
 ## #24 merge and final review (2026-11-20)
 - Merged to main (74d4c8e) after merging main into the branch: #23's layout parameter and #24's ledger types were on the same signatures, so both were kept; solver_version 2.0.0; one post-merge fix (#25's canCraftFrom still passed the old two ledger arguments). All trees green.
 - review_final on 4745e15..74d4c8e (dgx + glm-5.3, GLM leg discounted; the kimi hedge fired). dgx approve, 3 notes not acted on: the 1.12.2 matrix dedup calls materialSlots twice (exact today); the baseline is the last snapshot before first production (documented arrival case); variantOf copies per candidate (bounded). glm-5.3: one safe-direction note (the 1.12.2 hand-off doesn't count the network, so it falls back to auto-craft). Its getContainerSize question was already answered by the round-2 Haiku bytecode check (41 on 1.16.5). kimi medium CONFIRMED by running: the held count overflowed an int, a negative frozen baseline then admitted the player's own copy. The orchestrator fixed it with a saturating add plus an assertion folded into the saturation test, which failed first and now passes. The orchestrator adjudicated after round three; no further review round.
+## 2026-11-20: #35 batched bulk-step crafts, #36 creative-cell follow-up
+- solver-core: `SlotAssignment.stableRepeats`, extracted from PlanSimulator with no behaviour change, bounds how many crafts one assignment provably repeats. It has a seeded fuzz test (SlotAssignmentRepeatTest). Haiku confirmed the test kills mutants.
+- implement_single (glm-5.3, no_build) on legacy 1.16.5: pass (35a3e55). GLM's report found one more ineligible case: a credited item that is also consumed means no batch. Orchestrator fix: one oversized stack per insert (959e489).
+- reviewer (Haiku) on 959e489: FAIL. Fixed by the orchestrator (review fixes) in 432654e:
+  - output room unbounded when a station is open; now bounded by `StationStorage.acceptable`, a simulated insert;
+  - NBT ingredient test;
+  - summed-remainder int overflow;
+  - double prepare on fallback;
+  - giveBack chunking;
+  - drop loop for max stack 0;
+  - docs.
+  Accepted: with a station open, outputs can split differently between inventory and station; per-item totals are equal.
+- implement_single (glm-5.3, no_build) on the modern tree: pass (fe0308c). All 14 nodes green. AE2 and Sophisticated implement `acceptable`.
+- review_fast on 432654e (deepseek-flash stood in for a busy shop26, plus glm-flash), and shop26 on fe0308c: the station's free capacity was counted for each output separately, remainders inserted first took the result's empty slots, and a remainder equal to the result double-counted. Orchestrator fix (1014d40): remainders get inventory merge room only, a same-item remainder means no batch, and the result is inserted first.
+- reviewer (Haiku) on fe0308c: PASS WITH NITS. On 26.x a remainder template's count and components were dropped; such a remainder now means no batch (005ab0f), plus a DESIGN.md line and an import. Not acted on:
+  - Sophisticated on 1.20.1 and 1.21.1 still loops one stack per extract;
+  - a throwing `acceptable` logs every tick;
+  - dead ledger null-guards.
+- review_fast on 1014d40 (shop26 + glm-flash; GLM leg valid, orchestrator wrote it): all low. GLM fuzzed the room model: zero drops in about 240k batches, against 4,397 drop worlds at the parent commit. Accepted trade-offs:
+  - remainder-bearing chains batch only as far as partial remainder stacks have room;
+  - a shared station can fill between plan and apply (pre-existing, narrowed).
+- 1.12.2 batching was split to #39 (different executor: per-craft computeResult, getContainerItem, chest and network sources).
+- #36: 1.12.2 network counts already saturate-add to Integer.MAX_VALUE, which the solver reads as unbounded. No code needed.
+- review_fast on 005ab0f (deepseek-flash stood in for a busy shop26, plus glm-flash): both approve. Two notes, not acted on: no test covers batchPlan's refusals (it needs a live ServerPlayer), and the planner models remainder templates by item only (pre-existing). Final reviewed sha: 005ab0f.
+- Playtest PASS (2026-11-20, Forge 1.16.5 instance, built from 1014d40; 005ab0f only touches 26.x): with the AE2 crafting terminal over creative cells (counts shown as 2.1G), Infinitymatter's button is yellow, and its 3.87M-step job finished in about 4 s, handing the final craft to the grid. Inventory diamond blocks were consumed first, the rest came from the network, and there were no dropped items within 32 blocks. The top sword (Get Evolved Infinity Final ... Dominator Sword Infinity-God) stays orange with an empty gather list: by recipe arithmetic it needs about 1e29 crafts, past the int per-step cap, so refusing it is correct, not a #36 regression.
+- Computer-use traps on 1.16.5: the game must be windowed (fullscreen hides input). A world click warps the camera even at the cursor's own position, so aim with `/tp @s ~ ~ ~ <yaw> <pitch>` and use a temporary keyboard bind for Use Item (restored afterwards). A focus click in creative breaks the targeted block; I refilled it with /setblock.

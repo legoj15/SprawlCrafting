@@ -127,6 +127,21 @@ public final class LedgerTally<K, V> {
         }
     }
 
+    /**
+     * {@link #picked} for a batch: records {@code count} picks of {@code key} at once, equivalent to
+     * calling {@link #picked(K, V, boolean)} {@code count} times ({@code count <= 0} is a no-op).
+     */
+    public void picked(K key, V variant, boolean refused, int count) {
+        if (count > 0) {
+            if (refused) {
+                add(refusedTakes, variant, count);
+                add(refusedTakesByKey, key, count);
+            } else {
+                add(plainTakes, key, count);
+            }
+        }
+    }
+
     /** Records this craft's picks against {@code ledger}. */
     public void chargeTo(ProducedLedger<K, V> ledger) {
         ledger.notePreexisting(refusedHeld);

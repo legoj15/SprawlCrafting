@@ -166,9 +166,12 @@ is decided by the node's `gradle.properties` plus `//? if >=1.21.11` branches in
   cap: it stops when its time budget (below) is spent or the step ends, and always does at least
   one craft (an earlier 64-craft cap was removed: with AE2 storage a step can need millions of
   crafts, and the time budget alone already bounds the tick); it takes ~5-16 s instead of
-  ~55 minutes at one craft per half second. Every craft in a burst is still validated and applied on its own
-  (`CraftExecutor.craftOnce`), so per-craft ingredient checks and graceful cancellation are
-  unchanged. **Measured** (1.21.1 NeoForge game-test server, mock player, 9-ingredient
+  ~55 minutes at one craft per half second. A burst applies its crafts in batches
+  (`CraftExecutor.craftBatch`: one recipe lookup and slot scan for many crafts, applied only while
+  provably equal to that many single crafts — a single `craftOnce` otherwise), so per-craft
+  ingredient checks and graceful cancellation are unchanged. At a boundary between two bulk steps
+  the next step is due on the very next tick, so a compression chain runs as one long burst split
+  only by the time budget. **Measured** (1.21.1 NeoForge game-test server, mock player, 9-ingredient
   `iron_block` recipe with the ingots behind 27 filler stacks, i.e. the worst slot-scan layout): a
   64-craft burst took 15.4 ms cold, then 2.5-6.1 ms warm (~40-95 µs per craft). Without the time
   budget a burst would run until its step ends (a 6,561-craft step is ~0.3-0.6 s of server time at
@@ -186,13 +189,14 @@ is decided by the node's `gradle.properties` plus `//? if >=1.21.11` branches in
   first-come-first-served pool, because the loop order is fixed by the player list and the first few
   players would otherwise take the whole budget every tick; the same slice for everyone also means
   nothing has to rotate. Each burst is charged the time it used, clamped to its grant: the clock
-  is checked after a craft, so a burst runs up to one craft past its grant, and charging that
-  overshoot would shrink every later player's slice in the fixed loop order (the last pinned to
+  is checked after a batch (a batch is a single unit of work), so a burst runs up to one batch
+  past its grant, and charging that overshoot would shrink every later player's slice in the
+  fixed loop order (the last pinned to
   one craft per tick); time a burst leaves unused (step boundary, job finished) stays in the
   window for a burst the count missed, and the time charged to the window never exceeds 10 ms.
-  The clock is checked after a craft, never before, so every job makes at least one craft per
+  The clock is checked after a batch, never before, so every job makes at least one craft per
   eligible tick even with the budget spent (no starvation); the bound is therefore soft (the budget plus at most one
-  craft of overshoot per burst), and past roughly 100-200 simultaneous bulk jobs the one-craft floor,
+  batch of overshoot per burst), and past roughly 100-200 simultaneous bulk jobs the one-craft floor,
   not the 10 ms, sets the cost. Paced steps do one craft and never draw on it. The window is keyed on
   the SERVER tick (`MinecraftServer.getTickCount()`; `getTickCounter()` on 1.12.2), never
   `player.tickCount`, which is per-entity and restarts at 0 on respawn (the wedge `DeferredCraftSync`
@@ -242,9 +246,10 @@ than a full exponential search — see "Known limitations".
    tree against the player's inventory; emit a topologically ordered list of steps
    (recipe × count). Held items are used before any sub-craft is planned.
 3. **Execution (server, `CraftQueueManager` / `CraftExecutor`).** Each step starts 10 ticks
-   after the previous one; a step of ≤ 16 crafts then runs one craft per 10 ticks, a bigger one in
-   bursts (as many crafts as fit a 2 ms per-player, 10 ms per-tick time budget shared by all players); every craft re-checks and
-   consumes its ingredients from the live inventory and inserts its output as real items.
+   after the previous one (the next tick when both steps are bulk); a step of ≤ 16 crafts then runs one craft per 10 ticks, a bigger one in
+   bursts (as many crafts as fit a 2 ms per-player, 10 ms per-tick time budget shared by all
+   players, applied in provably-equal batches); every craft is still re-checked and
+   consumed against the live inventory and its output inserted as real items.
    Shortfall → cancel + notify.
 4. **Progress toast (client).** While a job runs with the inventory closed, a vanilla toast
    (persistent per job, progress bar, state colors) shows the current item and overall

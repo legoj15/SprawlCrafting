@@ -2,6 +2,7 @@ package com.legoj15.solver;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -54,6 +55,53 @@ public final class SlotAssignment {
             out.add(k);
         }
         return out;
+    }
+
+    /**
+     * How many crafts the assignment {@link #assign} returns for these {@code slots} against this
+     * {@code stock} stays the same, so one application of it can stand for that many: the rule this
+     * shares with {@link PlanSimulator}'s replay and the executors' batched craft. {@link #choose}
+     * reads each alternative's stock only up to the number of slots that list it, so the same
+     * assignment repeats while every listed alternative whose per-craft net change is non-zero keeps
+     * at least that cap.
+     *
+     * @param slots the slot lists, as {@link #assign} takes them
+     * @param stock current counts (the same view {@link #assign} would read)
+     * @param use  per-item consumption of one craft (what the assignment takes)
+     * @param made per-item credit of one craft (result plus remainders); may credit items the craft
+     *             also consumes
+     * @param max  the caller's own ceiling (crafts still to run); must be at least 1
+     * @return how many crafts the assignment repeats, in [1, max]
+     */
+    public static <K> long stableRepeats(List<? extends List<K>> slots, ToLongFunction<K> stock,
+                                         Map<K, Long> use, Map<K, Long> made, long max) {
+        // How many slots list each alternative: the choice reads no count beyond that.
+        Map<K, Integer> listing = new LinkedHashMap<>();
+        for (List<K> slot : slots) {
+            for (int a = 0; a < slot.size(); a++) {
+                K item = slot.get(a);
+                if (slot.indexOf(item) == a) {
+                    listing.merge(item, 1, Integer::sum);
+                }
+            }
+        }
+        long repeat = max;
+        for (Map.Entry<K, Integer> entry : listing.entrySet()) {
+            K item = entry.getKey();
+            long cap = entry.getValue();
+            long drop = use.getOrDefault(item, 0L) - made.getOrDefault(item, 0L);
+            if (drop == 0) {
+                continue;
+            }
+            long have = stock.applyAsLong(item);
+            if (have < cap) {
+                return 1;
+            }
+            if (drop > 0) {
+                repeat = Math.min(repeat, (have - cap) / drop + 1);
+            }
+        }
+        return Math.max(1, repeat);
     }
 
     /**

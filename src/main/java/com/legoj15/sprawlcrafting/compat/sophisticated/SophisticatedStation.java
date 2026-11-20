@@ -257,5 +257,26 @@ public final class SophisticatedStation implements StationStorages.Provider {
             return rest;
             //?}
         }
+
+        @Override
+        public long acceptable(ItemStack stack, long limit) {
+            // insert()'s own checks, then a simulated insert of up to limit — the whole handler only,
+            // not the per-slot loop a real insert retries with: a simulated whole-handler insert
+            // followed by simulated per-slot inserts would count the same space twice, and an
+            // underestimate only makes a batch smaller, never unsafe.
+            if (stack.isEmpty() || limit <= 0 || !isPlain(stack)) {
+                return 0;
+            }
+            int offered = (int) Math.min(limit, Integer.MAX_VALUE);
+            //? if >=1.21.11 {
+            /*ItemResource resource = ItemResource.of(stack.getItem());
+            try (Transaction tx = Transaction.openRoot()) {
+                return Math.max(0, Math.min(limit, handler.insert(resource, offered, tx)));
+            }*/
+            //?} else {
+            ItemStack rest = handler.insertItem(stack.copyWithCount(offered), true);
+            return Math.max(0, Math.min(limit, (long) offered - rest.getCount()));
+            //?}
+        }
     }
 }
