@@ -310,19 +310,11 @@ public final class CraftExecutor {
      * through the engine because it depends on the station's connected chest. Runs on either side.
      */
     public static boolean canCraftFromPlayerInventory(EntityPlayer player, IRecipe recipe) {
-        InventoryPlayer inventory = player.inventory;
-        int[] reserved = new int[MAIN];
-        for (Ingredient ingredient : recipe.getIngredients()) {
-            if (ingredient == Ingredient.EMPTY) {
-                continue;
-            }
-            int slot = findMatchingSlot(inventory, ingredient, reserved);
-            if (slot < 0) {
-                return false;
-            }
-            reserved[slot]++;
+        List<Source> sources = new ArrayList<Source>();
+        for (int i = 0; i < MAIN; i++) {
+            sources.add(new PlayerSource(player.inventory, i));
         }
-        return true;
+        return canCraftFrom(sources, recipe.getIngredients());
     }
 
     /**
@@ -334,24 +326,25 @@ public final class CraftExecutor {
      * TConstruct+JEI behavior) rather than routed through the engine.
      */
     public static boolean canCraftFromPlayerAndStation(EntityPlayer player, IRecipe recipe) {
-        InventoryPlayer inventory = player.inventory;
-        List<Slot> external = ExternalSlots.materialSlots(player);
-        int[] reserved = new int[MAIN + external.size()];
-        for (Ingredient ingredient : recipe.getIngredients()) {
-            if (ingredient == Ingredient.EMPTY) {
+        return canCraftFrom(buildSources(player, player.inventory, null), recipe.getIngredients());
+    }
+
+    /**
+     * Whether one craft can be laid out from {@code sources}, choosing stacks exactly as
+     * {@link #assign} does ({@link #preferredKeys} first, then first match, no ledger), so a gate
+     * that says yes is never contradicted by the assignment that follows. The converse holds only
+     * without a ledger: a ledger lets assign also take admitted altered stacks the gate ignores,
+     * which is the safe direction (a no routes the craft to the engine).
+     */
+    private static boolean canCraftFrom(List<Source> sources, List<Ingredient> ingredients) {
+        ItemKey[] preferred = preferredKeys(sources, ingredients);
+        int[] reserved = new int[sources.size()];
+        for (int i = 0; i < ingredients.size(); i++) {
+            Ingredient ingredient = ingredients.get(i);
+            if (ingredient == null || ingredient == Ingredient.EMPTY) {
                 continue;
             }
-            int idx = findMatchingSlot(inventory, ingredient, reserved);
-            if (idx < 0) {
-                for (int j = 0; j < external.size(); j++) {
-                    ItemStack stack = external.get(j).getStack();
-                    if (!stack.isEmpty() && stack.getCount() - reserved[MAIN + j] > 0
-                            && usableAsIngredient(stack) && ingredient.apply(stack)) {
-                        idx = MAIN + j;
-                        break;
-                    }
-                }
-            }
+            int idx = findMatchingSource(sources, ingredient, preferred[i], reserved, null, null);
             if (idx < 0) {
                 return false;
             }
@@ -594,21 +587,12 @@ public final class CraftExecutor {
                 stock.put(key, NetworkTerminals.saturatedAdd(have == null ? 0 : have, stack.getCount()));
             }
         }
-        List<List<ItemKey>> slots = new ArrayList<List<ItemKey>>();
-        List<Integer> cells = new ArrayList<Integer>();
-        for (int i = 0; i < ingredients.size(); i++) {
-            Ingredient ingredient = ingredients.get(i);
-            if (ingredient != null && ingredient != Ingredient.EMPTY) {
-                slots.add(CraftPlanner.slotAlternatives(ingredient));
-                cells.add(i);
-            }
+        List<List<ItemKey>> cells = new ArrayList<List<ItemKey>>();
+        for (Ingredient ingredient : ingredients) {
+            cells.add(ingredient == null || ingredient == Ingredient.EMPTY
+                    ? null : CraftPlanner.slotAlternatives(ingredient));
         }
-        List<ItemKey> chosen = SlotAssignment.assign(slots, stock);
-        ItemKey[] preferred = new ItemKey[ingredients.size()];
-        for (int s = 0; s < cells.size(); s++) {
-            preferred[cells.get(s)] = chosen.get(s);
-        }
-        return preferred;
+        return SlotAssignment.assignCells(cells, stock).toArray(new ItemKey[0]);
     }
 
     /**
@@ -878,17 +862,6 @@ public final class CraftExecutor {
     /** Vanilla recipe-book parity: never consume damaged, enchanted, or renamed stacks. */
     public static boolean usableAsIngredient(ItemStack stack) {
         return !stack.isItemDamaged() && !stack.isItemEnchanted() && !stack.hasDisplayName();
-    }
-
-    private static int findMatchingSlot(InventoryPlayer inventory, Ingredient ingredient, int[] reserved) {
-        for (int i = 0; i < MAIN; i++) {
-            ItemStack stack = inventory.mainInventory.get(i);
-            if (!stack.isEmpty() && stack.getCount() - reserved[i] > 0
-                    && usableAsIngredient(stack) && ingredient.apply(stack)) {
-                return i;
-            }
-        }
-        return -1;
     }
 
     /**

@@ -323,6 +323,7 @@ public class DeferredCraftTransferHandler<C extends Container> implements IRecip
         // phase below is guaranteed to find them again.
         List<ItemStack> dragTemplates = new ArrayList<ItemStack>();
         List<List<Integer>> dragSlotGroups = new ArrayList<List<Integer>>();
+        Map<Integer, Integer> reserved = new HashMap<Integer, Integer>();
 
         for (int jeiSlot = 1; jeiSlot <= 9; jeiSlot++) {
             IGuiIngredient<ItemStack> gui = guiIngredients.get(Integer.valueOf(jeiSlot));
@@ -349,11 +350,16 @@ public class DeferredCraftTransferHandler<C extends Container> implements IRecip
             // Ingredient.apply ignores tags) crafted fine from such stacks before, and this
             // client-side path has no server verify to recover a refusal, so never do worse
             // than the pre-NBT-aware behavior.
+            // Each cell reserves one item from the stack it matched, so two cells never both count
+            // on a lone stack (oak-or-birch plus oak-only over one oak and one birch would
+            // otherwise lay out a half-filled grid). Short here means the engine crafts instead.
             ItemStack match = ItemStack.EMPTY;
+            int matchedInv = -1;
             for (int pass = 0; pass < 3 && match.isEmpty(); pass++) {
                 for (int inv : invSlotIndices) {
                     ItemStack inSlot = container.getSlot(inv).getStack();
-                    if (inSlot.isEmpty()) {
+                    Integer taken = reserved.get(Integer.valueOf(inv));
+                    if (inSlot.isEmpty() || inSlot.getCount() - (taken == null ? 0 : taken.intValue()) <= 0) {
                         continue;
                     }
                     for (ItemStack option : options) {
@@ -371,6 +377,7 @@ public class DeferredCraftTransferHandler<C extends Container> implements IRecip
                         }
                         if (hit) {
                             match = inSlot.copy();
+                            matchedInv = inv;
                             break;
                         }
                     }
@@ -383,6 +390,8 @@ public class DeferredCraftTransferHandler<C extends Container> implements IRecip
             if (match.isEmpty()) {
                 return false;
             }
+            Integer taken = reserved.get(Integer.valueOf(matchedInv));
+            reserved.put(Integer.valueOf(matchedInv), Integer.valueOf(taken == null ? 1 : taken.intValue() + 1));
 
             List<Integer> slots = null;
             for (int t = 0; t < dragTemplates.size(); t++) {
