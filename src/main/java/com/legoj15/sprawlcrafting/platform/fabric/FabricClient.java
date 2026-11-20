@@ -68,16 +68,23 @@ public class FabricClient implements ClientModInitializer {
         net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper.registerKeyBinding(CancelCraftKey.KEY);
         //?}
         // Clicking the progress toast while any screen is open cancels the craft (issue #34):
-        // returning false from allowMouseClick vetoes the screen's own handling of the press.
+        // returning false from allowMouseClick vetoes the screen's own handling of the press, and
+        // allowMouseRelease drops that press's release (a lone release can drop a carried stack).
         // 26.x's fabric screen api hands the handler a MouseButtonEvent instead of raw coords.
         //? if >=1.21.11 {
-        /*ScreenEvents.AFTER_INIT.register((client, screen, width, height) ->
-                ScreenMouseEvents.allowMouseClick(screen).register((mouseScreen, event) ->
-                        !ToastCancelClick.onScreenClick(event.x(), event.y(), event.button())));*/
+        /*ScreenEvents.AFTER_INIT.register((client, screen, width, height) -> {
+            ScreenMouseEvents.allowMouseClick(screen).register((mouseScreen, event) ->
+                    !ToastCancelClick.onScreenClick(event.x(), event.y(), event.button()));
+            ScreenMouseEvents.allowMouseRelease(screen).register((mouseScreen, event) ->
+                    !ToastCancelClick.onScreenRelease(event.button()));
+        });*/
         //?} else {
-        ScreenEvents.AFTER_INIT.register((client, screen, width, height) ->
-                ScreenMouseEvents.allowMouseClick(screen).register((mouseScreen, mouseX, mouseY, button) ->
-                        !ToastCancelClick.onScreenClick(mouseX, mouseY, button)));
+        ScreenEvents.AFTER_INIT.register((client, screen, width, height) -> {
+            ScreenMouseEvents.allowMouseClick(screen).register((mouseScreen, mouseX, mouseY, button) ->
+                    !ToastCancelClick.onScreenClick(mouseX, mouseY, button));
+            ScreenMouseEvents.allowMouseRelease(screen).register((mouseScreen, mouseX, mouseY, button) ->
+                    !ToastCancelClick.onScreenRelease(button));
+        });
         //?}
         // Tell the server which crafting grid is on screen (only while a job is active), so a
         // deferred craft's final step can be handed off to it for the player to grab.

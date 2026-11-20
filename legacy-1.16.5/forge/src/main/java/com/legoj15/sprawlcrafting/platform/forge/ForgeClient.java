@@ -35,6 +35,7 @@ public final class ForgeClient {
                 () -> (minecraft, modListScreen) -> new SprawlConfigScreen(modListScreen));
         MinecraftForge.EVENT_BUS.addListener(ForgeClient::onClientTick);
         MinecraftForge.EVENT_BUS.addListener(ForgeClient::onScreenClick);
+        MinecraftForge.EVENT_BUS.addListener(ForgeClient::onScreenRelease);
         MinecraftForge.EVENT_BUS.addListener(ForgeClient::onLoggedOut);
         // Keybinds append to Options' key array; client setup is the window where those exist for
         // sure — init() here runs during mod construction, before that.
@@ -57,6 +58,14 @@ public final class ForgeClient {
     // canceled Pre event means the press never reaches the screen underneath.
     private static void onScreenClick(GuiScreenEvent.MouseClickedEvent.Pre event) {
         if (ToastCancelClick.onScreenClick(event.getMouseX(), event.getMouseY(), event.getButton())) {
+            event.setCanceled(true);
+        }
+    }
+
+    // The consumed press's release is dropped too: a lone release outside a container's panel is a
+    // click at slot -999, which drops a carried stack.
+    private static void onScreenRelease(GuiScreenEvent.MouseReleasedEvent.Pre event) {
+        if (ToastCancelClick.onScreenRelease(event.getButton())) {
             event.setCanceled(true);
         }
     }

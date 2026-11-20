@@ -34,10 +34,14 @@ public class FabricClient implements ClientModInitializer {
         KeyBindingHelper.registerKeyBinding(CancelCraftKey.KEY);
         ClientTickEvents.END_CLIENT_TICK.register(client -> CancelCraftKey.clientTick());
         // Clicking the progress toast while any screen is open cancels the craft (issue #34):
-        // returning false from allowMouseClick vetoes the screen's own handling of the press.
-        ScreenEvents.AFTER_INIT.register((client, screen, width, height) ->
-                ScreenMouseEvents.allowMouseClick(screen).register((mouseScreen, mouseX, mouseY, button) ->
-                        !ToastCancelClick.onScreenClick(mouseX, mouseY, button)));
+        // returning false from allowMouseClick vetoes the screen's own handling of the press, and
+        // allowMouseRelease drops that press's release (a lone release can drop a carried stack).
+        ScreenEvents.AFTER_INIT.register((client, screen, width, height) -> {
+            ScreenMouseEvents.allowMouseClick(screen).register((mouseScreen, mouseX, mouseY, button) ->
+                    !ToastCancelClick.onScreenClick(mouseX, mouseY, button));
+            ScreenMouseEvents.allowMouseRelease(screen).register((mouseScreen, mouseX, mouseY, button) ->
+                    !ToastCancelClick.onScreenRelease(button));
+        });
         // Drop all per-session client state on disconnect so nothing leaks into the next world.
         ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> client.execute(() -> {
             CraftingScreenWatcher.resetAllClientState();

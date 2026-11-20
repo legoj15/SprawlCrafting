@@ -55,14 +55,22 @@ final class ForgeClient {
         MinecraftForge.EVENT_BUS.addListener(ForgeClient::onClientTick);
         //?}
         // Clicking the progress toast while any screen is open cancels the craft (issue #34):
-        // canceling the Pre event keeps the press from the screen underneath. On 26.x (EventBus 7)
+        // canceling the Pre event keeps the press from the screen underneath, and its release is
+        // dropped too (a lone release can drop a carried stack). On 26.x (EventBus 7)
         // the listener is a predicate whose true return cancels.
         //? if >=1.21.11 {
         /*ScreenEvent.MouseButtonPressed.Pre.BUS.addListener((ScreenEvent.MouseButtonPressed.Pre e) ->
-                ToastCancelClick.onScreenClick(e.getMouseX(), e.getMouseY(), e.getButton()));*/
+                ToastCancelClick.onScreenClick(e.getMouseX(), e.getMouseY(), e.getButton()));
+        ScreenEvent.MouseButtonReleased.Pre.BUS.addListener((ScreenEvent.MouseButtonReleased.Pre e) ->
+                ToastCancelClick.onScreenRelease(e.getButton()));*/
         //?} else {
         MinecraftForge.EVENT_BUS.addListener((ScreenEvent.MouseButtonPressed.Pre e) -> {
             if (ToastCancelClick.onScreenClick(e.getMouseX(), e.getMouseY(), e.getButton())) {
+                e.setCanceled(true);
+            }
+        });
+        MinecraftForge.EVENT_BUS.addListener((ScreenEvent.MouseButtonReleased.Pre e) -> {
+            if (ToastCancelClick.onScreenRelease(e.getButton())) {
                 e.setCanceled(true);
             }
         });

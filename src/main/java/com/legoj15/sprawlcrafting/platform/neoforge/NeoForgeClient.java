@@ -40,9 +40,15 @@ public class NeoForgeClient {
         NeoForge.EVENT_BUS.addListener(NeoForgeClient::onLoggingOut);
         NeoForge.EVENT_BUS.addListener(NeoForgeClient::onClientTick);
         // Clicking the progress toast while any screen is open cancels the craft (issue #34):
-        // canceling the Pre event keeps the press from the screen underneath.
+        // canceling the Pre event keeps the press from the screen underneath, and its release is
+        // dropped too (a lone release can drop a carried stack).
         NeoForge.EVENT_BUS.addListener((ScreenEvent.MouseButtonPressed.Pre e) -> {
             if (ToastCancelClick.onScreenClick(e.getMouseX(), e.getMouseY(), e.getButton())) {
+                e.setCanceled(true);
+            }
+        });
+        NeoForge.EVENT_BUS.addListener((ScreenEvent.MouseButtonReleased.Pre e) -> {
+            if (ToastCancelClick.onScreenRelease(e.getButton())) {
                 e.setCanceled(true);
             }
         });

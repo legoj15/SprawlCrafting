@@ -23,8 +23,8 @@ import org.lwjgl.opengl.GL11;
  * <p>The rectangle goes stale after 250 ms without a redraw: the toast stops drawing when it hides
  * (or the connection drops), and its last position must not stay clickable.
  *
- * <p>The release of a consumed press still reaches the screen; a container screen's
- * {@code mouseReleased} with no prior press is a no-op in practice, so there is no release hook.
+ * <p>A consumed press's release is swallowed too ({@link #onScreenRelease}): a container screen
+ * treats a lone release outside its panel as a click at slot -999, which drops a carried stack.
  */
 public final class ToastCancelClick {
 
@@ -42,6 +42,9 @@ public final class ToastCancelClick {
     private static int width;
     private static int height;
     private static long recordedAt;
+    private static boolean recorded;
+    /** The last left press was the toast's, so its release must not reach the screen either. */
+    private static boolean swallowRelease;
 
     private ToastCancelClick() {
     }
@@ -53,6 +56,7 @@ public final class ToastCancelClick {
         width = toastWidth;
         height = toastHeight;
         recordedAt = System.nanoTime();
+        recorded = true;
     }
 
     /**
@@ -68,12 +72,13 @@ public final class ToastCancelClick {
 
     /** Drops the rectangle — called when the toast hides. */
     public static void clear() {
-        recordedAt = 0L;
+        recorded = false;
+        swallowRelease = false;
     }
 
     /** True inside the recorded rectangle, and only while it is still fresh. */
     public static boolean isOver(double mouseX, double mouseY) {
-        if (System.nanoTime() - recordedAt > STALE_NANOS) {
+        if (!recorded || System.nanoTime() - recordedAt > STALE_NANOS) {
             return false;
         }
         return mouseX >= x && mouseX <= x + width && mouseY >= y && mouseY <= y + height;
@@ -84,10 +89,24 @@ public final class ToastCancelClick {
      * screen. Left button only, and only when the keybind's own gate passes.
      */
     public static boolean onScreenClick(double mouseX, double mouseY, int button) {
-        if (button != 0 || !isOver(mouseX, mouseY) || !CancelCraftKey.canCancel()) {
+        if (button != 0) {
+            return false;
+        }
+        swallowRelease = false; // every left press re-decides, so a lost release can't eat a later one
+        if (!isOver(mouseX, mouseY) || !CancelCraftKey.canCancel()) {
             return false;
         }
         CancelCraftKey.sendCancel();
+        swallowRelease = true;
+        return true;
+    }
+
+    /** A screen release asks this; true means it belongs to a press the toast consumed and must be dropped. */
+    public static boolean onScreenRelease(int button) {
+        if (button != 0 || !swallowRelease) {
+            return false;
+        }
+        swallowRelease = false;
         return true;
     }
 
@@ -114,8 +133,14 @@ public final class ToastCancelClick {
 
         @SubscribeEvent
         public void onMouseInput(GuiScreenEvent.MouseInputEvent.Pre event) {
-            if (!Mouse.getEventButtonState() || Mouse.getEventButton() != 0) {
-                return; // only left presses reach the toast
+            if (Mouse.getEventButton() != 0) {
+                return; // only the left button reaches the toast (-1 = a plain move)
+            }
+            if (!Mouse.getEventButtonState()) {
+                if (ToastCancelClick.onScreenRelease(0)) {
+                    event.setCanceled(true); // the release of a press the toast took
+                }
+                return;
             }
             GuiScreen gui = event.getGui();
             Minecraft mc = Minecraft.getMinecraft();
