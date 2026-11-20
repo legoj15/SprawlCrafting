@@ -334,7 +334,7 @@ public final class RecipeGraphSolver<R, K> {
         return new Result.Success<>(steps, layouts);
     }
 
-    /** Two step's runs concatenated, merging a boundary pair that lists equal items. */
+    /** Two steps' runs concatenated, merging a boundary pair that lists equal items. */
     private static <K> List<SlotLayout<K>> concatRuns(List<SlotLayout<K>> first, List<SlotLayout<K>> second) {
         if (first.isEmpty()) {
             return second;
@@ -1052,7 +1052,7 @@ public final class RecipeGraphSolver<R, K> {
                 int stepMark = steps == null ? 0 : steps.size();
                 long complete = 0;
                 boolean done = false;
-                List<PlanSimulator.Chunk<K>> chunks = new ArrayList<>();
+                List<PlanSimulator.Chunk<K>> chunks = null;
                 for (int round = 0; ; round++) {
                     int replayMark = inv.mark();
                     chunks = new ArrayList<>();

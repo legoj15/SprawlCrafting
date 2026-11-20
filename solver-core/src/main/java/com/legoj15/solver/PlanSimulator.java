@@ -9,7 +9,7 @@ import java.util.function.Function;
 import java.util.function.UnaryOperator;
 
 /**
- * Replays a plan the way the executors run it: one craft at a time, every ingredient slot filled by
+ * Replays a plan the way an executor runs it without a layout: one craft at a time, every ingredient slot filled by
  * {@link SlotAssignment} against the stock as it stands at that craft, the result and the remainders
  * of what was consumed credited once the craft is done. A plan passes only if no slot of any craft
  * comes up empty.

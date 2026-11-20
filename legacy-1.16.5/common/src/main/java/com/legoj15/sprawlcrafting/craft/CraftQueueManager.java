@@ -158,7 +158,7 @@ public final class CraftQueueManager {
             // the player to grab (a real vanilla craft) instead of auto-crafting it.
             if (job.isFinalStep() && job.isLastCraftOfStep() && canHandOff(player, job.currentStep())) {
                 CraftExecutor.FillOutcome fill = CraftExecutor.tryFillFinalGrid(player, job.currentStep().recipeId(),
-                        job.produced());
+                        job.produced(), job.currentCraftLayout());
                 if (fill.kind() == CraftExecutor.FillOutcome.Kind.FILLED) {
                     job.onCraftPerformed();
                     ACTIVE.remove(player.getUUID());
@@ -177,7 +177,7 @@ public final class CraftQueueManager {
                 // FALLBACK: couldn't hand off (recipe locked, grid uncleanable, …) — auto-craft below.
             }
             CraftExecutor.CraftResult result = CraftExecutor.craftOnce(player, job.currentStep().recipeId(),
-                    job.produced(), job.stationDependent());
+                    job.produced(), job.stationDependent(), job.currentCraftLayout());
             switch (result.kind()) {
                 case SUCCESS:
                     if (result.usedStation()) {

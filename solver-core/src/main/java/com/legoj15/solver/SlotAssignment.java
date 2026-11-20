@@ -8,10 +8,11 @@ import java.util.Objects;
 import java.util.function.ToLongFunction;
 
 /**
- * The one rule for which stock fills which ingredient slot of a single craft. The solver plans with
- * it ({@link PlanSimulator}, and so every plan {@link RecipeGraphSolver#solve} returns) and every
- * executor calls it to pick the inventory stack for each grid slot, so a plan never depends on where
- * items happen to sit in the inventory.
+ * The one rule for which stock fills which ingredient slot of a single craft, when nothing else
+ * decides it. The solver's exact pass plans with it ({@link PlanSimulator}); every plan carries its
+ * own per-slot choice ({@link RecipeGraphSolver.Result.Success#layouts()}), and an executor falls back
+ * to this rule only for a step without a layout or when the inventory no longer matches one. Either
+ * way the choice never depends on where items happen to sit in the inventory.
  *
  * <p>The rule, deterministic for a given slot list and stock:
  * <ol>
