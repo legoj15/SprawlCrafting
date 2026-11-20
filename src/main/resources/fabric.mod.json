@@ -23,7 +23,8 @@
             "com.legoj15.sprawlcrafting.platform.fabric.FabricClient"
         ],
         "jei_mod_plugin": [
-            "com.legoj15.sprawlcrafting.compat.jei.SprawlCraftingJeiPlugin"
+            "com.legoj15.sprawlcrafting.compat.jei.SprawlCraftingJeiPlugin"<% if (has_ae2_jei) { %>,
+            "com.legoj15.sprawlcrafting.compat.ae2.jei.StationJeiPlugin"<% } %>
         ],
         "rei_client": [
             "com.legoj15.sprawlcrafting.platform.fabric.FabricReiPlugin"
@@ -33,7 +34,8 @@
         ]
     },
     "mixins": [
-        "${mod_id}.mixins.json"
+        "${mod_id}.mixins.json"<% if (has_ae2_jei) { %>,
+        "sprawlcrafting.ae2jei.mixins.json"<% } %>
     ],
     "depends": {
         "fabricloader": ">=${fabric_loader_min}",

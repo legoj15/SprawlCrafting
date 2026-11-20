@@ -53,6 +53,15 @@ type = "optional"
 versionRange = "[0,)"
 ordering = "AFTER"
 side = "CLIENT"
+# AE2: a soft dependency, here only for load order. AE2 26.x ships its own JEI crafting-terminal
+# transfer handler; JEI keeps the LAST handler registered per menu class, in mod-list order, and ours
+# (which fronts AE2's to add the deferred-craft paths) must come after it. Harmless without it.
+[[dependencies.${mod_id}]]
+modId = "ae2"
+type = "optional"
+versionRange = "[0,)"
+ordering = "AFTER"
+side = "CLIENT"
 
 # Features are specific properties of the game environment, that you may want to declare you require. This example declares
 # that your mod requires GL version 3.2 or higher. Other features will be added. They are side aware so declaring this won't
