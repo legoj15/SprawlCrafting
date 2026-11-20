@@ -311,7 +311,13 @@ public final class CraftExecutor {
             //? if >=1.21.11 {
             /*net.minecraft.world.item.ItemStackTemplate remainder = entry.getKey().getCraftingRemainder();
             if (remainder != null) {
-                remainders.merge(remainder.create().getItem(), entry.getValue(), Long::sum);
+                // The batch inserts plain single items per consumed cell; a template carrying a count or
+                // components would come out different from k single crafts, so it runs unbatched.
+                ItemStack plain = remainder.create();
+                if (plain.getCount() != 1 || !ItemStack.isSameItemSameComponents(plain, new ItemStack(plain.getItem()))) {
+                    return null;
+                }
+                remainders.merge(plain.getItem(), entry.getValue(), Long::sum);
             }*/
             //?} else {
             if (entry.getKey().hasCraftingRemainingItem()) {
@@ -1198,7 +1204,7 @@ public final class CraftExecutor {
             }
         }
         if (pool != null) {
-            java.util.Set<Item> candidates = new java.util.HashSet<>();
+            Set<Item> candidates = new HashSet<>();
             slots.forEach(candidates::addAll);
             for (Item item : candidates) {
                 long inStation = pool.count(item);

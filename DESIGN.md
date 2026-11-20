@@ -246,7 +246,7 @@ than a full exponential search — see "Known limitations".
    tree against the player's inventory; emit a topologically ordered list of steps
    (recipe × count). Held items are used before any sub-craft is planned.
 3. **Execution (server, `CraftQueueManager` / `CraftExecutor`).** Each step starts 10 ticks
-   after the previous one; a step of ≤ 16 crafts then runs one craft per 10 ticks, a bigger one in
+   after the previous one (the next tick when both steps are bulk); a step of ≤ 16 crafts then runs one craft per 10 ticks, a bigger one in
    bursts (as many crafts as fit a 2 ms per-player, 10 ms per-tick time budget shared by all
    players, applied in provably-equal batches); every craft is still re-checked and
    consumed against the live inventory and its output inserted as real items.
