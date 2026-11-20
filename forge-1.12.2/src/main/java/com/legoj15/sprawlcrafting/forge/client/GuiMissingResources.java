@@ -25,9 +25,9 @@ import org.lwjgl.input.Mouse;
  */
 public class GuiMissingResources extends GuiScreen {
 
-    /** Narrowest the panel gets; it widens past this when a row's name and need text would not fit. */
+    /** Narrowest the panel gets; it widens past this when the title or a row would not fit. */
     private static final int MIN_PANEL_WIDTH = 256;
-    /** Screen margin kept clear on each side when the panel is widened to fit its rows. */
+    /** Screen margin kept clear on each side when the panel is widened to fit its title or rows. */
     private static final int SIDE_MARGIN = 10;
     private static final int ROW_HEIGHT = 20;
     /** Item name starts this far in from the panel's left edge (after the 16-px icon). */
@@ -48,7 +48,7 @@ public class GuiMissingResources extends GuiScreen {
     private final GuiScreen parent;
 
     private int scrollOffset;
-    /** Computed in {@link #initGui}: {@link #MIN_PANEL_WIDTH} widened to fit the longest row. */
+    /** Computed in {@link #initGui}: {@link #MIN_PANEL_WIDTH} widened to fit the title and the longest row. */
     private int panelWidth = MIN_PANEL_WIDTH;
     private int panelLeft;
     private int panelTop;
@@ -112,9 +112,10 @@ public class GuiMissingResources extends GuiScreen {
     }
 
     /**
-     * The panel width that fits the widest row (name + gap + need text) without clipping: never under
-     * {@link #MIN_PANEL_WIDTH}, and past it only as far as the window's side margins allow. A row still
-     * too long for a small window has its name cut short in {@link #drawScreen}.
+     * The panel width that fits the title and the widest row (name + gap + need text) without
+     * clipping: never under {@link #MIN_PANEL_WIDTH}, and past it only as far as the window's side
+     * margins allow. A title or row name still too long for a small window is cut short in
+     * {@link #drawScreen}.
      */
     private int fitPanelWidth() {
         int widestRow = 0;
@@ -190,7 +191,8 @@ public class GuiMissingResources extends GuiScreen {
         }
         if (data.approximate()) {
             this.drawString(this.fontRenderer,
-                    TextFormatting.GRAY + I18n.format("sprawlcrafting.gather.approximate"),
+                    fit(TextFormatting.GRAY + I18n.format("sprawlcrafting.gather.approximate"),
+                            panelWidth - 16),
                     panelLeft + 8, panelTop + 24, 0xA0A0A0);
         }
 
