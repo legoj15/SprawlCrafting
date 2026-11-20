@@ -36,6 +36,11 @@ public class GuiMissingResources extends GuiScreen {
     private static final int NEED_INSET = 12;
     /** Minimum space between the end of an item name and the start of its need text. */
     private static final int NAME_NEED_GAP = 8;
+    /**
+     * The title ends this far in from the panel's right edge, keeping clear of the scroll hint
+     * ({@code ^ v}, drawn at {@code panelRight - 16} on the title line).
+     */
+    private static final int TITLE_RIGHT_INSET = 20;
     private static final String ELLIPSIS = "...";
     private static final int DONE_BUTTON = 0;
 
@@ -118,9 +123,22 @@ public class GuiMissingResources extends GuiScreen {
             int need = this.fontRenderer.getStringWidth(needText(demand.count()));
             widestRow = Math.max(widestRow, name + NAME_NEED_GAP + need);
         }
-        int wanted = NAME_INSET + widestRow + NEED_INSET;
+        int wanted = Math.max(NAME_INSET + widestRow + NEED_INSET,
+                titleLeftInset() + this.fontRenderer.getStringWidth(titleText()) + TITLE_RIGHT_INSET);
         int available = Math.max(MIN_PANEL_WIDTH, this.width - 2 * SIDE_MARGIN);
         return Math.max(MIN_PANEL_WIDTH, Math.min(wanted, available));
+    }
+
+    /** The title: "Materials needed", plus ": <target name>" when the target is known. */
+    private String titleText() {
+        ItemStack target = data.target();
+        return TextFormatting.WHITE + I18n.format("sprawlcrafting.gather.title")
+                + (target.isEmpty() ? "" : ": " + target.getDisplayName());
+    }
+
+    /** Title text starts after the target icon when there is one, else at the panel's padding. */
+    private int titleLeftInset() {
+        return data.target().isEmpty() ? 8 : 28;
     }
 
     @Override
@@ -154,13 +172,21 @@ public class GuiMissingResources extends GuiScreen {
         drawRect(panelLeft, panelTop, panelRight, panelTop + 1, 0xFF000000);
 
         ItemStack target = data.target();
-        String title = TextFormatting.WHITE + I18n.format("sprawlcrafting.gather.title")
-                + (target.isEmpty() ? "" : ": " + target.getDisplayName());
+        ItemStack hovered = null;
+        String fullTitle = titleText();
+        int titleLeft = panelLeft + titleLeftInset();
+        int titleRight = panelRight - TITLE_RIGHT_INSET;
+        String title = fit(fullTitle, titleRight - titleLeft);
         if (!target.isEmpty()) {
             renderIcon(target, panelLeft + 8, panelTop + 6);
-            this.drawString(this.fontRenderer, title, panelLeft + 28, panelTop + 10, 0xFFFFFF);
-        } else {
-            this.drawString(this.fontRenderer, title, panelLeft + 8, panelTop + 10, 0xFFFFFF);
+        }
+        this.drawString(this.fontRenderer, title, titleLeft, panelTop + 10, 0xFFFFFF);
+        // A cut-short title is read in full by hovering it (or the icon): the target's item tooltip.
+        boolean overTitleIcon = !target.isEmpty() && mouseX >= panelLeft + 8 && mouseX <= panelLeft + 24;
+        boolean overCutTitle = !target.isEmpty() && !title.equals(fullTitle)
+                && mouseX >= titleLeft && mouseX < titleRight;
+        if ((overTitleIcon || overCutTitle) && mouseY >= panelTop + 6 && mouseY <= panelTop + 22) {
+            hovered = target;
         }
         if (data.approximate()) {
             this.drawString(this.fontRenderer,
@@ -169,7 +195,6 @@ public class GuiMissingResources extends GuiScreen {
         }
 
         List<ItemDemand> demands = data.demands();
-        ItemStack hovered = null;
         if (demands.isEmpty()) {
             this.drawCenteredString(this.fontRenderer,
                     TextFormatting.GREEN + I18n.format("sprawlcrafting.gather.have_raws"),
