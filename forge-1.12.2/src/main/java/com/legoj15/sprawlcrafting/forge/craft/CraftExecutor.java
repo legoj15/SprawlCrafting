@@ -487,6 +487,20 @@ public final class CraftExecutor {
                                      ProducedLedger<ItemKey> ledger, boolean withNetwork) {
         List<Source> sources = buildSources(player, player.inventory,
                 withNetwork ? ingredientItems(ingredients) : null);
+        // First with the job's admitted altered copies in the preference rule (#26); when that leaves
+        // an ingredient unfilled, the pre-#26 rule exactly. The rule cannot see which cells accept an
+        // altered copy, so counting one can steer a cell to an identity only another cell could take;
+        // the second pass makes the change never worse than before it. A pass mutates nothing.
+        Assignment first = assignPass(sources, ingredients, ledger, true);
+        if (first.complete() || ledger == null) {
+            return first;
+        }
+        return assignPass(sources, ingredients, ledger, false);
+    }
+
+    /** One {@link #assign} attempt over {@code sources}; {@code admittedPreference}: the #26 rule. */
+    private static Assignment assignPass(List<Source> sources, List<Ingredient> ingredients,
+                                         ProducedLedger<ItemKey> ledger, boolean admittedPreference) {
         int[] chosen = new int[ingredients.size()];
         int[] reserved = new int[sources.size()];
         LedgerTally<ItemKey> tally = new LedgerTally<ItemKey>();
@@ -496,14 +510,15 @@ public final class CraftExecutor {
             countRefused(sources, tally);
             admitting = tally.admissible(ledger);
         }
-        ItemKey[] preferred = preferredKeys(sources, ingredients, admitting);
+        ItemKey[] preferred = preferredKeys(sources, ingredients, admittedPreference ? admitting : null);
         for (int i = 0; i < chosen.length; i++) {
             Ingredient ingredient = ingredients.get(i);
             if (ingredient == null || ingredient == Ingredient.EMPTY) {
                 chosen[i] = -1;
                 continue;
             }
-            int idx = findMatchingSource(sources, ingredient, preferred[i], reserved, admitting, ledgerTakes);
+            int idx = findMatchingSource(sources, ingredient, preferred[i], reserved, admitting, ledgerTakes,
+                    admittedPreference);
             if (idx < 0) {
                 return new Assignment(sources, chosen, tally, ingredient);
             }
@@ -674,7 +689,7 @@ public final class CraftExecutor {
      */
     private static int findMatchingSource(List<Source> sources, Ingredient ingredient, ItemKey preferred,
                                           int[] reserved, ProducedLedger<ItemKey> admitting,
-                                          Map<ItemKey, Integer> ledgerTakes) {
+                                          Map<ItemKey, Integer> ledgerTakes, boolean admittedPreference) {
         if (preferred != null) {
             for (int i = 0; i < sources.size(); i++) {
                 ItemStack stack = sources.get(i).peek();
@@ -683,7 +698,7 @@ public final class CraftExecutor {
                     return i;
                 }
             }
-            if (admitting != null) {
+            if (admitting != null && admittedPreference) {
                 for (int i = 0; i < sources.size(); i++) {
                     ItemStack stack = sources.get(i).peek();
                     if (stack.isEmpty() || stack.getCount() - reserved[i] <= 0 || usableAsIngredient(stack)) {

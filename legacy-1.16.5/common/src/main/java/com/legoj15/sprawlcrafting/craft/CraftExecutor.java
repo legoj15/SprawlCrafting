@@ -647,8 +647,9 @@ public final class CraftExecutor {
      * they count as plain picks in the tally (a station only holds plain items), which can only draw the
      * ledger down, never admit more.
      */
-    private static Assignment assign(PlayerInventory inventory, List<Ingredient> ingredients,
-                                     ProducedLedger<Item> ledger, StationStorage station) {
+    private static Assignment assignPass(PlayerInventory inventory, List<Ingredient> ingredients,
+                                         ProducedLedger<Item> ledger, StationStorage station,
+                                         boolean admittedPreference) {
         int[] slots = new int[ingredients.size()];
         Item[] stationItems = new Item[ingredients.size()];
         int[] reserved = new int[MAIN_SLOTS];
@@ -661,7 +662,7 @@ public final class CraftExecutor {
         }
         StationPool pool = station == null ? null : new StationPool(station);
         Map<Item, Integer> taken = pool == null ? Collections.<Item, Integer>emptyMap() : pool.taken;
-        Item[] preferred = preferredItems(inventory, ingredients, pool, admitting);
+        Item[] preferred = preferredItems(inventory, ingredients, pool, admittedPreference ? admitting : null);
         for (int n = 0; n < slots.length; n++) {
             Ingredient ingredient = ingredients.get(n);
             if (ingredient == null || ingredient.isEmpty()) {
@@ -671,14 +672,16 @@ public final class CraftExecutor {
             int slot;
             Item fromStation = null;
             if (pool == null) {
-                slot = findMatchingSlot(inventory, ingredient, preferred[n], reserved, admitting, ledgerTakes);
+                slot = findMatchingSlot(inventory, ingredient, preferred[n], reserved, admitting, ledgerTakes,
+                        admittedPreference);
             } else {
                 slot = preferred[n] == null ? -1 : findPreferredSlot(inventory, ingredient, preferred[n], reserved);
                 if (slot < 0) {
                     fromStation = pool.take(ingredient,
                             preferred[n] == null ? null : Collections.singletonList(preferred[n]));
                 }
-                if (slot < 0 && fromStation == null && preferred[n] != null && admitting != null) {
+                if (slot < 0 && fromStation == null && preferred[n] != null && admitting != null
+                        && admittedPreference) {
                     // The station's plain copy of the preferred item came first; the job's altered
                     // copy of it still beats an alternative item, which a later cell may need alone.
                     slot = findRefusedPreferredSlot(inventory, ingredient, preferred[n], reserved, admitting,
@@ -713,6 +716,21 @@ public final class CraftExecutor {
             }
         }
         return new Assignment(slots, tally, null, taken, stationItems);
+    }
+
+    /**
+     * {@link #assignPass} with the job's admitted altered copies in the preference rule (#26); when
+     * that leaves a cell unfilled, the pre-#26 rule exactly. The rule cannot see which cells accept an
+     * altered copy, so counting one can steer a cell to an item only another cell could take; the
+     * second pass makes the change never worse than before it. A pass mutates nothing.
+     */
+    private static Assignment assign(PlayerInventory inventory, List<Ingredient> ingredients,
+                                     ProducedLedger<Item> ledger, StationStorage station) {
+        Assignment first = assignPass(inventory, ingredients, ledger, station, true);
+        if (first.missing == null || ledger == null) {
+            return first;
+        }
+        return assignPass(inventory, ingredients, ledger, station, false);
     }
 
     /**
@@ -892,10 +910,10 @@ public final class CraftExecutor {
      */
     private static int findMatchingSlot(PlayerInventory inventory, Ingredient ingredient, Item preferred,
                                         int[] reserved, ProducedLedger<Item> admitting,
-                                        Map<Item, Integer> ledgerTakes) {
+                                        Map<Item, Integer> ledgerTakes, boolean admittedPreference) {
         if (preferred != null) {
             int slot = findPreferredSlot(inventory, ingredient, preferred, reserved);
-            if (slot < 0 && admitting != null) {
+            if (slot < 0 && admitting != null && admittedPreference) {
                 slot = findRefusedPreferredSlot(inventory, ingredient, preferred, reserved, admitting, ledgerTakes);
             }
             if (slot >= 0) {
