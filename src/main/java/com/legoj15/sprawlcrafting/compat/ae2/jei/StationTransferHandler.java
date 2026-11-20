@@ -168,7 +168,10 @@ public class StationTransferHandler<C extends AbstractContainerMenu>
             }
             return DeferredTransfers.gatherListError(holder);
         }
-        return busyOr(() -> stock.transferRecipe(container, recipe, recipeSlots, player, maxTransfer, doTransfer));*/
+        // Helper off: AE2's own missing report (or its partial transfer on the click), same shape as above.
+        return doTransfer || ClientJobTracker.hasActiveJob()
+                ? busyOr(() -> stock.transferRecipe(container, recipe, recipeSlots, player, maxTransfer, doTransfer))
+                : simulated;*/
         //?} else {
         GridContext grid = usable ? GridContext.CRAFTING_TABLE : GridContext.INVENTORY;
         Craftability craftability = DeferredCraftableCache.classify(holder, grid);
