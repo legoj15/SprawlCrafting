@@ -282,10 +282,13 @@ public final class CraftExecutor {
         // re-opened for every craft, so a closed or offline station stops being drawn from at once.
         final StationStorage station = StationStorages.open(player);
         Assignment assignment = null;
-        if (station == null || !stationPlanned) {
-            // With a station open, the inventory-only pass stays plain (#40): the station's plain stock
-            // must be drawn before the player's protected copies, which the station pass still reaches.
-            assignment = assign(inventory, ingredients, ledger, null, layout, allowProtected && station == null);
+        // A protected job (#40) with a station open goes straight to the pooled pass: its per-cell order
+        // (the preferred item from the inventory, then the station, then as a protected copy, before
+        // any alternative) is the rule, while an inventory-only pass would either take a protected copy
+        // ahead of the station's plain one or, kept plain, reject the plan's layout and substitute an
+        // alternative a later step needs.
+        if ((station == null || !stationPlanned) && !(allowProtected && station != null)) {
+            assignment = assign(inventory, ingredients, ledger, null, layout, allowProtected);
             if (assignment.missing != null && station != null) {
                 assignment = null; // the inventory alone fell short: let the open station supply the rest
             }
@@ -957,10 +960,13 @@ public final class CraftExecutor {
         List<Slot> inputs = grid.inputs();
         PlayerInventory inventory = player.inventory;
         // Phase 1: match every cell to an inventory slot without mutating; an open station joins the pool
-        // only for what the inventory lacks, exactly as craftOnce assigns a non-station-planned job.
+        // only for what the inventory lacks, exactly as craftOnce assigns a non-station-planned job (and,
+        // as there, a protected job with a station open uses the pooled pass straight away, #40).
         StationStorage station = StationStorages.open(player);
-        Assignment assignment = assign(inventory, cells, ledger, null, layout, allowProtected);
-        if (assignment.missing != null && station != null) {
+        Assignment assignment = allowProtected && station != null
+                ? assign(inventory, cells, ledger, station, layout, true)
+                : assign(inventory, cells, ledger, null, layout, allowProtected);
+        if (assignment.missing != null && station != null && !allowProtected) {
             assignment = assign(inventory, cells, ledger, station, layout, allowProtected);
         }
         if (assignment.missing != null) {
@@ -1271,11 +1277,11 @@ public final class CraftExecutor {
      *       item than the plan chose could starve a later step the plan counted on);</li>
      *   <li>(with a ledger, #26 pass only) a refused inventory copy of the preferred item the tally
      *       admits: the job's altered intermediate, which the plan's counts include;</li>
+     *   <li>(with {@code allowProtected} only, #40) a protected inventory copy of the preferred item:
+     *       still before any alternative item, which a later cell may need alone;</li>
      *   <li>any usable inventory match;</li>
      *   <li>any of the ingredient's items from the station;</li>
-     *   <li>(with {@code allowProtected} only, #40) a protected inventory stack — the preferred item
-     *       first, then any the ingredient accepts: a job planned with the player's protected stacks
-     *       may consume them, but only after every plain stack and the station's stock fell short;</li>
+     *   <li>(with {@code allowProtected} only) any protected inventory stack the ingredient accepts;</li>
      *   <li>(with a ledger) a refused inventory stack the tally admits, the last resort as before.</li>
      * </ol>
      * Station cells are marked {@link #STATION_CELL} and summed per item in {@link Assignment#stationTakes};
@@ -1720,10 +1726,10 @@ public final class CraftExecutor {
     }
 
     /**
-     * A stack of {@code preferred} ({@link #preferredItems}) when one matches; otherwise the first match in
-     * inventory order, then (a protected-planned job only) a protected stack — {@code preferred}'s own
-     * copies first, then any — and last (with a ledger) a refused stack the tally admits: the plain and
-     * protected tiers of {@link #assignPass}'s documented order.
+     * A plain stack of {@code preferred} ({@link #preferredItems}) when one matches, then (a protected-planned
+     * job only) a protected copy of it; otherwise the first plain match in inventory order, then (a
+     * protected-planned job only) any protected stack, and last (with a ledger) a refused stack the tally
+     * admits: the inventory tiers of {@link #assignPass}'s documented order.
      */
     private static int findMatchingSlot(PlayerInventory inventory, Ingredient ingredient, Item preferred,
                                         int[] reserved, LedgerTally<Item, LedgerVariant> tally,
