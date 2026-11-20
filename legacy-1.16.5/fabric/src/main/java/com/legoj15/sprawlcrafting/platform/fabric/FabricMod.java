@@ -7,6 +7,7 @@ import com.legoj15.sprawlcrafting.craft.StationStorages;
 import com.legoj15.sprawlcrafting.network.CancelCraftPacket;
 import com.legoj15.sprawlcrafting.network.CraftingScreenStatePacket;
 import com.legoj15.sprawlcrafting.network.StartDeferredCraftPacket;
+import com.legoj15.sprawlcrafting.network.StartProtectedCraftPacket;
 
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
@@ -31,6 +32,14 @@ public class FabricMod implements ModInitializer {
                 (server, player, handler, buf, sender) -> {
                     final StartDeferredCraftPacket packet = StartDeferredCraftPacket.read(buf);
                     server.execute(() -> CraftRequests.handleStartRequest(player, packet.recipeId()));
+                });
+        // Same shape as the plain start, but the confirmed protected tier (issue #40): the server may
+        // plan with the player's protected stacks too. Its own channel, so an older server that never
+        // registered it never receives one (the client's canSend gate keeps it that way).
+        ServerPlayNetworking.registerGlobalReceiver(StartProtectedCraftPacket.ID,
+                (server, player, handler, buf, sender) -> {
+                    final StartProtectedCraftPacket packet = StartProtectedCraftPacket.read(buf);
+                    server.execute(() -> CraftRequests.handleStartRequest(player, packet.recipeId(), true));
                 });
         ServerPlayNetworking.registerGlobalReceiver(CraftingScreenStatePacket.ID,
                 (server, player, handler, buf, sender) -> {

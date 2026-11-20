@@ -167,7 +167,7 @@ public final class CraftQueueManager {
             // the player to grab (a real vanilla craft) instead of auto-crafting it.
             if (job.isFinalStep() && job.isLastCraftOfStep() && canHandOff(player, job.currentStep())) {
                 CraftExecutor.FillOutcome fill = CraftExecutor.tryFillFinalGrid(player, job.currentStep().recipeId(),
-                        job.produced(), job.currentCraftLayout());
+                        job.produced(), job.currentCraftLayout(), job.usesProtected());
                 if (fill.kind() == CraftExecutor.FillOutcome.Kind.FILLED) {
                     job.onCraftPerformed();
                     ACTIVE.remove(player.getUUID());
@@ -188,7 +188,8 @@ public final class CraftQueueManager {
             CraftExecutor.CraftResult result = bulk
                     ? craftBulk(player, job)
                     : CraftExecutor.craftOnce(player, job.currentStep().recipeId(),
-                            job.produced(), job.stationDependent(), job.currentCraftLayout(), false);
+                            job.produced(), job.stationDependent(), job.currentCraftLayout(), false,
+                            job.usesProtected());
             switch (result.kind()) {
                 case SUCCESS:
                     if (result.usedStation()) {
@@ -283,10 +284,12 @@ public final class CraftQueueManager {
         maxCrafts = Math.min(maxCrafts, job.craftsLeftInLayoutRun());
         if (maxCrafts <= 1) {
             return CraftExecutor.craftOnce(player, job.currentStep().recipeId(),
-                    job.produced(), job.stationDependent(), job.currentCraftLayout(), true);
+                    job.produced(), job.stationDependent(), job.currentCraftLayout(), true,
+                    job.usesProtected());
         }
         return CraftExecutor.craftBatch(player, job.currentStep().recipeId(),
-                job.produced(), job.stationDependent(), job.currentCraftLayout(), maxCrafts, true);
+                job.produced(), job.stationDependent(), job.currentCraftLayout(), maxCrafts, true,
+                job.usesProtected());
     }
 
     /**

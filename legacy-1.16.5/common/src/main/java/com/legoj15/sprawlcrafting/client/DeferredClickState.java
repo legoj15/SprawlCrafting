@@ -15,13 +15,17 @@ import net.minecraft.util.text.ITextComponent;
 /**
  * Preview-then-confirm state for yellow recipe-book clicks (render thread only). First click on a
  * deferred-craftable recipe shows its plan; a second click on the same recipe (inventory unchanged)
- * sends the start packet and the server re-plans authoritatively.
+ * sends the start packet and the server re-plans authoritatively. A plan that consumes the player's
+ * protected stacks (issue #40) shows the warning lines in its preview and its confirm sends the
+ * protected start packet instead.
  */
 public final class DeferredClickState {
 
     private static int pendingInventoryGeneration = -1;
     private static List<ITextComponent> previewLines = ImmutableList.of();
     private static IRecipe<?> pending;
+    /** Whether the pending preview's plan consumes protected stacks (see {@link #confirmPending}). */
+    private static boolean pendingProtected;
 
     private DeferredClickState() {
     }
@@ -29,6 +33,14 @@ public final class DeferredClickState {
     /** Fires the start request for a recipe we hold directly (the JEI transfer button). */
     public static void sendStartPacket(IRecipe<?> recipe) {
         Services.PLATFORM.sendStartCraft(recipe.getId());
+    }
+
+    /**
+     * Fires the protected start request (a plan only the player's protected stacks can make; the JEI
+     * transfer button). No-op unless the server has the protected channel.
+     */
+    public static void sendProtectedStartPacket(IRecipe<?> recipe) {
+        Services.PLATFORM.sendStartProtectedCraft(recipe.getId());
     }
 
     /**
@@ -49,7 +61,9 @@ public final class DeferredClickState {
         }
         pending = recipe;
         pendingInventoryGeneration = generation;
-        previewLines = CraftPreview.lines(outcome.job(), minecraft.level.getRecipeManager());
+        pendingProtected = outcome.job().usesProtected();
+        previewLines = CraftPreview.lines(outcome.job(), minecraft.level.getRecipeManager(),
+                minecraft.player.inventory);
     }
 
     /**
@@ -72,7 +86,11 @@ public final class DeferredClickState {
     /** Confirms the pending recipe (sends the start packet) and clears the preview. */
     public static void confirmPending() {
         if (pending != null) {
-            sendStartPacket(pending);
+            if (pendingProtected) {
+                sendProtectedStartPacket(pending);
+            } else {
+                sendStartPacket(pending);
+            }
             clear();
         }
     }
@@ -84,6 +102,7 @@ public final class DeferredClickState {
 
     public static void clear() {
         pending = null;
+        pendingProtected = false;
         previewLines = ImmutableList.of();
     }
 }

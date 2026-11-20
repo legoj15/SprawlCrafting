@@ -77,11 +77,23 @@ public class StationTransferHandler<C extends Container> implements IRecipeTrans
             if (craftability == Craftability.DIRECT && stock != null) {
                 return stock.transferRecipe(container, recipe, layout, player, maxTransfer, doTransfer);
             }
+            // A recipe only the protected tier can make (issue #40) confirms through the protected
+            // start packet; the button tooltip carries the special-items warning.
+            boolean protectedCraft = DeferredCraftableCache.isProtectedOnly(craft);
             if (doTransfer) {
-                DeferredClickState.sendStartPacket(craft);
+                if (protectedCraft) {
+                    DeferredClickState.sendProtectedStartPacket(craft);
+                } else {
+                    DeferredClickState.sendStartPacket(craft);
+                }
                 return null;
             }
-            return craftability == Craftability.DEFERRED ? DeferredCraftingTransferHandler.deferredAvailable() : null;
+            if (craftability == Craftability.DEFERRED) {
+                return protectedCraft
+                        ? DeferredCraftingTransferHandler.protectedDeferredAvailable(craft, grid)
+                        : DeferredCraftingTransferHandler.deferredAvailable();
+            }
+            return null;
         }
         if (craftability == Craftability.UNSOLVABLE && SprawlConfig.get().needsSystem()) {
             if (doTransfer) {

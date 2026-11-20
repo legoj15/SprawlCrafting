@@ -16,6 +16,7 @@ import com.legoj15.sprawlcrafting.network.CraftProgressPacket;
 import com.legoj15.sprawlcrafting.network.CraftingScreenStatePacket;
 import com.legoj15.sprawlcrafting.network.ProgressStatesV2;
 import com.legoj15.sprawlcrafting.network.StartDeferredCraftPacket;
+import com.legoj15.sprawlcrafting.network.StartProtectedCraftPacket;
 
 import net.minecraft.entity.player.ServerPlayerEntity;
 import net.minecraft.server.MinecraftServer;
@@ -75,6 +76,17 @@ public class ForgeMod {
             ForgeMod::acceptsVersion,
             ForgeMod::acceptsVersion);
 
+    /**
+     * The protected-craft start (issue #40: a plan that consumes the player's protected stacks) on its
+     * own channel for the same reason as the cancel. Its presence on the peer is also the client's
+     * offer gate: an older server never gets protected requests, because the client never offers them.
+     */
+    public static final SimpleChannel START_PROTECTED_CRAFT = NetworkRegistry.newSimpleChannel(
+            StartProtectedCraftPacket.ID,
+            () -> PROTOCOL,
+            ForgeMod::acceptsVersion,
+            ForgeMod::acceptsVersion);
+
     public ForgeMod() {
         // Server-list compatibility: present-or-absent on either side is fine.
         ModLoadingContext.get().registerExtensionPoint(ExtensionPoint.DISPLAYTEST,
@@ -109,6 +121,9 @@ public class ForgeMod {
         CANCEL_CRAFT.registerMessage(0, CancelCraftPacket.class,
                 CancelCraftPacket::write, CancelCraftPacket::read,
                 ForgeMod::handleCancelCraft, Optional.of(NetworkDirection.PLAY_TO_SERVER));
+        START_PROTECTED_CRAFT.registerMessage(0, StartProtectedCraftPacket.class,
+                StartProtectedCraftPacket::write, StartProtectedCraftPacket::read,
+                ForgeMod::handleStartProtected, Optional.of(NetworkDirection.PLAY_TO_SERVER));
     }
 
     private static void handleStart(StartDeferredCraftPacket packet, Supplier<NetworkEvent.Context> ctx) {
@@ -139,6 +154,14 @@ public class ForgeMod {
         final ServerPlayerEntity player = ctx.get().getSender();
         if (player != null) {
             ctx.get().enqueueWork(() -> CraftQueueManager.cancel(player));
+        }
+        ctx.get().setPacketHandled(true);
+    }
+
+    private static void handleStartProtected(StartProtectedCraftPacket packet, Supplier<NetworkEvent.Context> ctx) {
+        final ServerPlayerEntity player = ctx.get().getSender();
+        if (player != null) {
+            ctx.get().enqueueWork(() -> CraftRequests.handleStartRequest(player, packet.recipeId(), true));
         }
         ctx.get().setPacketHandled(true);
     }

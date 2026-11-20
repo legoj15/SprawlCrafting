@@ -26,18 +26,26 @@ import net.minecraft.util.ResourceLocation;
  * Terminal) its storage joins the pool, as it does on the server.
  *
  * <p>Offers are suppressed entirely when the server lacks the mod ({@code serverHasMod}): a start packet
- * could not be delivered there, so showing yellow would be a lie.
+ * could not be delivered there, so showing yellow would be a lie. The same rule gates the protected
+ * tier (issue #40): a second session that also counts the player's protected stacks is consulted only
+ * when the server has the protected channel ({@code canStartProtectedCraft}) and the inventory holds
+ * any, and a recipe only that session can make is {@code DEFERRED} (never direct) and remembered in
+ * {@code protectedOnly}, so its confirm click sends the protected start packet.
  */
 public final class DeferredCraftableCache {
 
     private static CraftPlanner.Session session;
+    /** The same pool plus the player's protected stacks; null unless protected planning is possible. */
+    private static CraftPlanner.Session protectedSession;
     private static int inventoryGeneration = -1;
     private static GridContext grid;
     private static RecipeManager recipeManager;
-    /** The {@link #stationCounts()} instance the session was built with (compared by reference). */
+    /** The {@link #stationCounts()} instance the sessions were built with (compared by reference). */
     private static Map<Item, Long> sessionStation;
     /** Recipes we marked craftable that vanilla did NOT — these get the yellow outline. */
     private static final Set<ResourceLocation> deferredOnly = new HashSet<>();
+    /** Of those, the recipes only a protected-including plan can make (issue #40). */
+    private static final Set<ResourceLocation> protectedOnly = new HashSet<>();
 
     private static Container stationMenu;
     private static long stationTick = Long.MIN_VALUE;
@@ -94,14 +102,28 @@ public final class DeferredCraftableCache {
     }
 
     public static boolean isSolvable(IRecipe<?> recipe, GridContext requestGrid) {
-        CraftPlanner.Session current = currentSession(requestGrid);
-        return current != null && current.isSolvable(recipe);
+        return classify(recipe, requestGrid) != CraftPlanner.Craftability.UNSOLVABLE;
     }
 
     /** Direct vs deferred vs unsolvable, for recipe-viewer (JEI) button states. */
     public static CraftPlanner.Craftability classify(IRecipe<?> recipe, GridContext requestGrid) {
         CraftPlanner.Session current = currentSession(requestGrid);
-        return current != null ? current.classify(recipe) : CraftPlanner.Craftability.UNSOLVABLE;
+        if (current == null) {
+            return CraftPlanner.Craftability.UNSOLVABLE;
+        }
+        CraftPlanner.Craftability plain = current.classify(recipe);
+        if (plain != CraftPlanner.Craftability.UNSOLVABLE || protectedSession == null) {
+            return plain;
+        }
+        if (protectedSession.classify(recipe) != CraftPlanner.Craftability.UNSOLVABLE) {
+            // Makeable only by consuming protected stacks: deferred, never direct — a one-step craft
+            // of that kind must run through our executor too (vanilla's own recipe-book placement
+            // refuses enchanted/renamed stacks) — and remembered so the confirm sends the protected
+            // start instead of the plain one.
+            protectedOnly.add(recipe.getId());
+            return CraftPlanner.Craftability.DEFERRED;
+        }
+        return CraftPlanner.Craftability.UNSOLVABLE;
     }
 
     /** Marks a recipe as craftable-only-via-deferral, for the yellow button tint. */
@@ -113,11 +135,31 @@ public final class DeferredCraftableCache {
         return recipe != null && deferredOnly.contains(recipe.getId());
     }
 
-    /** A full plan for the click preview, from the same session the outlines used. */
+    /** Whether {@code recipe} is makeable only by consuming protected stacks (see {@link #classify}). */
+    public static boolean isProtectedOnly(IRecipe<?> recipe) {
+        return recipe != null && protectedOnly.contains(recipe.getId());
+    }
+
+    /**
+     * A full plan for the click preview, from the same session the outlines used. A recipe only the
+     * protected session can make gets that plan, with {@code usesProtected} set — the preview's
+     * warning lines and the confirm click both key off it.
+     */
     public static CraftPlanner.PlanOutcome plan(IRecipe<?> recipe, GridContext requestGrid) {
         CraftPlanner.Session current = currentSession(requestGrid);
-        return current != null ? current.plan(recipe)
-                : CraftPlanner.PlanOutcome.of(CraftPlanner.PlanOutcome.Kind.UNSUPPORTED);
+        if (current == null) {
+            return CraftPlanner.PlanOutcome.of(CraftPlanner.PlanOutcome.Kind.UNSUPPORTED);
+        }
+        CraftPlanner.PlanOutcome outcome = current.plan(recipe);
+        if (outcome.isPlanned() || protectedSession == null) {
+            return outcome;
+        }
+        CraftPlanner.PlanOutcome withProtected = protectedSession.plan(recipe);
+        if (withProtected.isPlanned()) {
+            withProtected.job().setUsesProtected(true);
+            return withProtected;
+        }
+        return outcome; // the plain rejection, with its own message semantics
     }
 
     /**
@@ -131,12 +173,14 @@ public final class DeferredCraftableCache {
             recipeManager = null;
         }
         session = null;
+        protectedSession = null;
         sessionStation = null;
         stationMenu = null;
         stationTick = Long.MIN_VALUE;
         stationCounts = Collections.emptyMap();
         stationUsable = false;
         deferredOnly.clear();
+        protectedOnly.clear();
     }
 
     private static CraftPlanner.Session currentSession(GridContext requestGrid) {
@@ -153,11 +197,19 @@ public final class DeferredCraftableCache {
         if (session == null || generation != inventoryGeneration
                 || requestGrid != grid || recipes != recipeManager || station != sessionStation) {
             session = CraftPlanner.session(recipes, player.inventory, requestGrid, station);
+            // The second pass over the same pool plus the protected stacks (issue #40), built only
+            // when the server can honour a protected start and the inventory holds any: everything
+            // else keeps the plain answer. Any change that flips either (an inventory generation, a
+            // new connection) also invalidates this whole block, so it cannot go stale.
+            protectedSession = Services.PLATFORM.canStartProtectedCraft()
+                    && CraftPlanner.hasProtected(player.inventory)
+                    ? CraftPlanner.session(recipes, player.inventory, requestGrid, station, true) : null;
             inventoryGeneration = generation;
             grid = requestGrid;
             recipeManager = recipes;
             sessionStation = station;
             deferredOnly.clear();
+            protectedOnly.clear();
         }
         return session;
     }

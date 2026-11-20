@@ -6,6 +6,7 @@ import com.legoj15.sprawlcrafting.network.CancelCraftPacket;
 import com.legoj15.sprawlcrafting.network.CraftProgressPacket;
 import com.legoj15.sprawlcrafting.network.CraftingScreenStatePacket;
 import com.legoj15.sprawlcrafting.network.StartDeferredCraftPacket;
+import com.legoj15.sprawlcrafting.network.StartProtectedCraftPacket;
 import com.legoj15.sprawlcrafting.platform.IPlatformHelper;
 
 import net.minecraft.client.Minecraft;
@@ -83,6 +84,23 @@ public class ForgePlatformHelper implements IPlatformHelper {
     public void sendStartCraft(ResourceLocation recipeId) {
         if (serverHasMod()) {
             ForgeMod.CHANNEL.sendToServer(new StartDeferredCraftPacket(recipeId));
+        }
+    }
+
+    // The protected start's own channel, like the cancel's: an older SprawlCrafting server has the
+    // main channel but no protected handler, so this channel's presence is what says the request
+    // would reach a planner that can count protected stacks.
+    @Override
+    public boolean canStartProtectedCraft() {
+        ClientPlayNetHandler connection = Minecraft.getInstance().getConnection();
+        return connection != null
+                && ForgeMod.START_PROTECTED_CRAFT.isRemotePresent(connection.getConnection());
+    }
+
+    @Override
+    public void sendStartProtectedCraft(ResourceLocation recipeId) {
+        if (canStartProtectedCraft()) {
+            ForgeMod.START_PROTECTED_CRAFT.sendToServer(new StartProtectedCraftPacket(recipeId));
         }
     }
 
