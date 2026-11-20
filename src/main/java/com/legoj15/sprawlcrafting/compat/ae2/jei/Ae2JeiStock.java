@@ -25,7 +25,9 @@ final class Ae2JeiStock {
     // Both station menus are CraftingTermMenus (the wireless one subclasses it), so the asSubclass
     // always succeeds; the unchecked casts only bridge the plugin's menu generics to AE2's own bound,
     // never a wrong runtime type. AE2's JEIPlugin registers the identical handler for both menus; the
-    // optional AFTER dependency on ae2 in the mod metadata makes ours the one JEI keeps.
+    // optional AFTER dependency on ae2 in the mod metadata makes ours the one JEI keeps on Forge — on
+    // Fabric, which guarantees no plugin order, compat/ae2/jei/mixin/StationTransferGuardMixin refuses
+    // AE2's registration instead.
     @SuppressWarnings("unchecked")
     static <C extends AbstractContainerMenu> IRecipeTransferHandler<C, CraftingRecipe> stock(
             Class<C> menuClass, MenuType<C> menuType, IRecipeTransferHandlerHelper helper) {

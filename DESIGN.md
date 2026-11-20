@@ -292,9 +292,10 @@ than a full exponential search — see "Known limitations".
 Rule: every item a craft draws from must be visible in the open screen. The AE2 Crafting
 Terminal shows its ME network, so while one is open **and usable** (link connected / powered)
 the network's plain items count as craft material. Nothing off-screen counts: no plain ME
-terminal, no adjacent storage. Shipped on `1.21.1-neoforge` (AE2 19.x), `1.20.1-forge` (AE2 15.x,
-#27), 1.12.2 (rv6 and AE2-UEL, see the 1.12.2 section) and legacy 1.16.5 Forge (AE2 8.4.7, #29; see
-`docs/legacy-1.16.5.md`); other lines are follow-ups #27 (1.20.1-fabric), #28 (26.x; the
+terminal, no adjacent storage. Shipped on `1.21.1-neoforge` (AE2 19.x), `1.20.1-forge` and
+`1.20.1-fabric` (AE2 15.x, #27), 1.12.2 (rv6 and AE2-UEL, see the 1.12.2 section) and legacy
+1.16.5 Forge (AE2 8.4.7, #29; see
+`docs/legacy-1.16.5.md`); AE2 ships no Fabric build after 1.20.1, so the remaining line is the follow-up #28 (26.x NeoForge; the
 `DeferredCraftSync` fold is in since #33, only the AE2 provider is left). The Sophisticated crafting upgrade is a second provider (see "Sophisticated
 crafting upgrade").
 
@@ -322,7 +323,11 @@ crafting upgrade").
   inventory (JEI) or is left to AE2 entirely (REI). AE2 15.x (1.20.1) ships its own JEI handler:
   ours registers after it (optional `AFTER ae2` in mods.toml; JEI keeps the last per menu class)
   and fronts it like REI does: yellow and red-gather are ours, green, an offline terminal and red
-  with the needs helper off go to AE2's (`compat/ae2/jei/Ae2JeiStock`). The busy gate applies to
+  with the needs helper off go to AE2's (`compat/ae2/jei/Ae2JeiStock`). `1.20.1-fabric` ships the
+  station too, and Fabric guarantees no plugin order (in dev Loader even shuffles the mod list, which reorders entrypoints), so
+  there a client guard mixin (`compat/ae2/jei/mixin/StationTransferGuardMixin` in
+  `sprawlcrafting.ae2jei.mixins.json`) refuses any other CRAFTING handler JEI is handed for a
+  station menu, whichever plugin runs first. The busy gate applies to
   every hand-off to AE2's handler (green, offline terminal). AE2 15 has no link status: "usable" is its power check (`updatePowerStatus` mirror;
   a wireless terminal without an actionable node is unusable), and "plain" is the exact
   key of a fresh stack (`canonical`: `AEItemKey.of(new ItemStack(item))` on 1.20.1, where a new

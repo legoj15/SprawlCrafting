@@ -56,6 +56,27 @@ public final class SlotAssignment {
         return out;
     }
 
+    /**
+     * {@link #assign} over a crafting grid's cells as the game lists them, blank cells included: a
+     * null cell takes no part in the choice and comes back null, so the result lines up index for
+     * index with the recipe's ingredient list. Every executor builds its per-cell preference here.
+     */
+    public static <K> List<K> assignCells(List<? extends List<K>> cells, Map<K, ? extends Number> stock) {
+        List<List<K>> slots = new ArrayList<>();
+        for (List<K> cell : cells) {
+            if (cell != null) {
+                slots.add(cell);
+            }
+        }
+        List<K> chosen = assign(slots, stock);
+        List<K> out = new ArrayList<>(cells.size());
+        int s = 0;
+        for (List<K> cell : cells) {
+            out.add(cell == null ? null : chosen.get(s++));
+        }
+        return out;
+    }
+
     /** {@link #assign} over a count function; null entries for slots left unfilled. */
     static <K> Object[] choose(List<? extends List<K>> slots, ToLongFunction<K> stock) {
         int n = slots.size();

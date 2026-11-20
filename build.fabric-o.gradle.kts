@@ -27,6 +27,10 @@ val hasRei = project.findProperty("rei_version") != null
 // Mod Menu provides the in-game config-screen button on Fabric; present only on nodes that pin a
 // modmenu_version (1.21.1). Where absent, the integration class is excluded (same gating as REI).
 val hasModMenu = project.findProperty("modmenu_version") != null
+// The AE2 station's JEI pieces (fabric.mod.json: the compat.ae2.jei.StationJeiPlugin entrypoint and
+// the sprawlcrafting.ae2jei.mixins.json guard config) ship only on nodes that pin BOTH ae2_version
+// and jei_version — 1.20.1-fabric here (AE2 15.4.12 Fabric, issue #27).
+val hasAe2Jei = project.findProperty("ae2_version") != null && project.findProperty("jei_version") != null
 java {
     toolchain { languageVersion = JavaLanguageVersion.of(javaVersion) }
 }
@@ -108,7 +112,16 @@ dependencies {
     // reflectively once the loader reports "ae2"). Compiling needs no GuideME: AE2 references it only from
     // its guide classes, which the compat never touches (build.neoforge.gradle.kts adds it on its dev
     // runtime alone). The pinned ae2_version must name AE2's Fabric build on Modrinth's maven.
-    (project.findProperty("ae2_version") as String?)?.let { modCompileOnly("maven.modrinth:ae2:$it") }
+    (project.findProperty("ae2_version") as String?)?.let {
+        modCompileOnly("maven.modrinth:ae2:$it")
+        // -Psc.ae2=true also loads AE2 in runClient, so the Crafting Terminal and the JEI guard mixin
+        // can be exercised. AE2 ships Team Reborn Energy jar-in-jar, which Loom does not unpack from a
+        // maven dependency in dev, so it is added by hand (the version AE2 15.4.12 nests).
+        if ((project.findProperty("sc.ae2") as String?) == "true") {
+            modLocalRuntime("maven.modrinth:ae2:$it")
+            modLocalRuntime("teamreborn:energy:3.0.0")
+        }
+    }
 
     // The solver library: compiled against, on the dev runtime, and nested in the shipped jar. Loom
     // generates a fabric.mod.json for the nested plain jar so Fabric Loader loads it as a library mod.
@@ -157,10 +170,10 @@ tasks.withType<JavaCompile>().configureEach {
     if (!hasModMenu) {
         exclude("**/*ModMenu*") // no Mod Menu build for this node → drop the integration class
     }
-    // AE2 Crafting Terminal station (issue #2): compiled only where a node pins ae2_version (none on
-    // Fabric yet; the modCompileOnly AE2 dependency above is wired). Opting in also needs a new
-    // "jei_mod_plugin" entrypoint in fabric.mod.json for compat.ae2.jei.StationJeiPlugin (NeoForge finds
-    // it by annotation scan; Fabric does not), and an AE2 build for that MC version (#27).
+    // AE2 Crafting Terminal station (issue #2): compiled only where a node pins ae2_version — 1.20.1-fabric
+    // (issue #27, AE2 15.4.12 Fabric; the modCompileOnly AE2 dependency above). fabric.mod.json's
+    // has_ae2_jei emits the compat.ae2.jei.StationJeiPlugin entrypoint and the guard-mixin config
+    // (Fabric finds JEI plugins only through entrypoints, unlike Forge/NeoForge annotation scan).
     if (project.findProperty("ae2_version") == null) {
         exclude("**/compat/ae2/**")
     }
@@ -183,13 +196,20 @@ tasks.processResources {
         "license" to modLicense,
         "fabric_loader_min" to fabricLoaderMin,
         "minecraft_version" to minecraftVersion,
-        "java_version" to javaVersion.toString()
+        "java_version" to javaVersion.toString(),
+        // AE2 station JEI pieces in fabric.mod.json (see hasAe2Jei above).
+        "has_ae2_jei" to hasAe2Jei
     )
     inputs.properties(replaceProperties)
     filesMatching("fabric.mod.json") { expand(replaceProperties) }
     // Don't ship the NeoForge or Forge metadata in the Fabric jar.
     exclude("META-INF/neoforge.mods.toml")
     exclude("META-INF/mods.toml")
+    // The AE2/JEI guard-mixin config ships only where its class is compiled (hasAe2Jei above): a jar
+    // without compat/ae2/jei must not name a config whose class is absent.
+    if (!hasAe2Jei) {
+        exclude("sprawlcrafting.ae2jei.mixins.json")
+    }
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 }
 

@@ -909,6 +909,10 @@ class RecipeGraphSolverTest {
         // #18: the oak-or-birch slot must take the birch, so the oak-only slot gets the oak.
         TestRecipe target = TestRecipe.of("t", "t", 1, "oak|birch", "oak");
         assertExecutable(target, inv("oak", 1, "birch", 1));
+        // The executors' per-cell form: blank grid cells (null) stay null and the picks stay aligned.
+        assertEquals(Arrays.asList(null, "birch", null, "oak"), SlotAssignment.assignCells(
+                Arrays.asList(null, Arrays.asList("oak", "birch"), null, Arrays.asList("oak")),
+                inv("oak", 1, "birch", 1)));
     }
 
     @Test
