@@ -98,7 +98,9 @@ behind its `srgRuntime` flag (`<1.20.6`), so the other Forge nodes' builds are u
   predicates accept every value, `ABSENT` and `ACCEPTVANILLA` included, so it is optional both ways.
   Presence is per channel on this line, so `canReceive`/`canSendToServer` are
   `isRemotePresent(connection)`, except for payloads that got a channel of their own: the cancel
-  request (#31) rides `sprawlcrafting:cancel_craft` and answers through `isCancelRemotePresent`.
+  request (#31) rides `sprawlcrafting:cancel_craft` and answers through `isCancelRemotePresent`. The
+  `progress_states_v2` marker has no channel on this line at all, so its check is always false and
+  1.20.1 Forge clients always get the original `PAUSED`.
 - **Loader API branches** (`//? if >=1.20.5` in `platform/forge`): no-arg `@Mod` constructor with
   `FMLJavaModLoadingContext.get()`; `ModLoadingContext.get().registerExtensionPoint` for the config
   screen; tick events are single classes with `phase == END` instead of `.Post`;
@@ -482,7 +484,9 @@ Design points specific to it:
   old/new client and server versions can never desync or kick. The main channel's message
   ids are frozen. The cancel request (#31) is `sprawlcrafting2` id 4. It is gated on the hello's
   `CAP_CANCEL_CRAFT` bit, not on channel presence, because FML kicks on an unknown id of a known
-  channel (an unknown channel is silently dropped). Any later id 5+ needs a capability bit the same way.
+  channel (an unknown channel is silently dropped). Any later id 5+ needs a capability bit the same way: a serverbound id can reuse a `ServerHelloMessage`
+  bit as #31 does, but a clientbound one first needs a capability byte added to `ClientHelloMessage`
+  (an old client's empty hello reads as no bits).
 - **Chest sourcing.** Grid placement can also draw from a modded station's bound chest (e.g.
   a TConstruct Crafting Station), matching those stations' own JEI behavior.
 - **AE2 Crafting Terminal (issue #2).** Rule: every item a craft draws from must be visible
