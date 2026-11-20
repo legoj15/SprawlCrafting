@@ -346,14 +346,14 @@ public final class CraftExecutor {
      * which is the safe direction (a no routes the craft to the engine).
      */
     private static boolean canCraftFrom(List<Source> sources, List<Ingredient> ingredients) {
-        ItemKey[] preferred = preferredKeys(sources, ingredients, null); // a direct craft has no plan layout
+        ItemKey[] preferred = preferredKeys(sources, ingredients, null, null); // a direct craft has no plan layout
         int[] reserved = new int[sources.size()];
         for (int i = 0; i < ingredients.size(); i++) {
             Ingredient ingredient = ingredients.get(i);
             if (ingredient == null || ingredient == Ingredient.EMPTY) {
                 continue;
             }
-            int idx = findMatchingSource(sources, ingredient, preferred[i], reserved, null);
+            int idx = findMatchingSource(sources, ingredient, preferred[i], reserved, null, false);
             if (idx < 0) {
                 return false;
             }
@@ -492,6 +492,23 @@ public final class CraftExecutor {
                                      List<ItemKey> layout) {
         List<Source> sources = buildSources(player, player.inventory,
                 withNetwork ? ingredientItems(ingredients) : null);
+        // First with the job's admitted altered copies counted in the preference rule and the plan's
+        // layout check (#26); when that leaves an ingredient unfilled, the pre-#26 rule exactly. The
+        // rule cannot see which cells accept an altered copy, so counting one can steer a cell to an
+        // identity only another cell could take; the second pass makes the change never worse than
+        // before it. A pass changes no pool state (sources are only peeked; the ledger's preexisting
+        // snapshot is rewritten with equal values).
+        Assignment first = assignPass(player, sources, ingredients, ledger, layout, true);
+        if (first.complete() || ledger == null) {
+            return first;
+        }
+        return assignPass(player, sources, ingredients, ledger, layout, false);
+    }
+
+    /** One {@link #assign} attempt over {@code sources}; {@code admittedPreference}: the #26 rule. */
+    private static Assignment assignPass(EntityPlayer player, List<Source> sources, List<Ingredient> ingredients,
+                                         ProducedLedger<ItemKey, LedgerVariant> ledger, List<ItemKey> layout,
+                                         boolean admittedPreference) {
         int[] chosen = new int[ingredients.size()];
         int[] reserved = new int[sources.size()];
         LedgerTally<ItemKey, LedgerVariant> tally = new LedgerTally<ItemKey, LedgerVariant>();
@@ -499,14 +516,16 @@ public final class CraftExecutor {
             countRefused(player, sources, tally);
             tally.open(ledger);
         }
-        ItemKey[] preferred = preferredKeys(sources, ingredients, layout);
+        ItemKey[] preferred = preferredKeys(sources, ingredients, layout,
+                ledger != null && admittedPreference ? tally : null);
         for (int i = 0; i < chosen.length; i++) {
             Ingredient ingredient = ingredients.get(i);
             if (ingredient == null || ingredient == Ingredient.EMPTY) {
                 chosen[i] = -1;
                 continue;
             }
-            int idx = findMatchingSource(sources, ingredient, preferred[i], reserved, ledger == null ? null : tally);
+            int idx = findMatchingSource(sources, ingredient, preferred[i], reserved, ledger == null ? null : tally,
+                    admittedPreference);
             if (idx < 0) {
                 return new Assignment(sources, chosen, tally, ingredient);
             }
@@ -662,9 +681,11 @@ public final class CraftExecutor {
      * {@link SlotAssignment} runs over the same slot lists ({@link CraftPlanner#slotAlternatives})
      * and the same pool counts, so its fallback still takes what a plan made without layouts
      * counted on.
+     * With {@code admitting} (the #26 pass of {@link #assign}) the job's admitted altered copies
+     * join that stock too ({@link #countAdmitted}), since the plan counted them as well.
      */
     private static ItemKey[] preferredKeys(List<Source> sources, List<Ingredient> ingredients,
-                                           List<ItemKey> layout) {
+                                           List<ItemKey> layout, LedgerTally<ItemKey, LedgerVariant> admitting) {
         Map<ItemKey, Integer> stock = new HashMap<ItemKey, Integer>();
         for (Source source : sources) {
             ItemStack stack = source.peek();
@@ -673,6 +694,9 @@ public final class CraftExecutor {
                 Integer have = stock.get(key);
                 stock.put(key, NetworkTerminals.saturatedAdd(have == null ? 0 : have, stack.getCount()));
             }
+        }
+        if (admitting != null) {
+            countAdmitted(ingredients, sources, admitting, stock);
         }
         List<List<ItemKey>> cells = new ArrayList<List<ItemKey>>();
         for (Ingredient ingredient : ingredients) {
@@ -726,17 +750,85 @@ public final class CraftExecutor {
     }
 
     /**
-     * A stack of {@code preferred} ({@link #preferredKeys}) when one matches; otherwise the first
-     * match in pool order, then (with a ledger) a refused stack the tally admits.
+     * Adds to {@code stock} the refused stacks of the pool that {@code tally} would admit: the job's
+     * altered intermediates, which the plan's counts include (the solver credits every item a step
+     * produces, altered or not), so {@link #preferredKeys} and the plan's layout check must see them
+     * too (#26). Each stack adds at most what {@link LedgerTally#variantHeadroom} and
+     * {@link LedgerTally#identityHeadroom} still allow, drawn down as stacks are counted, under its
+     * {@link #ledgerKey}: the plan credited the fresh output, whose key is its ledger identity, and an
+     * altered damageable copy's own {@link ItemKey#of} carries its damage, which no slot alternative
+     * names. A copy no cell of this recipe accepts is skipped: it would only inflate the count the
+     * rule spreads over the cells.
+     */
+    private static void countAdmitted(List<Ingredient> ingredients, List<Source> sources, LedgerTally<ItemKey, LedgerVariant> tally,
+                                      Map<ItemKey, Integer> stock) {
+        Map<LedgerVariant, Long> variantLeft = new HashMap<LedgerVariant, Long>();
+        Map<ItemKey, Long> identityLeft = new HashMap<ItemKey, Long>();
+        for (Source source : sources) {
+            ItemStack stack = source.peek();
+            if (stack.isEmpty() || usableAsIngredient(stack) || !acceptedByAny(ingredients, stack)) {
+                continue;
+            }
+            LedgerVariant variant = variantOf(stack);
+            ItemKey identity = ledgerKey(stack);
+            Long forVariant = variantLeft.get(variant);
+            if (forVariant == null) {
+                forVariant = tally.variantHeadroom(variant);
+            }
+            Long forIdentity = identityLeft.get(identity);
+            if (forIdentity == null) {
+                forIdentity = tally.identityHeadroom(identity);
+            }
+            int add = (int) Math.min(stack.getCount(), Math.min(forVariant, forIdentity));
+            if (add > 0) {
+                Integer have = stock.get(identity);
+                stock.put(identity, NetworkTerminals.saturatedAdd(have == null ? 0 : have, add));
+            }
+            variantLeft.put(variant, forVariant - Math.max(add, 0));
+            identityLeft.put(identity, forIdentity - Math.max(add, 0));
+        }
+    }
+
+    /** Whether any non-empty ingredient of the recipe accepts {@code stack}. */
+    private static boolean acceptedByAny(List<Ingredient> ingredients, ItemStack stack) {
+        for (Ingredient ingredient : ingredients) {
+            if (ingredient != null && ingredient != Ingredient.EMPTY && ingredient.apply(stack)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * A usable stack of {@code preferred} ({@link #preferredKeys}) when one matches, then (with a tally,
+     * #26 pass only) a refused copy of it the tally admits; otherwise the first match in pool order,
+     * then (with a ledger) any refused stack the tally admits.
      */
     private static int findMatchingSource(List<Source> sources, Ingredient ingredient, ItemKey preferred,
-                                          int[] reserved, LedgerTally<ItemKey, LedgerVariant> tally) {
+                                          int[] reserved, LedgerTally<ItemKey, LedgerVariant> tally,
+                                          boolean admittedPreference) {
         if (preferred != null) {
             for (int i = 0; i < sources.size(); i++) {
                 ItemStack stack = sources.get(i).peek();
                 if (!stack.isEmpty() && stack.getCount() - reserved[i] > 0 && preferred.equals(ItemKey.of(stack))
                         && usableAsIngredient(stack) && ingredient.apply(stack)) {
                     return i;
+                }
+            }
+            if (tally != null && admittedPreference) {
+                // The job's altered copy of the identity the rule chose (#26), before any alternative
+                // a later cell may need alone. Matched by ledgerKey: the plan credited the fresh output,
+                // whose key is its ledger identity, while an altered damageable copy's own key carries
+                // its damage.
+                for (int i = 0; i < sources.size(); i++) {
+                    ItemStack stack = sources.get(i).peek();
+                    if (stack.isEmpty() || stack.getCount() - reserved[i] <= 0 || usableAsIngredient(stack)) {
+                        continue;
+                    }
+                    ItemKey key = ledgerKey(stack);
+                    if (preferred.equals(key) && tally.admits(key, variantOf(stack)) && ingredient.apply(stack)) {
+                        return i;
+                    }
                 }
             }
         }

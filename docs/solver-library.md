@@ -17,6 +17,8 @@ only when the inventory no longer matches the plan: build `slots` exactly as its
 `RecipeInfo.ingredientSlots()` (blank cells dropped) and `stock` from the same pool and filter the
 planner snapshots, then take a stack of the item named for each slot (falling back to its own matching
 only when none fits). SprawlCrafting's three `CraftExecutor`s pick via `CraftPlanner.slotAlternatives`.
+`SlotAssignment.assignCells(cells, stock)` (since 1.1.0) is the same call over the grid as the game lists
+it: blank cells are null in and null out, so the result lines up with the recipe's ingredient list.
 An executor that picks by inventory order instead can stall mid-job on plans that share stock across
 slots or steps (issues #10, #18); in 1.0.x, before layouts, that same limitation bound the solver
 itself.
@@ -124,11 +126,11 @@ coordinates); not boot-tested with two mods.
 Add `mavenLocal()` (local dev) or `maven("https://jitpack.io")`, or include this repo's `solver-core` as
 a composite build. Then, per loader:
 
-- Fabric Loom: `include(implementation("com.legoj15:solver:2.0.0")!!)`.
-- NeoForge MDG: `implementation("com.legoj15:solver:2.0.0")` +
-  `jarJar("com.legoj15:solver") { version { strictly("[2.0.0,3.0.0)"); prefer("2.0.0") } }`.
+- Fabric Loom: `include(implementation("com.legoj15:solver:2.1.0")!!)`.
+- NeoForge MDG: `implementation("com.legoj15:solver:2.1.0")` +
+  `jarJar("com.legoj15:solver") { version { strictly("[2.1.0,3.0.0)"); prefer("2.1.0") } }`.
 - Forge FG7: apply `net.minecraftforge.jarjar`, `jarJar.register()`, then `implementation(...)` +
-  `jarJar.configure("jarJar"("com.legoj15:solver:2.0.0")!!) { setRange("[2.0.0,3.0.0)") }`.
+  `jarJar.configure("jarJar"("com.legoj15:solver:2.1.0")!!) { setRange("[2.1.0,3.0.0)") }`.
 - Never shade it on a JarJar-era loader (see above). Use the same group/artifact (`com.legoj15:solver`)
   in jar-in-jar metadata as SprawlCrafting does, or the selector sees two different libraries and
   loads both (a split package again). A JitPack build carries `com.github.legoj15:SprawlCrafting` (verified,

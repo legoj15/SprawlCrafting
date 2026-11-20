@@ -140,6 +140,13 @@ class ProducedLedgerTest {
         craft.open(ledger);
         assertFalse(craft.admits("sword", "sword#named"));
         assertTrue(craft.admits("sword", "sword#ench"));
+        // The headroom an executor counts into its slot rule must match what admits allows (#26).
+        assertEquals(0, craft.variantHeadroom("sword#named"));
+        assertEquals(1, craft.variantHeadroom("sword#ench"));
+        assertEquals(1, craft.identityHeadroom("sword"));
+        craft.picked("sword", "sword#ench", true);
+        assertEquals(0, craft.variantHeadroom("sword#ench"));
+        assertEquals(0, craft.identityHeadroom("sword"));
     }
 
     @Test

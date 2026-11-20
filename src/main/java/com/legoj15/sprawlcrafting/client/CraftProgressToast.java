@@ -26,11 +26,16 @@ import net.minecraft.world.item.ItemStack;
  * the whole job, updating live from {@link ClientJobTracker}; terminal states linger
  * briefly, then the toast slides out.
  *
+ * <p>While any screen is open, the toast is also clickable (issue #34): every frame it draws it
+ * records its on-screen rectangle in {@link ToastCancelClick} — a left click on it cancels the
+ * job — and while the cursor hovers it, the second line becomes a "Click to cancel" hint, only
+ * in the live states and only when a click would actually send the cancel.
+ *
  * <p>1.21.1 drives lifecycle + drawing from a single {@code render()} call that returns the
  * wanted visibility. 26.x (>=1.21.11) reworked the Toast interface into a render-state model:
  * lifecycle is decided in {@code update()} (and reported by {@code getWantedVisibility()}),
  * while {@code extractRenderState()} only draws — so the terminal-linger/hide side effects
- * move into {@code update()} there.
+ * (and the click rectangle's clear) move into {@code update()} there.
  */
 public class CraftProgressToast implements Toast {
 
@@ -70,6 +75,7 @@ public class CraftProgressToast implements Toast {
         CraftProgressPayload job = ClientJobTracker.current();
         if (job == null || ClientJobTracker.terminalDisplayElapsed()) {
             ClientJobTracker.onToastHidden();
+            ToastCancelClick.clear();
             this.wantedVisibility = Toast.Visibility.HIDE;
         } else {
             this.wantedVisibility = Toast.Visibility.SHOW;
@@ -83,6 +89,13 @@ public class CraftProgressToast implements Toast {
             return; // update() will have flagged us HIDE; nothing to draw
         }
 
+        // The toast is drawn under a translate to its screen position (ToastManager.ToastInstance
+        // .extractRenderState), so the pose's translation IS that position — 26.x hands us a
+        // Matrix3x2fStack, whose m20/m21 carry it. Record it for the click hit-test.
+        org.joml.Matrix3x2fStack pose = guiGraphics.pose();
+        ToastCancelClick.record(pose.m20(), pose.m21(), width(), height());
+        boolean cancelHint = ToastCancelClick.mouseOverHint();
+
         guiGraphics.blitSprite(RenderPipelines.GUI_TEXTURED, BACKGROUND_SPRITE, 0, 0, width(), height());
 
         ItemStack icon = job.current().isEmpty() ? job.target() : job.current();
@@ -92,15 +105,25 @@ public class CraftProgressToast implements Toast {
             case CRAFTING -> {
                 drawClipped(guiGraphics, font, Component.translatable("sprawlcrafting.toast.crafting",
                         job.target().getHoverName()), 7, TITLE_COLOR);
-                guiGraphics.text(font, Component.translatable("sprawlcrafting.toast.step",
-                        CountFormat.format(job.done()), CountFormat.format(job.total())), TEXT_X, 18, SUBTITLE_COLOR, false);
+                if (cancelHint) {
+                    guiGraphics.text(font, Component.translatable("sprawlcrafting.toast.click_to_cancel"),
+                            TEXT_X, 18, CANCELLED_COLOR, false);
+                } else {
+                    guiGraphics.text(font, Component.translatable("sprawlcrafting.toast.step",
+                            CountFormat.format(job.done()), CountFormat.format(job.total())), TEXT_X, 18, SUBTITLE_COLOR, false);
+                }
                 drawProgressBar(guiGraphics, job);
             }
             case PAUSED, PAUSED_STATION -> {
                 drawClipped(guiGraphics, font, Component.translatable("sprawlcrafting.toast.crafting",
                         job.target().getHoverName()), 7, TITLE_COLOR);
-                guiGraphics.text(font, Component.translatable(pausedKey(job.state())),
-                        TEXT_X, 18, PAUSED_COLOR, false);
+                if (cancelHint) {
+                    guiGraphics.text(font, Component.translatable("sprawlcrafting.toast.click_to_cancel"),
+                            TEXT_X, 18, CANCELLED_COLOR, false);
+                } else {
+                    guiGraphics.text(font, Component.translatable(pausedKey(job.state())),
+                            TEXT_X, 18, PAUSED_COLOR, false);
+                }
                 drawProgressBar(guiGraphics, job);
             }
             case FINISHED -> drawClipped(guiGraphics, font,
@@ -140,8 +163,16 @@ public class CraftProgressToast implements Toast {
         CraftProgressPayload job = ClientJobTracker.current();
         if (job == null || ClientJobTracker.terminalDisplayElapsed()) {
             ClientJobTracker.onToastHidden();
+            ToastCancelClick.clear();
             return Toast.Visibility.HIDE;
         }
+
+        // The toast is drawn under a translate to its screen position (ToastComponent.ToastInstance
+        // .render), so the pose's translation IS that position (m30/m31 of its Matrix4f). Record it
+        // for the click hit-test.
+        org.joml.Matrix4f pose = guiGraphics.pose().last().pose();
+        ToastCancelClick.record(pose.m30(), pose.m31(), width(), height());
+        boolean cancelHint = ToastCancelClick.mouseOverHint();
 
         //? if >=1.20.2 {
         guiGraphics.blitSprite(BACKGROUND_SPRITE, 0, 0, width(), height());
@@ -159,15 +190,25 @@ public class CraftProgressToast implements Toast {
             case CRAFTING -> {
                 drawClipped(guiGraphics, font, Component.translatable("sprawlcrafting.toast.crafting",
                         job.target().getHoverName()), 7, TITLE_COLOR);
-                guiGraphics.drawString(font, Component.translatable("sprawlcrafting.toast.step",
-                        CountFormat.format(job.done()), CountFormat.format(job.total())), TEXT_X, 18, SUBTITLE_COLOR, false);
+                if (cancelHint) {
+                    guiGraphics.drawString(font, Component.translatable("sprawlcrafting.toast.click_to_cancel"),
+                            TEXT_X, 18, CANCELLED_COLOR, false);
+                } else {
+                    guiGraphics.drawString(font, Component.translatable("sprawlcrafting.toast.step",
+                            CountFormat.format(job.done()), CountFormat.format(job.total())), TEXT_X, 18, SUBTITLE_COLOR, false);
+                }
                 drawProgressBar(guiGraphics, job);
             }
             case PAUSED, PAUSED_STATION -> {
                 drawClipped(guiGraphics, font, Component.translatable("sprawlcrafting.toast.crafting",
                         job.target().getHoverName()), 7, TITLE_COLOR);
-                guiGraphics.drawString(font, Component.translatable(pausedKey(job.state())),
-                        TEXT_X, 18, PAUSED_COLOR, false);
+                if (cancelHint) {
+                    guiGraphics.drawString(font, Component.translatable("sprawlcrafting.toast.click_to_cancel"),
+                            TEXT_X, 18, CANCELLED_COLOR, false);
+                } else {
+                    guiGraphics.drawString(font, Component.translatable(pausedKey(job.state())),
+                            TEXT_X, 18, PAUSED_COLOR, false);
+                }
                 drawProgressBar(guiGraphics, job);
             }
             case FINISHED -> drawClipped(guiGraphics, font,

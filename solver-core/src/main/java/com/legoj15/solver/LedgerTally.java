@@ -86,6 +86,35 @@ public final class LedgerTally<K, V> {
     }
 
     /**
+     * How many more filter-rejected picks of exactly this {@code variant} {@link #admits} allows on
+     * the variant's own cap, ignoring the identity-wide cap ({@link #identityHeadroom}). An executor
+     * counting the job's altered copies into its slot rule's stock adds, per variant, at most the
+     * smaller of the two, drawing both down as it goes. Zero before {@link #open}.
+     */
+    public long variantHeadroom(V variant) {
+        if (ledger == null) {
+            return 0;
+        }
+        return Math.max(0, jobHeld(variant) - get(refusedTakes, variant));
+    }
+
+    /**
+     * How many more filter-rejected picks of {@code key}, over all its variants, {@link #admits}
+     * allows on the identity-wide cap: the ledger's outstanding count and the job-held copies summed
+     * over the identity's variants, less this craft's rejected takes of it. Zero before {@link #open}.
+     */
+    public long identityHeadroom(K key) {
+        if (ledger == null) {
+            return 0;
+        }
+        long jobHeldByKey = 0;
+        for (V held : variantsOf.getOrDefault(key, Collections.<V>emptySet())) {
+            jobHeldByKey += jobHeld(held);
+        }
+        return Math.max(0, Math.min(ledger.outstanding(key), jobHeldByKey) - get(refusedTakesByKey, key));
+    }
+
+    /**
      * One item of this exact {@code variant} was picked for this craft; {@code refused}: the filter
      * rejects it. A plain pick's variant is ignored.
      */

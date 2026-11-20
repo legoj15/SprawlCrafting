@@ -263,8 +263,8 @@ tasks.processResources {
     // Don't ship the Fabric or (MinecraftForge) Forge metadata in the NeoForge jar.
     exclude("fabric.mod.json")
     exclude("META-INF/mods.toml")
-    // Fabric-only JEI-ordering guard (Fabric Loader guarantees no plugin order); its class compiles
-    // here with the rest of compat/ae2/jei but no config may ship without fabric.mod.json to list it.
+    // Fabric-only JEI-ordering guard (Fabric Loader guarantees no plugin order); its class is not
+    // compiled here (see the compat/ae2/jei/mixin exclude above), and no config may ship without fabric.mod.json.
     exclude("sprawlcrafting.ae2jei.mixins.json")
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 }

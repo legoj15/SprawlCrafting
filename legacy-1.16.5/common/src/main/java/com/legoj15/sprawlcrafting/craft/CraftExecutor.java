@@ -654,6 +654,8 @@ public final class CraftExecutor {
      *   <li>the preferred item from the inventory;</li>
      *   <li>the preferred item from the station (rather than an inventory alternative: taking a different
      *       item than the plan chose could starve a later step the plan counted on);</li>
+     *   <li>(with a ledger, #26 pass only) a refused inventory copy of the preferred item the tally
+     *       admits: the job's altered intermediate, which the plan's counts include;</li>
      *   <li>any usable inventory match;</li>
      *   <li>any of the ingredient's items from the station;</li>
      *   <li>(with a ledger) a refused inventory stack the tally admits, the last resort as before.</li>
@@ -666,9 +668,9 @@ public final class CraftExecutor {
      * cell in cell order (null or a mismatch: decide with {@link SlotAssignment}); see
      * {@link #preferredItems}.
      */
-    private static Assignment assign(PlayerInventory inventory, List<Ingredient> ingredients,
-                                     ProducedLedger<Item, LedgerVariant> ledger, StationStorage station,
-                                     List<Item> layout) {
+    private static Assignment assignPass(PlayerInventory inventory, List<Ingredient> ingredients,
+                                         ProducedLedger<Item, LedgerVariant> ledger, StationStorage station,
+                                         List<Item> layout, boolean admittedPreference) {
         int[] slots = new int[ingredients.size()];
         Item[] stationItems = new Item[ingredients.size()];
         int[] reserved = new int[MAIN_SLOTS];
@@ -679,7 +681,8 @@ public final class CraftExecutor {
         }
         StationPool pool = station == null ? null : new StationPool(station);
         Map<Item, Integer> taken = pool == null ? Collections.<Item, Integer>emptyMap() : pool.taken;
-        Item[] preferred = preferredItems(inventory, ingredients, pool, layout);
+        Item[] preferred = preferredItems(inventory, ingredients, pool, layout,
+                ledger != null && admittedPreference ? tally : null);
         for (int n = 0; n < slots.length; n++) {
             Ingredient ingredient = ingredients.get(n);
             if (ingredient == null || ingredient.isEmpty()) {
@@ -689,12 +692,19 @@ public final class CraftExecutor {
             int slot;
             Item fromStation = null;
             if (pool == null) {
-                slot = findMatchingSlot(inventory, ingredient, preferred[n], reserved, ledger == null ? null : tally);
+                slot = findMatchingSlot(inventory, ingredient, preferred[n], reserved, ledger == null ? null : tally,
+                        admittedPreference);
             } else {
                 slot = preferred[n] == null ? -1 : findPreferredSlot(inventory, ingredient, preferred[n], reserved);
                 if (slot < 0) {
                     fromStation = pool.take(ingredient,
                             preferred[n] == null ? null : Collections.singletonList(preferred[n]));
+                }
+                if (slot < 0 && fromStation == null && preferred[n] != null && ledger != null
+                        && admittedPreference) {
+                    // The station's plain copy of the preferred item came first; the job's altered
+                    // copy of it still beats an alternative item, which a later cell may need alone.
+                    slot = findRefusedPreferredSlot(inventory, ingredient, preferred[n], reserved, tally);
                 }
                 if (slot < 0 && fromStation == null) {
                     slot = findUsableSlot(inventory, ingredient, reserved);
@@ -726,6 +736,23 @@ public final class CraftExecutor {
             }
         }
         return new Assignment(slots, tally, null, taken, stationItems);
+    }
+
+    /**
+     * {@link #assignPass} with the job's admitted altered copies counted in the preference rule and
+     * the plan's layout check (#26); when that leaves a cell unfilled, the pre-#26 rule exactly. The
+     * rule cannot see which cells accept an altered copy, so counting one can steer a cell to an item
+     * only another cell could take; the second pass makes the change never worse than before it. A
+     * pass changes no pool state (the ledger's preexisting snapshot is rewritten with equal values).
+     */
+    private static Assignment assign(PlayerInventory inventory, List<Ingredient> ingredients,
+                                     ProducedLedger<Item, LedgerVariant> ledger, StationStorage station,
+                                     List<Item> layout) {
+        Assignment first = assignPass(inventory, ingredients, ledger, station, layout, true);
+        if (first.missing == null || ledger == null) {
+            return first;
+        }
+        return assignPass(inventory, ingredients, ledger, station, layout, false);
     }
 
     /**
@@ -864,15 +891,21 @@ public final class CraftExecutor {
      * since, and a stale layout must not override what the pool can actually supply.
      * {@link SlotAssignment} runs over the same slot lists ({@link CraftPlanner#slotAlternatives}) and
      * the same counts, so its fallback still takes what a plan made without layouts counted on.
+     * With {@code admitting} (the #26 pass of {@link #assign}) the job's admitted altered copies
+     * join that stock too ({@link #countAdmitted}), since the plan counted them as well.
      */
     private static Item[] preferredItems(PlayerInventory inventory, List<Ingredient> ingredients, StationPool pool,
-                                         List<Item> layout) {
+                                         List<Item> layout,
+                                         LedgerTally<Item, LedgerVariant> admitting) {
         Map<Item, Integer> stock = new HashMap<>();
         for (int i = 0; i < MAIN_SLOTS; i++) {
             ItemStack stack = inventory.getItem(i);
             if (!stack.isEmpty() && usableAsIngredient(stack)) {
                 stock.merge(stack.getItem(), stack.getCount(), Integer::sum);
             }
+        }
+        if (admitting != null) {
+            countAdmitted(ingredients, inventory, admitting, stock);
         }
         List<List<Item>> cells = new ArrayList<>();
         for (Ingredient ingredient : ingredients) {
@@ -936,13 +969,75 @@ public final class CraftExecutor {
     }
 
     /**
+     * Adds to {@code stock} the refused stacks of the main slots that {@code tally} would admit:
+     * the job's altered intermediates, which the plan's counts include (the solver credits every item a
+     * step produces, altered or not), so {@link #preferredItems} and the plan's layout check must see
+     * them too (#26). Each stack adds at most what {@link LedgerTally#variantHeadroom} and
+     * {@link LedgerTally#identityHeadroom} still allow, drawn down as stacks are counted. A copy no
+     * cell of this recipe accepts is skipped: it would only inflate the count the rule spreads over
+     * the cells.
+     */
+    private static void countAdmitted(List<Ingredient> ingredients, PlayerInventory inventory, LedgerTally<Item, LedgerVariant> tally,
+                                      Map<Item, Integer> stock) {
+        Map<LedgerVariant, Long> variantLeft = new HashMap<>();
+        Map<Item, Long> identityLeft = new HashMap<>();
+        for (int i = 0; i < MAIN_SLOTS; i++) {
+            ItemStack stack = inventory.getItem(i);
+            if (stack.isEmpty() || usableAsIngredient(stack) || !acceptedByAny(ingredients, stack)) {
+                continue;
+            }
+            LedgerVariant variant = variantOf(stack);
+            Item item = stack.getItem();
+            long forVariant = variantLeft.computeIfAbsent(variant, tally::variantHeadroom);
+            long forIdentity = identityLeft.computeIfAbsent(item, tally::identityHeadroom);
+            int add = (int) Math.min(stack.getCount(), Math.min(forVariant, forIdentity));
+            if (add > 0) {
+                stock.merge(stack.getItem(), add, (a, b) -> (int) Math.min((long) a + b, Integer.MAX_VALUE));
+                variantLeft.put(variant, forVariant - add);
+                identityLeft.put(item, forIdentity - add);
+            }
+        }
+    }
+
+    /** Whether any non-empty ingredient of the recipe accepts {@code stack}. */
+    private static boolean acceptedByAny(List<Ingredient> ingredients, ItemStack stack) {
+        for (Ingredient ingredient : ingredients) {
+            if (ingredient != null && !ingredient.isEmpty() && ingredient.test(stack)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * The first unreserved refused stack of {@code preferred} of a variant the tally still admits that
+     * the ingredient accepts, or -1: the job's altered copy of the item the rule chose, taken before
+     * any alternative item a later cell may need alone (#26).
+     */
+    private static int findRefusedPreferredSlot(PlayerInventory inventory, Ingredient ingredient, Item preferred,
+                                                int[] reserved, LedgerTally<Item, LedgerVariant> tally) {
+        for (int i = 0; i < MAIN_SLOTS; i++) {
+            ItemStack stack = inventory.getItem(i);
+            if (!stack.isEmpty() && stack.getItem() == preferred && stack.getCount() - reserved[i] > 0
+                    && !usableAsIngredient(stack) && tally.admits(stack.getItem(), variantOf(stack))
+                    && ingredient.test(stack)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /**
      * A stack of {@code preferred} ({@link #preferredItems}) when one matches; otherwise the first match in
      * inventory order, then (with a ledger) a refused stack the tally admits.
      */
     private static int findMatchingSlot(PlayerInventory inventory, Ingredient ingredient, Item preferred,
-                                        int[] reserved, LedgerTally<Item, LedgerVariant> tally) {
+                                        int[] reserved, LedgerTally<Item, LedgerVariant> tally, boolean admittedPreference) {
         if (preferred != null) {
             int slot = findPreferredSlot(inventory, ingredient, preferred, reserved);
+            if (slot < 0 && tally != null && admittedPreference) {
+                slot = findRefusedPreferredSlot(inventory, ingredient, preferred, reserved, tally);
+            }
             if (slot >= 0) {
                 return slot;
             }

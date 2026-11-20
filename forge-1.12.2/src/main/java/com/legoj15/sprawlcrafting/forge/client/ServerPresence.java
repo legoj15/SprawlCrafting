@@ -52,6 +52,7 @@ public final class ServerPresence {
             public void run() {
                 ClientCraftState.clear();
                 EngineWatchdog.reset();
+                ToastCancelClick.clear(); // the toast's clickable rectangle dies with the job state
             }
         });
     }

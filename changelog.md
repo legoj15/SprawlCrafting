@@ -1,5 +1,6 @@
 ###### Changes since 1.0.3:
 - Added a "Cancel deferred craft" key (unbound by default; set it under Controls) that stops a running or paused craft. Everything already crafted stays in your inventory. Needs the mod on the server too
+- With a crafting table, inventory or other screen open, clicking the craft's progress popup in the top-right corner also cancels it. Needs the mod on the server too
 - {1.21.1} Added a Forge build for Minecraft 1.21.1 (Forge 52.1 and newer)
 - {1.20.1} The Applied Energistics 2 Crafting Terminal (wired and wireless) now works with SprawlCrafting on Forge: yellow recipes in JEI craft using items from your ME network
 - {1.20.1} The Applied Energistics 2 Crafting Terminal (wired and wireless) now works with SprawlCrafting on Fabric too: yellow recipes in JEI craft using items from your ME network
@@ -12,3 +13,5 @@
 - {1.12.2} Recipes that can use either of two items in one spot (say, any planks) now place straight into the crafting grid when you have exactly enough, instead of being crafted step by step; on servers without the mod, the JEI "+" button no longer leaves such a recipe half-filled in the grid
 - {1.12.2} A long item name in the "Materials needed" screen title no longer runs off the panel: the panel widens to fit it, and if it still cannot fit it is cut short and shows the full name on hover
 - Recipes that need a specific item now craft when a step earlier in the chain could use either that item or a substitute: SprawlCrafting picks the substitute there instead of reporting the recipe as not craftable
+- Crafts no longer stop with a missing ingredient when another mod enchants, renames or damages an item SprawlCrafting just crafted for the next step
+- When a recipe can't be planned even though you have the materials, the message now says so, instead of "Not enough raw resources (missing: ?)"
