@@ -1100,7 +1100,8 @@ class RecipeGraphSolverTest {
             assertEquals(replayCraftByCraft(target, perturbed, held) == null, simulate(target, perturbed, held).ok(),
                     "trial " + trial + ": batched and craft-by-craft replay disagree on " + perturbed);
         }
-        // No pinned count of solvable trials: "solved" appears in the failure messages above only.
+        // Guard against a generator that never produces a solvable graph (the property would be vacuous).
+        assertTrue(solved >= trials / 10, "only " + solved + " of " + trials + " random graphs were solvable");
     }
 
     private static String randomSlot(java.util.Random random, String[] raws, String[] mids, int tier) {

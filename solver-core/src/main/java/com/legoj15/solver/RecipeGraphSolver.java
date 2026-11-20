@@ -153,6 +153,13 @@ public final class RecipeGraphSolver<R, K> {
                     long crafts = 0;
                     for (int r = 0; r < runs.size(); r++) {
                         crafts += runs.get(r).crafts();
+                        // Without the recipe this cannot check arity against the slots, but every run
+                        // of one step lays out the same slots.
+                        if (r > 0 && runs.get(r).items().size() != runs.get(0).items().size()) {
+                            throw new IllegalArgumentException("step " + i + " run " + r + " lists "
+                                    + runs.get(r).items().size() + " slots, run 0 lists "
+                                    + runs.get(0).items().size());
+                        }
                         if (r > 0 && Objects.equals(runs.get(r).items(), runs.get(r - 1).items())) {
                             throw new IllegalArgumentException("step " + i + " runs " + (r - 1) + " and "
                                     + r + " list equal items: consecutive runs must be merged");
@@ -363,6 +370,10 @@ public final class RecipeGraphSolver<R, K> {
      * full layouts compress into one run.
      */
     private static <K> List<SlotLayout<K>> layoutRuns(long crafts, List<Group<K>> groups, List<Map<K, Long>> use) {
+        // Only recorded steps get layouts, and craft() caps a recorded batch at an int (capInt).
+        if (crafts > Integer.MAX_VALUE) {
+            throw new IllegalStateException("a recorded step holds " + crafts + " crafts, above an int");
+        }
         int slotCount = 0;
         for (Group<K> group : groups) {
             slotCount += group.slotIndexes.size();
@@ -454,6 +465,9 @@ public final class RecipeGraphSolver<R, K> {
     private static <K> List<SlotLayout<K>> chunkRuns(List<PlanSimulator.Chunk<K>> chunks) {
         List<SlotLayout<K>> runs = new ArrayList<>(chunks.size());
         for (PlanSimulator.Chunk<K> chunk : chunks) {
+            if (chunk.repeat > Integer.MAX_VALUE) { // a recorded batch is capped at an int (capInt)
+                throw new IllegalStateException("a recorded chunk holds " + chunk.repeat + " crafts, above an int");
+            }
             int repeat = (int) chunk.repeat;
             List<K> items = new ArrayList<>(chunk.chosen.length);
             for (Object item : chunk.chosen) {

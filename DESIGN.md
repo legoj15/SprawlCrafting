@@ -579,15 +579,15 @@ compression mods saturate at `Long.MAX_VALUE`. Counts are therefore `long` from 
 
 **Planning**
 
-- **One slot-filling rule, no look-ahead.** Which stock fills which slot of a craft is decided by
-  `SlotAssignment` (solver-core): most constrained slot first, non-scarce alternative first, then
-  bipartite repair. Every executor (`CraftExecutor.assign` in all three trees, so also the grid
-  hand-off's ledger path) prefers the stack that rule names, and `solve` only returns plans that
-  `PlanSimulator` replays craft by craft under it (#10, #18), so a plan never depends on inventory
-  layout. The rule sees one craft at a time: a sub-craft whose slot lists an item first that a later
-  step needs (and holds the only copy of) takes it, and such a target is reported unsolvable instead
-  of stalling mid-job. Carrying a per-step slot choice in the plan would lift that; not done.
-  Full search is exponential — rejected.
+- **The plan names every slot's item (#23).** Each step of a solved plan carries `SlotLayout` runs:
+  the item every craft puts in every non-empty slot, as the planning pass decided, and `solve` only
+  returns plans that replay under those layouts. Every executor (`CraftExecutor.assign` in all three
+  trees, also the grid hand-off's manual lay-out) prefers the layout's items while the live pool
+  still holds them, so a plan never depends on inventory layout and a sub-craft no longer eats the
+  only copy a later step needs. Fallback when the inventory changed mid-job: `SlotAssignment`
+  (most constrained slot first, non-scarce alternative first, then bipartite repair), which sees one
+  craft at a time. The solver's exact pass (the contention fallback) still lays out with that rule,
+  so its look-ahead limit remains there; full search is exponential — rejected.
 - **Search budget instead of memoization.** The solver plans in batches: identical slots are
   merged and quantities carried, so a recipe is resolved once per batch size rather than once
   per unit, and a `PlannedStep` can hold thousands of crafts. `MAX_ATTEMPTS` counts *batched
