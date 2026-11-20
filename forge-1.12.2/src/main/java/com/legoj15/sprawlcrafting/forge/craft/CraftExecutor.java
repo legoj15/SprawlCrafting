@@ -681,6 +681,8 @@ public final class CraftExecutor {
      * {@link SlotAssignment} runs over the same slot lists ({@link CraftPlanner#slotAlternatives})
      * and the same pool counts, so its fallback still takes what a plan made without layouts
      * counted on.
+     * With {@code admitting} (the #26 pass of {@link #assign}) the job's admitted altered copies
+     * join that stock too ({@link #countAdmitted}), since the plan counted them as well.
      */
     private static ItemKey[] preferredKeys(List<Source> sources, List<Ingredient> ingredients,
                                            List<ItemKey> layout, LedgerTally<ItemKey, LedgerVariant> admitting) {
@@ -781,12 +783,9 @@ public final class CraftExecutor {
             if (add > 0) {
                 Integer have = stock.get(identity);
                 stock.put(identity, NetworkTerminals.saturatedAdd(have == null ? 0 : have, add));
-                variantLeft.put(variant, forVariant - add);
-                identityLeft.put(identity, forIdentity - add);
-            } else {
-                variantLeft.put(variant, forVariant);
-                identityLeft.put(identity, forIdentity);
             }
+            variantLeft.put(variant, forVariant - Math.max(add, 0));
+            identityLeft.put(identity, forIdentity - Math.max(add, 0));
         }
     }
 

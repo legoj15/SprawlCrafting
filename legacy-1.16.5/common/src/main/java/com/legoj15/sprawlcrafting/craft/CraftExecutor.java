@@ -891,6 +891,8 @@ public final class CraftExecutor {
      * since, and a stale layout must not override what the pool can actually supply.
      * {@link SlotAssignment} runs over the same slot lists ({@link CraftPlanner#slotAlternatives}) and
      * the same counts, so its fallback still takes what a plan made without layouts counted on.
+     * With {@code admitting} (the #26 pass of {@link #assign}) the job's admitted altered copies
+     * join that stock too ({@link #countAdmitted}), since the plan counted them as well.
      */
     private static Item[] preferredItems(PlayerInventory inventory, List<Ingredient> ingredients, StationPool pool,
                                          List<Item> layout,

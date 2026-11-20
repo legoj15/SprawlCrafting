@@ -92,6 +92,9 @@ public final class LedgerTally<K, V> {
      * smaller of the two, drawing both down as it goes. Zero before {@link #open}.
      */
     public long variantHeadroom(V variant) {
+        if (ledger == null) {
+            return 0;
+        }
         return Math.max(0, jobHeld(variant) - get(refusedTakes, variant));
     }
 
