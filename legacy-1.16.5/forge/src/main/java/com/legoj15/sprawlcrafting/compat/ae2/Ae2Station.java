@@ -448,7 +448,8 @@ public final class Ae2Station implements StationStorages.Provider {
             // S <= 2R, so R >= ceil(S / 2): plan on that, never on S. Halving a probe of the request itself
             // would cap every answer at half of it, even on a network with ample room; probing twice the
             // request keeps that case exact (S = 2 * limit means R >= limit) and only underestimates when
-            // the network is nearly full.
+            // the network is nearly full (room under twice the request)
+            // or lacks the energy to move twice it; an underestimate only shrinks a batch or stops a step.
             return Math.min(limit, (simulated + 1) / 2);
         }
     }

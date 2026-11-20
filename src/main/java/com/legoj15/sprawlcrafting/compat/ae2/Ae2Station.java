@@ -475,7 +475,8 @@ public final class Ae2Station implements StationStorages.Provider {
             // simulated S obey S <= 2R, so R >= ceil(S / 2): plan on that, never on S. Halving a probe of
             // the request itself would cap every answer at half of it, even on a network with ample room;
             // probing twice the request (limit is int-bounded by every caller, so it fits) keeps that case
-            // exact and only underestimates when the network is nearly full.
+            // exact and only underestimates when the network is nearly full (room under twice the request)
+            // or lacks the energy to move twice it; an underestimate only shrinks a batch or stops a step.
             long simulated = Math.max(0, StorageHelper.poweredInsert(energy, storage, key, 2 * limit, source,
                     Actionable.SIMULATE));
             return Math.min(limit, (simulated + 1) / 2);
