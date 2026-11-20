@@ -66,6 +66,16 @@ public interface IPlatformHelper {
     /** C2S: the dimensions of the crafting grid on screen (0×0 = none). No-op unless {@link #serverHasMod()}. */
     void sendScreenState(int gridWidth, int gridHeight);
 
+    /**
+     * Whether the connected server has the cancel-craft channel, i.e. a SprawlCrafting build that can
+     * cancel a running deferred craft. Without it the keybind must send nothing — an older server
+     * would ignore the request, so the job would run on while the player believes it is cancelled.
+     */
+    boolean canCancelCraft();
+
+    /** C2S: cancel the player's running or paused deferred craft. No-op unless {@link #canCancelCraft()}. */
+    void sendCancelCraft();
+
     default String getEnvironmentName() {
         return isDevelopmentEnvironment() ? "development" : "production";
     }

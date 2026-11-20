@@ -4,6 +4,7 @@ import com.legoj15.sprawlcrafting.craft.ClientCraftingView;
 import com.legoj15.sprawlcrafting.craft.CraftQueueManager;
 import com.legoj15.sprawlcrafting.craft.CraftRequests;
 import com.legoj15.sprawlcrafting.craft.StationStorages;
+import com.legoj15.sprawlcrafting.network.CancelCraftPacket;
 import com.legoj15.sprawlcrafting.network.CraftingScreenStatePacket;
 import com.legoj15.sprawlcrafting.network.StartDeferredCraftPacket;
 
@@ -37,6 +38,10 @@ public class FabricMod implements ModInitializer {
                     server.execute(() -> ClientCraftingView.update(
                             player.getUUID(), packet.gridWidth(), packet.gridHeight()));
                 });
+        // Empty payload, nothing to decode; the sender alone identifies the job to cancel.
+        ServerPlayNetworking.registerGlobalReceiver(CancelCraftPacket.ID,
+                (server, player, handler, buf, sender) ->
+                        server.execute(() -> CraftQueueManager.cancel(player)));
 
         // End-of-server-tick player loop, mirroring the Forge wiring so jobs tick identically.
         ServerTickEvents.END_SERVER_TICK.register(server -> {

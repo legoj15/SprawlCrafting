@@ -11,6 +11,7 @@ import com.legoj15.sprawlcrafting.craft.ClientCraftingView;
 import com.legoj15.sprawlcrafting.craft.CraftQueueManager;
 import com.legoj15.sprawlcrafting.craft.CraftRequests;
 import com.legoj15.sprawlcrafting.craft.StationStorages;
+import com.legoj15.sprawlcrafting.network.CancelCraftPacket;
 import com.legoj15.sprawlcrafting.network.CraftProgressPacket;
 import com.legoj15.sprawlcrafting.network.CraftingScreenStatePacket;
 import com.legoj15.sprawlcrafting.network.ProgressStatesV2;
@@ -63,6 +64,17 @@ public class ForgeMod {
             ForgeMod::acceptsVersion,
             ForgeMod::acceptsVersion);
 
+    /**
+     * The player-initiated cancel (issue #31) rides its own channel instead of a fourth id on the main
+     * one: the main channel's ids 0-2 are frozen, and an older peer cannot be handed id 3. Same lenient
+     * predicates and protocol as the main channel, so both sides keep treating it as optional.
+     */
+    public static final SimpleChannel CANCEL_CRAFT = NetworkRegistry.newSimpleChannel(
+            CancelCraftPacket.ID,
+            () -> PROTOCOL,
+            ForgeMod::acceptsVersion,
+            ForgeMod::acceptsVersion);
+
     public ForgeMod() {
         // Server-list compatibility: present-or-absent on either side is fine.
         ModLoadingContext.get().registerExtensionPoint(ExtensionPoint.DISPLAYTEST,
@@ -94,6 +106,9 @@ public class ForgeMod {
         CHANNEL.registerMessage(2, CraftProgressPacket.class,
                 CraftProgressPacket::write, CraftProgressPacket::read,
                 ForgeMod::handleProgress, Optional.of(NetworkDirection.PLAY_TO_CLIENT));
+        CANCEL_CRAFT.registerMessage(0, CancelCraftPacket.class,
+                CancelCraftPacket::write, CancelCraftPacket::read,
+                ForgeMod::handleCancelCraft, Optional.of(NetworkDirection.PLAY_TO_SERVER));
     }
 
     private static void handleStart(StartDeferredCraftPacket packet, Supplier<NetworkEvent.Context> ctx) {
@@ -117,6 +132,14 @@ public class ForgeMod {
         // Nested lambda keeps the client-only tracker class from loading on a dedicated server.
         ctx.get().enqueueWork(() ->
                 DistExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () -> ClientJobTracker.accept(packet)));
+        ctx.get().setPacketHandled(true);
+    }
+
+    private static void handleCancelCraft(CancelCraftPacket packet, Supplier<NetworkEvent.Context> ctx) {
+        final ServerPlayerEntity player = ctx.get().getSender();
+        if (player != null) {
+            ctx.get().enqueueWork(() -> CraftQueueManager.cancel(player));
+        }
         ctx.get().setPacketHandled(true);
     }
 

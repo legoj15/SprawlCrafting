@@ -2,6 +2,7 @@ package com.legoj15.sprawlcrafting.platform.forge;
 
 import java.nio.file.Path;
 
+import com.legoj15.sprawlcrafting.network.CancelCraftPacket;
 import com.legoj15.sprawlcrafting.network.CraftProgressPacket;
 import com.legoj15.sprawlcrafting.network.CraftingScreenStatePacket;
 import com.legoj15.sprawlcrafting.network.StartDeferredCraftPacket;
@@ -89,6 +90,21 @@ public class ForgePlatformHelper implements IPlatformHelper {
     public void sendScreenState(int gridWidth, int gridHeight) {
         if (serverHasMod()) {
             ForgeMod.CHANNEL.sendToServer(new CraftingScreenStatePacket(gridWidth, gridHeight));
+        }
+    }
+
+    // The cancel's own channel, not serverHasMod(): a mod-1.0.x server has the main channel but no
+    // cancel handler, so its presence here is what says the request would reach CraftQueueManager.cancel.
+    @Override
+    public boolean canCancelCraft() {
+        ClientPlayNetHandler connection = Minecraft.getInstance().getConnection();
+        return connection != null && ForgeMod.CANCEL_CRAFT.isRemotePresent(connection.getConnection());
+    }
+
+    @Override
+    public void sendCancelCraft() {
+        if (canCancelCraft()) {
+            ForgeMod.CANCEL_CRAFT.sendToServer(new CancelCraftPacket());
         }
     }
 }

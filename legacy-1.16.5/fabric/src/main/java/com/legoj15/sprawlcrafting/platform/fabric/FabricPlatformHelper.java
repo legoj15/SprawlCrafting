@@ -2,6 +2,7 @@ package com.legoj15.sprawlcrafting.platform.fabric;
 
 import java.nio.file.Path;
 
+import com.legoj15.sprawlcrafting.network.CancelCraftPacket;
 import com.legoj15.sprawlcrafting.network.CraftProgressPacket;
 import com.legoj15.sprawlcrafting.network.CraftingScreenStatePacket;
 import com.legoj15.sprawlcrafting.network.StartDeferredCraftPacket;
@@ -98,5 +99,23 @@ public class FabricPlatformHelper implements IPlatformHelper {
         PacketBuffer buf = PacketByteBufs.create();
         new CraftingScreenStatePacket(gridWidth, gridHeight).write(buf);
         ClientPlayNetworking.send(CraftingScreenStatePacket.ID, buf);
+    }
+
+    // The cancel's own channel, not serverHasMod(): an older SprawlCrafting server accepts the start
+    // channel but has no cancel receiver, so its presence here is what says the request would land.
+    @Override
+    public boolean canCancelCraft() {
+        return Minecraft.getInstance().getConnection() != null
+                && ClientPlayNetworking.canSend(CancelCraftPacket.ID);
+    }
+
+    @Override
+    public void sendCancelCraft() {
+        if (!canCancelCraft()) {
+            return;
+        }
+        PacketBuffer buf = PacketByteBufs.create();
+        new CancelCraftPacket().write(buf); // writes nothing: an empty buffer is the whole payload
+        ClientPlayNetworking.send(CancelCraftPacket.ID, buf);
     }
 }

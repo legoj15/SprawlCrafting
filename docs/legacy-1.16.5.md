@@ -157,6 +157,11 @@ Forge 1.16.5, mod id **`appliedenergistics2`** (the short `ae2` id is 1.18+).
 - Forge marker channel `sprawlcrafting:progress_states_v2` (no messages, issue #29): presence-only
   capability for `PAUSED_STATION` and station counting. Fabric has no station, so it registers nothing
   and both capability checks return false.
+- Cancel craft (issue #31), player-initiated cancel of a running/paused job (the Cancel deferred craft
+  keybind): Forge `SimpleChannel` `sprawlcrafting:cancel_craft`, id 0 `CancelCraftPacket` (C2S), same
+  lenient predicates and protocol as `main` — its own channel because the main channel's ids 0-2 are
+  frozen and an older peer cannot be handed id 3.
+- Fabric: play channel `sprawlcrafting:cancel_craft` (`ClientPlayNetworking.canSend` guard), empty payload.
 
 ## Parity status
 

@@ -7,6 +7,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 import com.legoj15.sprawlcrafting.network.CraftProgressPacket;
 import com.legoj15.sprawlcrafting.platform.Services;
+import com.legoj15.solver.CountFormat;
 
 import net.minecraft.entity.player.ServerPlayerEntity;
 import net.minecraft.item.ItemStack;
@@ -42,6 +43,28 @@ public final class CraftQueueManager {
             return false;
         }
         sync(player, job, CraftProgressPacket.State.CRAFTING, ItemStack.EMPTY);
+        return true;
+    }
+
+    /**
+     * Cancels the player's running or paused deferred craft at their request (the "Cancel deferred
+     * craft" keybind). Runs on the server thread between ticks, so it always lands between two whole
+     * crafts — each craft (a crafting-station draw included) is applied all-or-nothing within
+     * {@link #tick}, and everything already crafted stays in the player's inventory, the same end
+     * state an involuntary cancel (missing ingredient, recipe gone) leaves behind.
+     *
+     * @return true if a job was cancelled; false when the player had none (a silent no-op)
+     */
+    public static boolean cancel(ServerPlayerEntity player) {
+        CraftJob job = ACTIVE.remove(player.getUUID());
+        if (job == null) {
+            return false;
+        }
+        sync(player, job, CraftProgressPacket.State.CANCELLED, ItemStack.EMPTY);
+        notify(player, new TranslationTextComponent("sprawlcrafting.craft.cancelled",
+                job.targetResult().getHoverName(),
+                CountFormat.format(job.craftsDone()),
+                CountFormat.format(job.totalCrafts())).withStyle(TextFormatting.YELLOW));
         return true;
     }
 

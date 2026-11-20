@@ -10,6 +10,7 @@ import net.minecraft.item.Item;
 import net.minecraft.item.crafting.IRecipe;
 import net.minecraft.util.ResourceLocation;
 import net.minecraft.util.text.IFormattableTextComponent;
+import net.minecraft.util.text.KeybindTextComponent;
 import net.minecraft.util.text.ITextComponent;
 import net.minecraft.util.text.StringTextComponent;
 import net.minecraft.util.text.TextFormatting;
@@ -44,7 +45,11 @@ public final class CraftRequests {
             return;
         }
         if (CraftQueueManager.activeJob(player.getUUID()).isPresent()) {
-            notify(player, new TranslationTextComponent("sprawlcrafting.craft.busy").withStyle(TextFormatting.RED));
+            // The keybind component is resolved by the client into the bound key's name (and left as
+            // the raw id when the server console renders it), so the hint names whatever the player
+            // actually bound, not the default.
+            notify(player, new TranslationTextComponent("sprawlcrafting.craft.busy",
+                    new KeybindTextComponent("key.sprawlcrafting.cancel_craft")).withStyle(TextFormatting.RED));
             return;
         }
         // Vanilla parity: clicking a recipe returns the grid's contents to the inventory before acting.
