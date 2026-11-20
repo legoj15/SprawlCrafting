@@ -770,12 +770,18 @@ public final class CraftExecutor {
      * admits, per item only up to its outstanding count: the job's altered intermediates, which the
      * plan's counts include, so {@link #preferredItems} must see them too.
      */
-    private static void countAdmitted(PlayerInventory inventory, ProducedLedger<Item> admitting,
+    private static void countAdmitted(List<Ingredient> ingredients, PlayerInventory inventory,
+                                      ProducedLedger<Item> admitting,
                                       Map<Item, Integer> stock) {
         Map<Item, Integer> counted = new HashMap<>(); // admit budget already spent per item
         for (int i = 0; i < MAIN_SLOTS; i++) {
             ItemStack stack = inventory.getItem(i);
             if (stack.isEmpty() || usableAsIngredient(stack)) {
+                continue;
+            }
+            // A copy no cell of this recipe accepts would only inflate the count the rule spreads
+            // over the cells, and a cell preferring it would then miss an alternative it needed.
+            if (!acceptedByAny(ingredients, stack)) {
                 continue;
             }
             Item item = stack.getItem();
@@ -786,6 +792,16 @@ public final class CraftExecutor {
                 counted.merge(item, add, Integer::sum);
             }
         }
+    }
+
+    /** Whether any non-empty ingredient of the recipe accepts {@code stack}. */
+    private static boolean acceptedByAny(List<Ingredient> ingredients, ItemStack stack) {
+        for (Ingredient ingredient : ingredients) {
+            if (ingredient != null && !ingredient.isEmpty() && ingredient.test(stack)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -836,7 +852,7 @@ public final class CraftExecutor {
             }
         }
         if (admitting != null) {
-            countAdmitted(inventory, admitting, stock);
+            countAdmitted(ingredients, inventory, admitting, stock);
         }
         List<List<Item>> slots = new ArrayList<>();
         List<Integer> cells = new ArrayList<>();

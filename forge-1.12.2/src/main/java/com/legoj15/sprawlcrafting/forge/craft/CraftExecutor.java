@@ -543,12 +543,18 @@ public final class CraftExecutor {
      * credited the fresh output, whose key is its ledger identity, and an altered damageable copy's
      * own key carries its damage, which no slot alternative names.
      */
-    private static void countAdmitted(List<Source> sources, ProducedLedger<ItemKey> admitting,
+    private static void countAdmitted(List<Ingredient> ingredients, List<Source> sources,
+                                      ProducedLedger<ItemKey> admitting,
                                       Map<ItemKey, Integer> stock) {
         Map<ItemKey, Integer> counted = new HashMap<ItemKey, Integer>(); // admit budget spent per ledger identity
         for (Source source : sources) {
             ItemStack stack = source.peek();
             if (stack.isEmpty() || usableAsIngredient(stack)) {
+                continue;
+            }
+            // A copy no cell of this recipe accepts would only inflate the count the rule spreads
+            // over the cells, and a cell preferring it would then miss an alternative it needed.
+            if (!acceptedByAny(ingredients, stack)) {
                 continue;
             }
             ItemKey identity = ledgerKey(stack);
@@ -561,6 +567,16 @@ public final class CraftExecutor {
                 counted.put(identity, (spent == null ? 0 : spent) + add);
             }
         }
+    }
+
+    /** Whether any non-empty ingredient of the recipe accepts {@code stack}. */
+    private static boolean acceptedByAny(List<Ingredient> ingredients, ItemStack stack) {
+        for (Ingredient ingredient : ingredients) {
+            if (ingredient != null && ingredient != Ingredient.EMPTY && ingredient.apply(stack)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     static final class Assignment {
@@ -630,7 +646,7 @@ public final class CraftExecutor {
             }
         }
         if (admitting != null) {
-            countAdmitted(sources, admitting, stock);
+            countAdmitted(ingredients, sources, admitting, stock);
         }
         List<List<ItemKey>> slots = new ArrayList<List<ItemKey>>();
         List<Integer> cells = new ArrayList<Integer>();
@@ -653,8 +669,8 @@ public final class CraftExecutor {
      * A usable stack of {@code preferred} ({@link #preferredKeys}) when one matches; then a refused
      * copy of {@code preferred} the admitting ledger still admits (the job's altered intermediate,
      * which the plan's counts include, matched and admitted by {@link #ledgerKey}, the identity
-     * {@link #countAdmitted} stocked it under); otherwise the first usable match in pool order, and only then (with a
-     * ledger) any refused stack the ledger admits.
+     * {@link #countAdmitted} stocked it under); otherwise the first usable match in pool order,
+     * and only then (with a ledger) any refused stack the ledger admits.
      */
     private static int findMatchingSource(List<Source> sources, Ingredient ingredient, ItemKey preferred,
                                           int[] reserved, ProducedLedger<ItemKey> admitting,
