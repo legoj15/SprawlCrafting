@@ -29,7 +29,7 @@ val hasRei = project.findProperty("rei_version") != null
 val hasModMenu = project.findProperty("modmenu_version") != null
 // The AE2 station's JEI pieces (fabric.mod.json: the compat.ae2.jei.StationJeiPlugin entrypoint and
 // the sprawlcrafting.ae2jei.mixins.json guard config) need a node that pins BOTH ae2_version and
-// jei_version. None of these nodes (1.21.1 / 26.x Fabric) pins ae2_version, so this is false here;
+// jei_version. None of these nodes (26.x Fabric; 1.x Fabric uses build.fabric-o.gradle.kts) pins ae2_version, so this is false here;
 // it must still be defined or fabric.mod.json's expand() fails on the unknown variable.
 val hasAe2Jei = project.findProperty("ae2_version") != null && project.findProperty("jei_version") != null
 
@@ -157,7 +157,7 @@ tasks.withType<JavaCompile>().configureEach {
         exclude("**/*ModMenu*") // no Mod Menu build for this node → drop the integration class
     }
     // AE2 Crafting Terminal station (issue #2): compiled only where a node pins ae2_version — none on
-    // these nodes (1.21.1 / 26.x Fabric; the compileOnly AE2 dependency above is wired). The Fabric
+    // these nodes (26.x Fabric, where AE2 ships no Fabric build; the compileOnly AE2 dependency above is wired). The Fabric
     // opt-in is 1.20.1-fabric (build.fabric-o.gradle.kts, AE2 15.4.12, issue #27): there has_ae2_jei
     // emits the compat.ae2.jei.StationJeiPlugin entrypoint and the guard-mixin config in
     // fabric.mod.json (Fabric finds JEI plugins only through entrypoints, unlike Forge/NeoForge

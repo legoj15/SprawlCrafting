@@ -24,7 +24,9 @@ import mezz.jei.api.recipe.transfer.IRecipeTransferHandler;
  * items" bug). This mixin therefore cancels JEI's registration of any OTHER crafting handler for a
  * station menu class: whichever plugin runs first, ours stays. AE2's stock handler itself is not lost
  * — {@code Ae2JeiStock} builds the same class directly as our delegate, never through this
- * registration. Forge needs none of this (AFTER ordering already wins the race) and the config ships
+ * registration. JEI 15's other two addRecipeTransferHandler overloads (IRecipeTransferInfo and the
+ * slot-range form) delegate to the hooked one, so they are covered; universal handlers are stored under
+ * JEI's separate universal type and are not (AE2 15 registers one only for its pattern terminal). Forge needs none of this (AFTER ordering already wins the race) and the config ships
  * on Fabric only, but applying it there too would be harmless for the same reason.
  *
  * <p>{@code @Pseudo} + a {@code required: false} config + {@code require = 0} everywhere: JEI is

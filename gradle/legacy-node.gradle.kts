@@ -9,13 +9,13 @@ val legacyJavaVersion = (property("java_version") as String).toInt()
 val legacyModId = property("mod_id") as String
 val legacySc = the<StonecutterBuildExtension>()
 
-// The mixin config is authored for Java 21 (compatibilityLevel "JAVA_21"). A node on an older Java
+// The mixin configs (main and the AE2 JEI guard) are authored for Java 21 (compatibilityLevel "JAVA_21"). A node on an older Java
 // (1.20.1 = 17) must declare a level its runtime supports, or Mixin rejects the config at boot.
 if (legacyJavaVersion < 21) {
     val mixinJava = "JAVA_$legacyJavaVersion"
     tasks.named<ProcessResources>("processResources") {
         inputs.property("mixin_java", mixinJava)
-        filesMatching("$legacyModId.mixins.json") { filter { it.replace("\"JAVA_21\"", "\"$mixinJava\"") } }
+        filesMatching(listOf("$legacyModId.mixins.json", "$legacyModId.ae2jei.mixins.json")) { filter { it.replace("\"JAVA_21\"", "\"$mixinJava\"") } }
     }
 }
 
