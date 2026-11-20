@@ -158,7 +158,12 @@ public final class CraftRequests {
             body = new TextComponentTranslation("sprawlcrafting.craft.too_complex", targetName);
         } else if (outcome instanceof PlanOutcome.Unsolvable) {
             List<ItemKey> missing = ((PlanOutcome.Unsolvable) outcome).missing();
-            body = new TextComponentTranslation("sprawlcrafting.craft.unsolvable", targetName, missingNames(missing));
+            // Nothing missing: every pass was rejected on replay — the materials are there, but no
+            // order of crafts works, and a "not enough resources" message would be false.
+            body = missing.isEmpty()
+                    ? new TextComponentTranslation("sprawlcrafting.craft.unsolvable_order", targetName)
+                    : new TextComponentTranslation("sprawlcrafting.craft.unsolvable", targetName,
+                            missingNames(missing));
         } else {
             body = new TextComponentString("?");
         }

@@ -40,9 +40,13 @@ import net.minecraftforge.common.crafting.IShapedRecipe;
  * <p>Invariants shared with {@link CraftPlanner}:
  * <ul>
  *   <li>Ingredients are consumed from the same pool the planner counted: the 36 main inventory
- *       slots and, when a recognised crafting station is open, its connected side inventory (a
+ *       slots, the open container's crafting grid while no complete craft is staged in it (see
+ *       {@link ExternalSlots#materialSlots}) and, when a recognised crafting station is open, its
+ *       connected side inventory (a
  *       Tinkers' Construct Crafting Station's bound chest — see {@link ExternalSlots}). Armor and
- *       offhand are never touched. Results and crafting remainders are always inserted into the 36
+ *       offhand are never consumed; the ledger's player-own baseline counts them, the cursor stack,
+ *       and a staged grid's cells (outside the pool) read-only (see {@link #countRefused}). Results
+ *       and crafting remainders are always inserted into the 36
  *       main slots, never the chest: consume-from-chest, deposit-to-player is safe and matches
  *       intuition. With a network crafting terminal open ({@link NetworkTerminals}, the AE2 Crafting
  *       Terminal) the network is a third pool, used after the player's slots; network picks are
@@ -117,8 +121,13 @@ public final class CraftExecutor {
         }
     }
 
+    /**
+     * One craft of {@code recipeId}. {@code layout} is the plan's per-slot item choice for this craft
+     * ({@link CraftJob#currentCraftLayout()}); null or a layout the live pool can no longer honor
+     * falls back to {@link SlotAssignment}.
+     */
     public static CraftResult craftOnce(EntityPlayerMP player, ResourceLocation recipeId,
-                                        ProducedLedger<ItemKey> ledger) {
+                                        ProducedLedger<ItemKey, LedgerVariant> ledger, List<ItemKey> layout) {
         IRecipe recipe = CraftingManager.getRecipe(recipeId);
         if (recipe == null) {
             return new CraftResult.RecipeGone();
@@ -129,7 +138,7 @@ public final class CraftExecutor {
         // one entry per ingredient slot (-1 for a gap in the shape) so the simulation below can
         // reconstruct the grid positions.
         InventoryPlayer inventory = player.inventory;
-        Assignment assignment = assign(player, recipe.getIngredients(), ledger, true);
+        Assignment assignment = assign(player, recipe.getIngredients(), ledger, true, layout);
         if (assignment.missing != null) {
             return new CraftResult.MissingIngredient(describe(assignment.missing));
         }
@@ -310,19 +319,11 @@ public final class CraftExecutor {
      * through the engine because it depends on the station's connected chest. Runs on either side.
      */
     public static boolean canCraftFromPlayerInventory(EntityPlayer player, IRecipe recipe) {
-        InventoryPlayer inventory = player.inventory;
-        int[] reserved = new int[MAIN];
-        for (Ingredient ingredient : recipe.getIngredients()) {
-            if (ingredient == Ingredient.EMPTY) {
-                continue;
-            }
-            int slot = findMatchingSlot(inventory, ingredient, reserved);
-            if (slot < 0) {
-                return false;
-            }
-            reserved[slot]++;
+        List<Source> sources = new ArrayList<Source>();
+        for (int i = 0; i < MAIN; i++) {
+            sources.add(new PlayerSource(player.inventory, i));
         }
-        return true;
+        return canCraftFrom(sources, recipe.getIngredients());
     }
 
     /**
@@ -334,24 +335,25 @@ public final class CraftExecutor {
      * TConstruct+JEI behavior) rather than routed through the engine.
      */
     public static boolean canCraftFromPlayerAndStation(EntityPlayer player, IRecipe recipe) {
-        InventoryPlayer inventory = player.inventory;
-        List<Slot> external = ExternalSlots.materialSlots(player);
-        int[] reserved = new int[MAIN + external.size()];
-        for (Ingredient ingredient : recipe.getIngredients()) {
-            if (ingredient == Ingredient.EMPTY) {
+        return canCraftFrom(buildSources(player, player.inventory, null), recipe.getIngredients());
+    }
+
+    /**
+     * Whether one craft can be laid out from {@code sources}, choosing stacks exactly as
+     * {@link #assign} does ({@link #preferredKeys} first, then first match, no ledger), so a gate
+     * that says yes is never contradicted by the assignment that follows. The converse holds only
+     * without a ledger: a ledger lets assign also take admitted altered stacks the gate ignores,
+     * which is the safe direction (a no routes the craft to the engine).
+     */
+    private static boolean canCraftFrom(List<Source> sources, List<Ingredient> ingredients) {
+        ItemKey[] preferred = preferredKeys(sources, ingredients, null, null); // a direct craft has no plan layout
+        int[] reserved = new int[sources.size()];
+        for (int i = 0; i < ingredients.size(); i++) {
+            Ingredient ingredient = ingredients.get(i);
+            if (ingredient == null || ingredient == Ingredient.EMPTY) {
                 continue;
             }
-            int idx = findMatchingSlot(inventory, ingredient, reserved);
-            if (idx < 0) {
-                for (int j = 0; j < external.size(); j++) {
-                    ItemStack stack = external.get(j).getStack();
-                    if (!stack.isEmpty() && stack.getCount() - reserved[MAIN + j] > 0
-                            && usableAsIngredient(stack) && ingredient.apply(stack)) {
-                        idx = MAIN + j;
-                        break;
-                    }
-                }
-            }
+            int idx = findMatchingSource(sources, ingredient, preferred[i], reserved, null, false);
             if (idx < 0) {
                 return false;
             }
@@ -462,45 +464,68 @@ public final class CraftExecutor {
      * One source per ingredient ({@code -1} for a gap: null or {@link Ingredient#EMPTY}) over the
      * pool {@link #buildSources} describes, chosen without mutating anything, or the first
      * ingredient nothing could satisfy. A stack {@link #usableAsIngredient} rejects is chosen only
-     * when no acceptable stack matches and {@code ledger} (null: never) still admits its identity
-     * through {@link LedgerTally#admissible}: only rejected copies above those the player held
-     * before the job produced anything. Every pick is recorded in the tally, which
+     * when no acceptable stack matches and {@code ledger} (null: never) still admits its exact
+     * variant through {@link LedgerTally#admits}: only rejected copies above those the player held
+     * before the job produced anything, per variant. Every pick is recorded in the tally, which
      * {@link Assignment#chargeTo} charges: rejected picks, plus plain picks beyond the job's
-     * rejected copies of that identity the pool still
+     * rejected copies of that identity the player still
      * holds. Package-visible: the final-step hand-off ({@link ServerGridPlacer}) lays out the same
      * choice.
+     *
+     * <p>{@code layout} is the plan's per-slot item choice for this craft (one entry per non-empty
+     * cell in cell order; null or a mismatch: decide with {@link SlotAssignment}), see
+     * {@link #preferredKeys}.
      */
-    static Assignment assign(EntityPlayer player, List<Ingredient> ingredients, ProducedLedger<ItemKey> ledger) {
-        return assign(player, ingredients, ledger, false);
+    static Assignment assign(EntityPlayer player, List<Ingredient> ingredients,
+                             ProducedLedger<ItemKey, LedgerVariant> ledger, List<ItemKey> layout) {
+        return assign(player, ingredients, ledger, false, layout);
     }
 
     /**
-     * {@link #assign(EntityPlayer, List, ProducedLedger)} over a pool that, with {@code withNetwork},
-     * also holds the open network terminal's stock. Only {@link #craftOnce} passes true: it is the one
-     * consumer that {@link #prepareNetwork extracts} its network picks before taking them. The grid
-     * placer's {@link Assignment#take} never sees a network source.
+     * {@link #assign(EntityPlayer, List, ProducedLedger, List)} over a pool that, with
+     * {@code withNetwork}, also holds the open network terminal's stock. Only {@link #craftOnce}
+     * passes true: it is the one consumer that {@link #prepareNetwork extracts} its network picks
+     * before taking them. The grid placer's {@link Assignment#take} never sees a network source.
      */
     private static Assignment assign(EntityPlayer player, List<Ingredient> ingredients,
-                                     ProducedLedger<ItemKey> ledger, boolean withNetwork) {
+                                     ProducedLedger<ItemKey, LedgerVariant> ledger, boolean withNetwork,
+                                     List<ItemKey> layout) {
         List<Source> sources = buildSources(player, player.inventory,
                 withNetwork ? ingredientItems(ingredients) : null);
+        // First with the job's admitted altered copies counted in the preference rule and the plan's
+        // layout check (#26); when that leaves an ingredient unfilled, the pre-#26 rule exactly. The
+        // rule cannot see which cells accept an altered copy, so counting one can steer a cell to an
+        // identity only another cell could take; the second pass makes the change never worse than
+        // before it. A pass changes no pool state (sources are only peeked; the ledger's preexisting
+        // snapshot is rewritten with equal values).
+        Assignment first = assignPass(player, sources, ingredients, ledger, layout, true);
+        if (first.complete() || ledger == null) {
+            return first;
+        }
+        return assignPass(player, sources, ingredients, ledger, layout, false);
+    }
+
+    /** One {@link #assign} attempt over {@code sources}; {@code admittedPreference}: the #26 rule. */
+    private static Assignment assignPass(EntityPlayer player, List<Source> sources, List<Ingredient> ingredients,
+                                         ProducedLedger<ItemKey, LedgerVariant> ledger, List<ItemKey> layout,
+                                         boolean admittedPreference) {
         int[] chosen = new int[ingredients.size()];
         int[] reserved = new int[sources.size()];
-        LedgerTally<ItemKey> tally = new LedgerTally<ItemKey>();
-        Map<ItemKey, Integer> ledgerTakes = tally.refusedTakes();
-        ProducedLedger<ItemKey> admitting = null;
+        LedgerTally<ItemKey, LedgerVariant> tally = new LedgerTally<ItemKey, LedgerVariant>();
         if (ledger != null) {
-            countRefused(sources, tally);
-            admitting = tally.admissible(ledger);
+            countRefused(player, sources, tally);
+            tally.open(ledger);
         }
-        ItemKey[] preferred = preferredKeys(sources, ingredients);
+        ItemKey[] preferred = preferredKeys(sources, ingredients, layout,
+                ledger != null && admittedPreference ? tally : null);
         for (int i = 0; i < chosen.length; i++) {
             Ingredient ingredient = ingredients.get(i);
             if (ingredient == null || ingredient == Ingredient.EMPTY) {
                 chosen[i] = -1;
                 continue;
             }
-            int idx = findMatchingSource(sources, ingredient, preferred[i], reserved, admitting, ledgerTakes);
+            int idx = findMatchingSource(sources, ingredient, preferred[i], reserved, ledger == null ? null : tally,
+                    admittedPreference);
             if (idx < 0) {
                 return new Assignment(sources, chosen, tally, ingredient);
             }
@@ -508,38 +533,74 @@ public final class CraftExecutor {
             chosen[i] = idx;
             if (ledger != null) {
                 ItemStack stack = sources.get(idx).peek();
-                tally.picked(ledgerKey(stack), !usableAsIngredient(stack));
+                boolean refused = !usableAsIngredient(stack);
+                tally.picked(ledgerKey(stack), refused ? variantOf(stack) : null, refused);
             }
         }
         return new Assignment(sources, chosen, tally, null);
     }
 
-    /** Records in {@code tally}, by {@link #ledgerKey}, every stack in the pool that {@link #usableAsIngredient} rejects. */
-    private static void countRefused(List<Source> sources, LedgerTally<ItemKey> tally) {
-        // Summed in a long and saturated per key before the tally sees it: a network source's peek is
-        // the network's whole count (up to Integer.MAX_VALUE), and an int overflow would flip held
-        // negative and admit the player's own altered copies. Over-counting held is the safe side.
-        Map<ItemKey, Long> refused = new LinkedHashMap<ItemKey, Long>();
+    /**
+     * Records in {@code tally}, by {@link #ledgerKey} and variant, every stack the player holds that
+     * {@link #usableAsIngredient} rejects: the pool ({@link #buildSources}) plus — counted for the
+     * player's-own baseline only, never pickable — the offhand and armour slots, the cursor stack, and
+     * the open container's matrix slots that are not already pool sources (a staged grid's are not),
+     * so moving a stack between holdings cannot make it look like one of the job's copies.
+     */
+    private static void countRefused(EntityPlayer player, List<Source> sources,
+                                     LedgerTally<ItemKey, LedgerVariant> tally) {
+        // Summed in a long and saturated per variant before the tally sees it: a network source's peek
+        // is the network's whole count (up to Integer.MAX_VALUE), and an int overflow would flip held
+        // negative and admit the player's own altered copies. Over-counting held is the safe side. The
+        // identity rides along: a variant (item, metadata, NBT) determines its key.
+        Map<LedgerVariant, Long> refused = new LinkedHashMap<LedgerVariant, Long>();
+        Map<LedgerVariant, ItemKey> keys = new HashMap<LedgerVariant, ItemKey>();
         for (Source source : sources) {
-            ItemStack stack = source.peek();
-            if (!stack.isEmpty() && !usableAsIngredient(stack)) {
-                ItemKey key = ledgerKey(stack);
-                Long sum = refused.get(key);
-                refused.put(key, (sum == null ? 0L : sum) + stack.getCount());
+            noteRefused(source.peek(), refused, keys);
+        }
+        InventoryPlayer inventory = player.inventory;
+        for (ItemStack stack : inventory.offHandInventory) {
+            noteRefused(stack, refused, keys);
+        }
+        for (ItemStack stack : inventory.armorInventory) {
+            noteRefused(stack, refused, keys);
+        }
+        noteRefused(inventory.getItemStack(), refused, keys);
+        // Compared by Slot identity against the pool's own slots (the external sources wrap exactly
+        // these), so an unstaged matrix — already a pool source — is never counted twice.
+        Container container = player.openContainer;
+        if (container != null) {
+            Set<Slot> pooled = new HashSet<Slot>(ExternalSlots.materialSlots(player));
+            for (Slot slot : container.inventorySlots) {
+                if (ExternalSlots.isMatrix(slot) && !pooled.contains(slot)) {
+                    noteRefused(slot.getStack(), refused, keys);
+                }
             }
         }
-        for (Map.Entry<ItemKey, Long> entry : refused.entrySet()) {
-            tally.held(entry.getKey(), (int) Math.min(entry.getValue(), Integer.MAX_VALUE));
+        for (Map.Entry<LedgerVariant, Long> entry : refused.entrySet()) {
+            tally.held(keys.get(entry.getKey()), entry.getKey(),
+                    (int) Math.min(entry.getValue(), Integer.MAX_VALUE));
+        }
+    }
+
+    /** Adds {@code stack} to the per-variant refused totals when the filter rejects it. */
+    private static void noteRefused(ItemStack stack, Map<LedgerVariant, Long> refused,
+                                    Map<LedgerVariant, ItemKey> keys) {
+        if (!stack.isEmpty() && !usableAsIngredient(stack)) {
+            LedgerVariant variant = variantOf(stack);
+            Long sum = refused.get(variant);
+            refused.put(variant, (sum == null ? 0L : sum) + stack.getCount());
+            keys.put(variant, ledgerKey(stack));
         }
     }
 
     static final class Assignment {
         private final List<Source> sources;
         private final int[] chosen;
-        private final LedgerTally<ItemKey> tally;
+        private final LedgerTally<ItemKey, LedgerVariant> tally;
         private final Ingredient missing;
 
-        private Assignment(List<Source> sources, int[] chosen, LedgerTally<ItemKey> tally,
+        private Assignment(List<Source> sources, int[] chosen, LedgerTally<ItemKey, LedgerVariant> tally,
                            Ingredient missing) {
             this.sources = sources;
             this.chosen = chosen;
@@ -563,9 +624,41 @@ public final class CraftExecutor {
             return one;
         }
 
-        void chargeTo(ProducedLedger<ItemKey> ledger) {
+        void chargeTo(ProducedLedger<ItemKey, LedgerVariant> ledger) {
             tally.chargeTo(ledger);
         }
+    }
+
+    /**
+     * The ledger's variant of a stack — item, metadata (damage included), and NBT — as a count-1
+     * copy: what the per-variant baseline ({@link ProducedLedger#preexisting}) and per-variant
+     * admission ({@link LedgerTally#admits}) are keyed by. {@link #hashCode} is the item's identity
+     * hash alone (collisions only within one item, which {@link #equals} separates); {@link #equals}
+     * is the tree's exact stack equality.
+     */
+    static final class LedgerVariant {
+        private final ItemStack stack;
+
+        LedgerVariant(ItemStack stack) {
+            this.stack = stack;
+        }
+
+        @Override
+        public boolean equals(Object other) {
+            return other instanceof LedgerVariant && sameItem(stack, ((LedgerVariant) other).stack);
+        }
+
+        @Override
+        public int hashCode() {
+            return System.identityHashCode(stack.getItem());
+        }
+    }
+
+    /** The ledger's variant of one copy of {@code stack}; its count is not part of the variant. */
+    static LedgerVariant variantOf(ItemStack stack) {
+        ItemStack one = stack.copy();
+        one.setCount(1);
+        return new LedgerVariant(one);
     }
 
     /**
@@ -579,12 +672,20 @@ public final class CraftExecutor {
     }
 
     /**
-     * Per ingredient, the identity {@link SlotAssignment} picks for it from the usable stacks of the
-     * whole pool (null for a gap or when nothing usable fits). The solver plans every craft with the
-     * same rule over the same slot lists ({@link CraftPlanner#slotAlternatives}) and the same pool
-     * counts, so each craft takes what the plan counted on, not whichever stack comes first.
+     * Per ingredient, the identity the plan's layout fixes for it when that choice still fits the
+     * live pool, else the identity {@link SlotAssignment} picks from it (null for a gap or when
+     * nothing usable fits). The layout is honored only when every one of its identities is still an
+     * alternative of its slot and the pooled stock — the usable stacks of the whole pool, exactly
+     * what the plan counted — covers this craft's use of each; the player may have moved items
+     * since, and a stale layout must not override what the pool can actually supply.
+     * {@link SlotAssignment} runs over the same slot lists ({@link CraftPlanner#slotAlternatives})
+     * and the same pool counts, so its fallback still takes what a plan made without layouts
+     * counted on.
+     * With {@code admitting} (the #26 pass of {@link #assign}) the job's admitted altered copies
+     * join that stock too ({@link #countAdmitted}), since the plan counted them as well.
      */
-    private static ItemKey[] preferredKeys(List<Source> sources, List<Ingredient> ingredients) {
+    private static ItemKey[] preferredKeys(List<Source> sources, List<Ingredient> ingredients,
+                                           List<ItemKey> layout, LedgerTally<ItemKey, LedgerVariant> admitting) {
         Map<ItemKey, Integer> stock = new HashMap<ItemKey, Integer>();
         for (Source source : sources) {
             ItemStack stack = source.peek();
@@ -594,36 +695,140 @@ public final class CraftExecutor {
                 stock.put(key, NetworkTerminals.saturatedAdd(have == null ? 0 : have, stack.getCount()));
             }
         }
+        if (admitting != null) {
+            countAdmitted(ingredients, sources, admitting, stock);
+        }
+        List<List<ItemKey>> cells = new ArrayList<List<ItemKey>>();
+        for (Ingredient ingredient : ingredients) {
+            cells.add(ingredient == null || ingredient == Ingredient.EMPTY
+                    ? null : CraftPlanner.slotAlternatives(ingredient));
+        }
+        // The layout is indexed by non-empty cell, as the solver's slots are.
         List<List<ItemKey>> slots = new ArrayList<List<ItemKey>>();
-        List<Integer> cells = new ArrayList<Integer>();
-        for (int i = 0; i < ingredients.size(); i++) {
-            Ingredient ingredient = ingredients.get(i);
-            if (ingredient != null && ingredient != Ingredient.EMPTY) {
-                slots.add(CraftPlanner.slotAlternatives(ingredient));
-                cells.add(i);
+        for (List<ItemKey> cell : cells) {
+            if (cell != null) {
+                slots.add(cell);
             }
         }
-        List<ItemKey> chosen = SlotAssignment.assign(slots, stock);
-        ItemKey[] preferred = new ItemKey[ingredients.size()];
-        for (int s = 0; s < cells.size(); s++) {
-            preferred[cells.get(s)] = chosen.get(s);
+        if (layout != null && layout.size() == slots.size() && layoutFits(layout, slots, stock)) {
+            ItemKey[] preferred = new ItemKey[cells.size()];
+            int s = 0;
+            for (int n = 0; n < cells.size(); n++) {
+                if (cells.get(n) != null) {
+                    preferred[n] = layout.get(s++);
+                }
+            }
+            return preferred;
         }
-        return preferred;
+        return SlotAssignment.assignCells(cells, stock).toArray(new ItemKey[0]);
     }
 
     /**
-     * A stack of {@code preferred} ({@link #preferredKeys}) when one matches; otherwise the first
-     * match in pool order, then (with a ledger) a refused stack the ledger admits.
+     * Whether the plan's layout can still be laid on the live pool: every identity remains an
+     * alternative of its slot (the i-th entry belongs to the i-th non-empty cell, the order
+     * {@code slots} is built in), and the pool holds at least as many of each identity as this one
+     * craft uses of it.
+     */
+    private static boolean layoutFits(List<ItemKey> layout, List<List<ItemKey>> slots,
+                                      Map<ItemKey, Integer> stock) {
+        Map<ItemKey, Integer> uses = new HashMap<ItemKey, Integer>();
+        for (int i = 0; i < layout.size(); i++) {
+            ItemKey item = layout.get(i);
+            if (item == null || !slots.get(i).contains(item)) { // null never satisfies a slot
+                return false;
+            }
+            Integer have = uses.get(item);
+            uses.put(item, (have == null ? 0 : have) + 1);
+        }
+        for (Map.Entry<ItemKey, Integer> use : uses.entrySet()) {
+            Integer inStock = stock.get(use.getKey());
+            if ((inStock == null ? 0 : inStock) < use.getValue()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Adds to {@code stock} the refused stacks of the pool that {@code tally} would admit: the job's
+     * altered intermediates, which the plan's counts include (the solver credits every item a step
+     * produces, altered or not), so {@link #preferredKeys} and the plan's layout check must see them
+     * too (#26). Each stack adds at most what {@link LedgerTally#variantHeadroom} and
+     * {@link LedgerTally#identityHeadroom} still allow, drawn down as stacks are counted, under its
+     * {@link #ledgerKey}: the plan credited the fresh output, whose key is its ledger identity, and an
+     * altered damageable copy's own {@link ItemKey#of} carries its damage, which no slot alternative
+     * names. A copy no cell of this recipe accepts is skipped: it would only inflate the count the
+     * rule spreads over the cells.
+     */
+    private static void countAdmitted(List<Ingredient> ingredients, List<Source> sources, LedgerTally<ItemKey, LedgerVariant> tally,
+                                      Map<ItemKey, Integer> stock) {
+        Map<LedgerVariant, Long> variantLeft = new HashMap<LedgerVariant, Long>();
+        Map<ItemKey, Long> identityLeft = new HashMap<ItemKey, Long>();
+        for (Source source : sources) {
+            ItemStack stack = source.peek();
+            if (stack.isEmpty() || usableAsIngredient(stack) || !acceptedByAny(ingredients, stack)) {
+                continue;
+            }
+            LedgerVariant variant = variantOf(stack);
+            ItemKey identity = ledgerKey(stack);
+            Long forVariant = variantLeft.get(variant);
+            if (forVariant == null) {
+                forVariant = tally.variantHeadroom(variant);
+            }
+            Long forIdentity = identityLeft.get(identity);
+            if (forIdentity == null) {
+                forIdentity = tally.identityHeadroom(identity);
+            }
+            int add = (int) Math.min(stack.getCount(), Math.min(forVariant, forIdentity));
+            if (add > 0) {
+                Integer have = stock.get(identity);
+                stock.put(identity, NetworkTerminals.saturatedAdd(have == null ? 0 : have, add));
+            }
+            variantLeft.put(variant, forVariant - Math.max(add, 0));
+            identityLeft.put(identity, forIdentity - Math.max(add, 0));
+        }
+    }
+
+    /** Whether any non-empty ingredient of the recipe accepts {@code stack}. */
+    private static boolean acceptedByAny(List<Ingredient> ingredients, ItemStack stack) {
+        for (Ingredient ingredient : ingredients) {
+            if (ingredient != null && ingredient != Ingredient.EMPTY && ingredient.apply(stack)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * A usable stack of {@code preferred} ({@link #preferredKeys}) when one matches, then (with a tally,
+     * #26 pass only) a refused copy of it the tally admits; otherwise the first match in pool order,
+     * then (with a ledger) any refused stack the tally admits.
      */
     private static int findMatchingSource(List<Source> sources, Ingredient ingredient, ItemKey preferred,
-                                          int[] reserved, ProducedLedger<ItemKey> ledger,
-                                          Map<ItemKey, Integer> ledgerTakes) {
+                                          int[] reserved, LedgerTally<ItemKey, LedgerVariant> tally,
+                                          boolean admittedPreference) {
         if (preferred != null) {
             for (int i = 0; i < sources.size(); i++) {
                 ItemStack stack = sources.get(i).peek();
                 if (!stack.isEmpty() && stack.getCount() - reserved[i] > 0 && preferred.equals(ItemKey.of(stack))
                         && usableAsIngredient(stack) && ingredient.apply(stack)) {
                     return i;
+                }
+            }
+            if (tally != null && admittedPreference) {
+                // The job's altered copy of the identity the rule chose (#26), before any alternative
+                // a later cell may need alone. Matched by ledgerKey: the plan credited the fresh output,
+                // whose key is its ledger identity, while an altered damageable copy's own key carries
+                // its damage.
+                for (int i = 0; i < sources.size(); i++) {
+                    ItemStack stack = sources.get(i).peek();
+                    if (stack.isEmpty() || stack.getCount() - reserved[i] <= 0 || usableAsIngredient(stack)) {
+                        continue;
+                    }
+                    ItemKey key = ledgerKey(stack);
+                    if (preferred.equals(key) && tally.admits(key, variantOf(stack)) && ingredient.apply(stack)) {
+                        return i;
+                    }
                 }
             }
         }
@@ -634,7 +839,7 @@ public final class CraftExecutor {
                 return i;
             }
         }
-        if (ledger == null) {
+        if (tally == null) {
             return -1;
         }
         for (int i = 0; i < sources.size(); i++) {
@@ -642,9 +847,7 @@ public final class CraftExecutor {
             if (stack.isEmpty() || stack.getCount() - reserved[i] <= 0 || usableAsIngredient(stack)) {
                 continue;
             }
-            ItemKey key = ledgerKey(stack);
-            Integer taken = ledgerTakes.get(key);
-            if (ledger.canTake(key, taken == null ? 0 : taken) && ingredient.apply(stack)) {
+            if (tally.admits(ledgerKey(stack), variantOf(stack)) && ingredient.apply(stack)) {
                 return i;
             }
         }
@@ -878,17 +1081,6 @@ public final class CraftExecutor {
     /** Vanilla recipe-book parity: never consume damaged, enchanted, or renamed stacks. */
     public static boolean usableAsIngredient(ItemStack stack) {
         return !stack.isItemDamaged() && !stack.isItemEnchanted() && !stack.hasDisplayName();
-    }
-
-    private static int findMatchingSlot(InventoryPlayer inventory, Ingredient ingredient, int[] reserved) {
-        for (int i = 0; i < MAIN; i++) {
-            ItemStack stack = inventory.mainInventory.get(i);
-            if (!stack.isEmpty() && stack.getCount() - reserved[i] > 0
-                    && usableAsIngredient(stack) && ingredient.apply(stack)) {
-                return i;
-            }
-        }
-        return -1;
     }
 
     /**

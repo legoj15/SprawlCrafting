@@ -290,6 +290,7 @@ tasks.withType<JavaCompile>().configureEach {
     if (project.findProperty("ae2_version") == null) {
         exclude("**/compat/ae2/**")
     }
+    exclude("**/compat/ae2/jei/mixin/**") // Fabric-only JEI order guard (AFTER ordering wins here)
 
     // Only 1.20.1 has a Forge-loadable Sophisticated build (1.21.1 / 26.x are NeoForge-only); the nodes that
     // pin it get the package and the `sophisticated` constant, the rest drop both.
@@ -329,6 +330,10 @@ tasks.processResources {
     // Ship ONLY Forge's metadata: not Fabric's, and not NeoForge's (a different file).
     exclude("fabric.mod.json")
     exclude("META-INF/neoforge.mods.toml")
+    // Fabric-only JEI-ordering guard (Fabric Loader guarantees no plugin order); its class is not
+    // compiled on Forge (see the compat/ae2/jei/mixin exclude), and Forge ships no config for it: the optional AFTER
+    // dependency on ae2 already wins JEI's last-registered race.
+    exclude("sprawlcrafting.ae2jei.mixins.json")
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 }
 

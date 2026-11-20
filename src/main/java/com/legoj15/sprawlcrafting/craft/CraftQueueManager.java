@@ -178,7 +178,7 @@ public final class CraftQueueManager {
             if (job.isFinalStep() && job.isLastCraftOfStep() && canHandOff(player, job.currentStep())) {
                 // instanceof chains rather than a pattern-matching switch: the 1.20.1 node targets Java 17.
                 CraftExecutor.FillOutcome fill = CraftExecutor.tryFillFinalGrid(player, job.currentStep().recipeId(),
-                        job.produced());
+                        job.produced(), job.currentCraftLayout());
                 if (fill instanceof CraftExecutor.FillOutcome.Filled filled) {
                     job.onCraftPerformed();
                     ACTIVE.remove(player.getUUID());
@@ -199,7 +199,7 @@ public final class CraftQueueManager {
             CraftExecutor.CraftResult craft = bulk
                     ? craftBulk(player, job)
                     : CraftExecutor.craftOnce(player, job.currentStep().recipeId(),
-                            job.produced(), job.stationDependent());
+                            job.produced(), job.stationDependent(), job.currentCraftLayout());
             if (craft instanceof CraftExecutor.CraftResult.Success success) {
                 if (success.usedStation()) {
                     // From now on this job needs the station (a job that started from its inventory alone
@@ -262,8 +262,10 @@ public final class CraftQueueManager {
     /**
      * One batched craft call for a bulk step: as many crafts as the step has left, except on the
      * final step one fewer when that leaves at least 1, so the job's very last craft still goes
-     * through the grid hand-off check one craft at a time (see the top of {@link #craftBurst}). A
-     * step with a single craft left, batch or not, is a plain {@link CraftExecutor#craftOnce} —
+     * through the grid hand-off check one craft at a time (see the top of {@link #craftBurst}),
+     * and never more than the current layout run still holds ({@link CraftJob#craftsLeftInLayoutRun()}):
+     * the next run can change every cell's item, and one batch applies one assignment. A step with a
+     * single craft left, batch or not, is a plain {@link CraftExecutor#craftOnce} —
      * {@link CraftExecutor#craftBatch} would only fall back to it anyway.
      */
     private static CraftExecutor.CraftResult craftBulk(ServerPlayer player, CraftJob job) {
@@ -271,12 +273,13 @@ public final class CraftQueueManager {
         if (job.isFinalStep() && maxCrafts > 1) {
             maxCrafts--;
         }
+        maxCrafts = Math.min(maxCrafts, job.craftsLeftInLayoutRun());
         if (maxCrafts <= 1) {
             return CraftExecutor.craftOnce(player, job.currentStep().recipeId(),
-                    job.produced(), job.stationDependent());
+                    job.produced(), job.stationDependent(), job.currentCraftLayout());
         }
         return CraftExecutor.craftBatch(player, job.currentStep().recipeId(),
-                job.produced(), job.stationDependent(), maxCrafts);
+                job.produced(), job.stationDependent(), job.currentCraftLayout(), maxCrafts);
     }
 
     /**

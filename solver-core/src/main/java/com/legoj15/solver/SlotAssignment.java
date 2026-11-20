@@ -9,10 +9,11 @@ import java.util.Objects;
 import java.util.function.ToLongFunction;
 
 /**
- * The one rule for which stock fills which ingredient slot of a single craft. The solver plans with
- * it ({@link PlanSimulator}, and so every plan {@link RecipeGraphSolver#solve} returns) and every
- * executor calls it to pick the inventory stack for each grid slot, so a plan never depends on where
- * items happen to sit in the inventory.
+ * The one rule for which stock fills which ingredient slot of a single craft, when nothing else
+ * decides it. The solver's exact pass plans with it ({@link PlanSimulator}); every plan carries its
+ * own per-slot choice ({@link RecipeGraphSolver.Result.Success#layouts()}), and an executor falls back
+ * to this rule only for a step without a layout or when the inventory no longer matches one. Either
+ * way the choice never depends on where items happen to sit in the inventory.
  *
  * <p>The rule, deterministic for a given slot list and stock:
  * <ol>
@@ -101,6 +102,27 @@ public final class SlotAssignment {
             }
         }
         return Math.max(1, repeat);
+    }
+
+    /**
+     * {@link #assign} over a crafting grid's cells as the game lists them, blank cells included: a
+     * null cell takes no part in the choice and comes back null, so the result lines up index for
+     * index with the recipe's ingredient list. Every executor builds its per-cell preference here.
+     */
+    public static <K> List<K> assignCells(List<? extends List<K>> cells, Map<K, ? extends Number> stock) {
+        List<List<K>> slots = new ArrayList<>();
+        for (List<K> cell : cells) {
+            if (cell != null) {
+                slots.add(cell);
+            }
+        }
+        List<K> chosen = assign(slots, stock);
+        List<K> out = new ArrayList<>(cells.size());
+        int s = 0;
+        for (List<K> cell : cells) {
+            out.add(cell == null ? null : chosen.get(s++));
+        }
+        return out;
     }
 
     /** {@link #assign} over a count function; null entries for slots left unfilled. */

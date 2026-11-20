@@ -297,9 +297,10 @@ than a full exponential search — see "Known limitations".
 Rule: every item a craft draws from must be visible in the open screen. The AE2 Crafting
 Terminal shows its ME network, so while one is open **and usable** (link connected / powered)
 the network's plain items count as craft material. Nothing off-screen counts: no plain ME
-terminal, no adjacent storage. Shipped on `1.21.1-neoforge` (AE2 19.x), `1.20.1-forge` (AE2 15.x,
-#27), 1.12.2 (rv6 and AE2-UEL, see the 1.12.2 section) and legacy 1.16.5 Forge (AE2 8.4.7, #29; see
-`docs/legacy-1.16.5.md`); other lines are follow-ups #27 (1.20.1-fabric), #28 (26.x; the
+terminal, no adjacent storage. Shipped on `1.21.1-neoforge` (AE2 19.x), `1.20.1-forge` and
+`1.20.1-fabric` (AE2 15.x, #27), 1.12.2 (rv6 and AE2-UEL, see the 1.12.2 section) and legacy
+1.16.5 Forge (AE2 8.4.7, #29; see
+`docs/legacy-1.16.5.md`); AE2 ships no Fabric build after 1.20.1, so the remaining line is the follow-up #28 (26.x NeoForge; the
 `DeferredCraftSync` fold is in since #33, only the AE2 provider is left). The Sophisticated crafting upgrade is a second provider (see "Sophisticated
 crafting upgrade").
 
@@ -327,7 +328,11 @@ crafting upgrade").
   inventory (JEI) or is left to AE2 entirely (REI). AE2 15.x (1.20.1) ships its own JEI handler:
   ours registers after it (optional `AFTER ae2` in mods.toml; JEI keeps the last per menu class)
   and fronts it like REI does: yellow and red-gather are ours, green, an offline terminal and red
-  with the needs helper off go to AE2's (`compat/ae2/jei/Ae2JeiStock`). The busy gate applies to
+  with the needs helper off go to AE2's (`compat/ae2/jei/Ae2JeiStock`). `1.20.1-fabric` ships the
+  station too, and Fabric guarantees no plugin order (in dev Loader even shuffles the mod list, which reorders entrypoints), so
+  there a client guard mixin (`compat/ae2/jei/mixin/StationTransferGuardMixin` in
+  `sprawlcrafting.ae2jei.mixins.json`) refuses any other CRAFTING handler JEI is handed for a
+  station menu, whichever plugin runs first. The busy gate applies to
   every hand-off to AE2's handler (green, offline terminal). AE2 15 has no link status: "usable" is its power check (`updatePowerStatus` mirror;
   a wireless terminal without an actionable node is unusable), and "plain" is the exact
   key of a fresh stack (`canonical`: `AEItemKey.of(new ItemStack(item))` on 1.20.1, where a new
@@ -584,15 +589,15 @@ compression mods saturate at `Long.MAX_VALUE`. Counts are therefore `long` from 
 
 **Planning**
 
-- **One slot-filling rule, no look-ahead.** Which stock fills which slot of a craft is decided by
-  `SlotAssignment` (solver-core): most constrained slot first, non-scarce alternative first, then
-  bipartite repair. Every executor (`CraftExecutor.assign` in all three trees, so also the grid
-  hand-off's ledger path) prefers the stack that rule names, and `solve` only returns plans that
-  `PlanSimulator` replays craft by craft under it (#10, #18), so a plan never depends on inventory
-  layout. The rule sees one craft at a time: a sub-craft whose slot lists an item first that a later
-  step needs (and holds the only copy of) takes it, and such a target is reported unsolvable instead
-  of stalling mid-job. Carrying a per-step slot choice in the plan would lift that; not done.
-  Full search is exponential — rejected.
+- **The plan names every slot's item (#23).** Each step of a solved plan carries `SlotLayout` runs:
+  the item every craft puts in every non-empty slot, as the planning pass decided, and `solve` only
+  returns plans that replay under those layouts. Every executor (`CraftExecutor.assign` in all three
+  trees, also the grid hand-off's manual lay-out) prefers the layout's items while the live pool
+  still holds them, so a plan never depends on inventory layout and a sub-craft no longer eats the
+  only copy a later step needs. Fallback when the inventory changed mid-job: `SlotAssignment`
+  (most constrained slot first, non-scarce alternative first, then bipartite repair), which sees one
+  craft at a time. The solver's exact pass (the contention fallback) still lays out with that rule,
+  so its look-ahead limit remains there; full search is exponential — rejected.
 - **Search budget instead of memoization.** The solver plans in batches: identical slots are
   merged and quantities carried, so a recipe is resolved once per batch size rather than once
   per unit, and a `PlannedStep` can hold thousands of crafts. `MAX_ATTEMPTS` counts *batched
@@ -612,12 +617,23 @@ compression mods saturate at `Long.MAX_VALUE`. Counts are therefore `long` from 
   and renamed stacks are excluded from both planning and consumption (recipe-book parity),
   except that execution may consume such a stack up to the count the running job itself crafted
   of that item (`ProducedLedger`), because some mods alter an item right after it is inserted.
-  Rejected copies the pool held before the job produced anything are the player's own: the
-  ledger records that count and `LedgerTally` admits only rejected copies above it. The executor
-  draws the count down on its own takes: every rejected take, plus plain takes beyond the job's
-  rejected copies still held (the count kept back can only describe those). Altered copies that
-  enter the pool only after the job's first production cannot be told apart from the job's and
-  stay bounded by the produced count. The vanilla final hand-off is exempt because it never takes
+  Rejected copies the player held before the job produced anything are the player's own: the
+  ledger records that count per exact variant (item + damage/meta + NBT/components) over all the
+  player's holdings (their inventory including armour and offhand, the cursor, and the open
+  crafting grid; on 1.12.2 also an open station's chest or network, which are pool sources
+  there), and `LedgerTally` admits only rejected copies of that variant above it — so the
+  player's own renamed copy is never taken in place of the job's enchanted one, and moving a
+  stack between the player's holdings changes nothing. A player discarding (dropping, storing
+  in a chest) their own copy of a variant the job also produced makes that many job copies of
+  that variant inadmissible (a safe stall); a discarded copy of any other variant affects
+  nothing. The executor draws the count down on its own takes: every rejected take, plus plain
+  takes beyond the job's rejected copies still held (the count kept back can only describe
+  those). What stays indistinguishable from the job's altered copies is a player-owned copy of
+  exactly the same variant (interchangeable with the job's in every observable way) and altered
+  copies that enter the player's holdings only after the job's first production (a pickup, an
+  item altered mid-job, or, on the modern and 1.16.5 trees, a copy pulled out of an open
+  station's storage, which is not counted because it supplies plain items only); both stay
+  bounded by the produced count. The vanilla final hand-off is exempt because it never takes
   rejected stacks and ends the job.
 - **Per-item crafting remainders.** Recipes overriding `getRemainingItems` (and NeoForge's
   stack-sensitive remainders on modded items) are approximated at the item level.

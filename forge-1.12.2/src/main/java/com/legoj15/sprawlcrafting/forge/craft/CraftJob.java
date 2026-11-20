@@ -5,6 +5,7 @@ import java.util.Collections;
 import java.util.List;
 
 import com.legoj15.solver.ProducedLedger;
+import com.legoj15.solver.SlotLayout;
 
 import net.minecraft.item.ItemStack;
 import net.minecraft.util.ResourceLocation;
@@ -70,10 +71,15 @@ public final class CraftJob {
     private final ItemStack targetResult;
     private final List<CraftStep> steps;
     private final long totalCrafts;
-    private final ProducedLedger<ItemKey> produced = new ProducedLedger<ItemKey>();
+    private final ProducedLedger<ItemKey, CraftExecutor.LedgerVariant> produced =
+            new ProducedLedger<ItemKey, CraftExecutor.LedgerVariant>();
 
     private int stepIndex;
     private int craftsDoneInStep;
+    /** {@link #currentCraftLayout}'s cursor: the step it is for, its run, and that run's first craft. */
+    private int layoutCursorStep = -1;
+    private int layoutRun;
+    private int layoutRunStart;
     /** Crafts of all steps before {@link #stepIndex}, so {@link #craftsDone()} is O(1). */
     private long craftsBeforeStep;
     private int progressTicks;
@@ -147,7 +153,7 @@ public final class CraftJob {
     }
 
     /** What this job crafted and has not used back up; lets the executor take its own altered intermediates. */
-    public ProducedLedger<ItemKey> produced() {
+    public ProducedLedger<ItemKey, CraftExecutor.LedgerVariant> produced() {
         return produced;
     }
 
@@ -157,6 +163,32 @@ public final class CraftJob {
 
     public CraftStep currentStep() {
         return steps.get(stepIndex);
+    }
+
+    /**
+     * The plan's per-slot items for the craft about to run — the layout run covering
+     * {@code craftsDoneInStep} within the current step — or null when the step carries no layout
+     * (a step built without one, or the counter past the last run: defensive, the step advances with
+     * the last craft) or the job is finished: the executor then falls back to {@code SlotAssignment}.
+     * Read it before {@link #onCraftPerformed()}, which advances the counter (and the step).
+     */
+    public List<ItemKey> currentCraftLayout() {
+        if (isFinished()) {
+            return null;
+        }
+        List<SlotLayout<ItemKey>> runs = currentStep().layouts();
+        // A cursor, not a walk from the first run: a step whose remainders flip-flop can carry one
+        // run per craft, and rescanning them every craft would be quadratic in the step's crafts.
+        if (layoutCursorStep != stepIndex || craftsDoneInStep < layoutRunStart) { // the latter: defensive
+            layoutCursorStep = stepIndex;
+            layoutRun = 0;
+            layoutRunStart = 0;
+        }
+        while (layoutRun < runs.size() && craftsDoneInStep - layoutRunStart >= runs.get(layoutRun).crafts()) {
+            layoutRunStart += runs.get(layoutRun).crafts();
+            layoutRun++;
+        }
+        return layoutRun < runs.size() ? runs.get(layoutRun).items() : null;
     }
 
     public boolean isFinished() {

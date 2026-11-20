@@ -127,13 +127,17 @@ public final class CraftRequests {
         } else if (outcome instanceof PlanOutcome.TooComplex) {
             message = Component.translatable("sprawlcrafting.craft.too_complex", recipeName);
         } else if (outcome instanceof PlanOutcome.Unsolvable unsolvable) {
-            message = Component.translatable(
-                    "sprawlcrafting.craft.unsolvable", recipeName,
-                    unsolvable.missing().isEmpty()
-                            ? Component.literal("?")
-                            : Component.literal(unsolvable.missing().stream()
-                                    .map(item -> Component.translatable(item.getDescriptionId()).getString())
-                                    .collect(Collectors.joining(", "))));
+            if (unsolvable.missing().isEmpty()) {
+                // No missing item: every pass was rejected on replay — the materials are there, but
+                // no order of crafts works, and a "not enough resources" message would be false.
+                message = Component.translatable("sprawlcrafting.craft.unsolvable_order", recipeName);
+            } else {
+                message = Component.translatable(
+                        "sprawlcrafting.craft.unsolvable", recipeName,
+                        Component.literal(unsolvable.missing().stream()
+                                .map(item -> Component.translatable(item.getDescriptionId()).getString())
+                                .collect(Collectors.joining(", "))));
+            }
         } else {
             throw new IllegalArgumentException("not a rejection"); // PlanOutcome.Planned
         }

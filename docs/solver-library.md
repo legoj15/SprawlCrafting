@@ -1,17 +1,27 @@
 # Solver library (`com.legoj15:solver`) — agent notes
 
-The Minecraft-free crafting planner (`RecipeGraphSolver`, `PlannedStep`, `SlotAssignment`,
-`PlanSimulator`, `ProducedLedger`, `LedgerTally`, `UndoMap`, `CountFormat`; package `com.legoj15.solver`) is a
-plain-Java library built from `solver-core/`. Every SprawlCrafting build depends on it and bundles it;
-a second mod (MegaBlockBot) can do the same.
+The Minecraft-free crafting planner (`RecipeGraphSolver`, `PlannedStep`, `SlotLayout`,
+`SlotAssignment`, `PlanSimulator`, `ProducedLedger`, `LedgerTally`, `UndoMap`, `CountFormat`; package
+`com.legoj15.solver`) is a plain-Java library built from `solver-core/`. Every SprawlCrafting build
+depends on it and bundles it; a second mod (MegaBlockBot) can do the same.
 
-**Executor contract (since 1.0.1).** `solve` only returns plans that `PlanSimulator` replays craft by
-craft, filling each craft's slots with `SlotAssignment.assign(slots, stock)`. An executor must make the
-same choice: build `slots` exactly as its `RecipeInfo.ingredientSlots()` (blank cells dropped) and
-`stock` from the same pool and filter the planner snapshots, then take a stack of the item named for
-each slot (falling back to its own matching only when none fits). SprawlCrafting's three
-`CraftExecutor`s do this via `CraftPlanner.slotAlternatives`. An executor that picks by inventory order
-instead can stall mid-job on plans that share stock across slots or steps (issues #10, #18).
+**Executor contract (since 1.1.0).** A plan carries its own per-slot item choice:
+`Result.Success.layouts()`, aligned 1:1 with `steps()`, holds per step a list of `SlotLayout` runs —
+`crafts` consecutive crafts that put `items().get(i)` into non-empty slot `i` of the recipe
+(`RecipeInfo.ingredientSlots()` with blank cells dropped; every item one of that slot's alternatives).
+`solve` accepts a plan only when it replays from the planned inventory under those fixed layouts, so
+the choice the planner made (which alternative each slot group takes, keeping sub-crafts from eating
+the only copy a later step needs — issue #23) is the one that executes. An executor takes a stack of
+the item its step's layout names for each slot, falling back to `SlotAssignment.assign(slots, stock)`
+only when the inventory no longer matches the plan: build `slots` exactly as its
+`RecipeInfo.ingredientSlots()` (blank cells dropped) and `stock` from the same pool and filter the
+planner snapshots, then take a stack of the item named for each slot (falling back to its own matching
+only when none fits). SprawlCrafting's three `CraftExecutor`s pick via `CraftPlanner.slotAlternatives`.
+`SlotAssignment.assignCells(cells, stock)` (since 1.1.0) is the same call over the grid as the game lists
+it: blank cells are null in and null out, so the result lines up with the recipe's ingredient list.
+An executor that picks by inventory order instead can stall mid-job on plans that share stock across
+slots or steps (issues #10, #18); in 1.0.x, before layouts, that same limitation bound the solver
+itself.
 
 | | |
 |---|---|
@@ -116,11 +126,11 @@ coordinates); not boot-tested with two mods.
 Add `mavenLocal()` (local dev) or `maven("https://jitpack.io")`, or include this repo's `solver-core` as
 a composite build. Then, per loader:
 
-- Fabric Loom: `include(implementation("com.legoj15:solver:1.0.1")!!)`.
-- NeoForge MDG: `implementation("com.legoj15:solver:1.0.1")` +
-  `jarJar("com.legoj15:solver") { version { strictly("[1.0.1,2.0.0)"); prefer("1.0.1") } }`.
+- Fabric Loom: `include(implementation("com.legoj15:solver:2.1.0")!!)`.
+- NeoForge MDG: `implementation("com.legoj15:solver:2.1.0")` +
+  `jarJar("com.legoj15:solver") { version { strictly("[2.1.0,3.0.0)"); prefer("2.1.0") } }`.
 - Forge FG7: apply `net.minecraftforge.jarjar`, `jarJar.register()`, then `implementation(...)` +
-  `jarJar.configure("jarJar"("com.legoj15:solver:1.0.1")!!) { setRange("[1.0.1,2.0.0)") }`.
+  `jarJar.configure("jarJar"("com.legoj15:solver:2.1.0")!!) { setRange("[2.1.0,3.0.0)") }`.
 - Never shade it on a JarJar-era loader (see above). Use the same group/artifact (`com.legoj15:solver`)
   in jar-in-jar metadata as SprawlCrafting does, or the selector sees two different libraries and
   loads both (a split package again). A JitPack build carries `com.github.legoj15:SprawlCrafting` (verified,

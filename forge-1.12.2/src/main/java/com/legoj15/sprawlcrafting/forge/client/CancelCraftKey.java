@@ -13,7 +13,8 @@ import org.lwjgl.input.Keyboard;
  * flyout currently shows. Unbound by default ({@link Keyboard#KEY_NONE}) — a cancel is rare, and
  * a default binding would fight existing saves' bindings — so players give it a key in Controls
  * (Inventory category). Reached only through {@code ClientProxy} (keybind registration + this bus
- * handler), which is what keeps the client-only {@link KeyBinding} out of common code.
+ * handler), which is what keeps the client-only {@link KeyBinding} out of common code. The
+ * progress-toast click (issue #34) reuses the same gate and send through {@link ToastCancelClick}.
  */
 public final class CancelCraftKey {
 
@@ -31,14 +32,23 @@ public final class CancelCraftKey {
         while (KEY.isPressed()) {
             pressed = true;
         }
-        if (!pressed) {
-            return;
+        if (pressed && canCancel()) {
+            sendCancel();
         }
-        // Double gate: the capability bit (an older v2 server knows the channel but not the
-        // discriminator — an unknown one is a kick, see SprawlNetwork's version-skew invariant)
-        // and a job actually shown as running or paused (a terminal flyout's job is already gone).
-        if (ServerPresence.cancelCraft() && ClientCraftState.hasActiveJob()) {
-            SprawlNetwork.cancelCraft();
-        }
+    }
+
+    /**
+     * The gate both the keybind and the toast click share. Double gate: the capability bit (an
+     * older v2 server knows the channel but not the discriminator — an unknown one is a kick, see
+     * SprawlNetwork's version-skew invariant) and a job actually shown as running or paused (a
+     * terminal flyout's job is already gone).
+     */
+    public static boolean canCancel() {
+        return ServerPresence.cancelCraft() && ClientCraftState.hasActiveJob();
+    }
+
+    /** Sends the cancel request — only meaningful when {@link #canCancel()} passed. */
+    public static void sendCancel() {
+        SprawlNetwork.cancelCraft();
     }
 }

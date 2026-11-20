@@ -10,7 +10,8 @@ import net.minecraft.client.util.InputMappings;
  * action, not something worth a slot every player has to give up, and an unbound default keeps it out
  * of the way until wanted in Controls. Polled every client tick; a press only sends when the tracker
  * shows a live job (running or paused) and the server has the cancel channel — with nothing to
- * cancel, or on a server that cannot act on it, the press is a silent no-op.
+ * cancel, or on a server that cannot act on it, the press is a silent no-op. The progress-toast
+ * click (issue #34) reuses the same gate and send through {@link ToastCancelClick}.
  */
 public final class CancelCraftKey {
 
@@ -31,8 +32,18 @@ public final class CancelCraftKey {
         while (KEY.consumeClick()) {
             pressed = true;
         }
-        if (pressed && ClientJobTracker.hasActiveJob() && Services.PLATFORM.canCancelCraft()) {
-            Services.PLATFORM.sendCancelCraft();
+        if (pressed && canCancel()) {
+            sendCancel();
         }
+    }
+
+    /** The gate both the keybind and the toast click share: a live job and a server that can cancel it. */
+    public static boolean canCancel() {
+        return ClientJobTracker.hasActiveJob() && Services.PLATFORM.canCancelCraft();
+    }
+
+    /** Sends the cancel request — only meaningful when {@link #canCancel()} passed. */
+    public static void sendCancel() {
+        Services.PLATFORM.sendCancelCraft();
     }
 }

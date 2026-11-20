@@ -226,6 +226,7 @@ tasks.withType<JavaCompile>().configureEach {
     if (!hasAe2) {
         exclude("**/compat/ae2/**")    // AE2 Crafting Terminal as a crafting station (issue #2)
     }
+    exclude("**/compat/ae2/jei/mixin/**") // Fabric-only JEI order guard (NeoForge orders plugins via ae2 AFTER in neoforge.mods.toml)
     // AE2's JEI plugin (compat/ae2/jei) needs the JEI API, as in build.forge.gradle.kts. Every NeoForge
     // node pins jei_version today (this script reads it unconditionally above), so this cannot trigger
     // yet; it keeps the two scripts' rule identical for the day a node drops JEI.
@@ -262,6 +263,9 @@ tasks.processResources {
     // Don't ship the Fabric or (MinecraftForge) Forge metadata in the NeoForge jar.
     exclude("fabric.mod.json")
     exclude("META-INF/mods.toml")
+    // Fabric-only JEI-ordering guard (Fabric Loader guarantees no plugin order); its class is not
+    // compiled here (see the compat/ae2/jei/mixin exclude above), and no config may ship without fabric.mod.json.
+    exclude("sprawlcrafting.ae2jei.mixins.json")
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 }
 

@@ -9,14 +9,17 @@ import java.util.function.Function;
 import java.util.function.UnaryOperator;
 
 /**
- * Replays a plan the way the executors run it: one craft at a time, every ingredient slot filled by
+ * Replays a plan the way an executor runs it without a layout: one craft at a time, every ingredient slot filled by
  * {@link SlotAssignment} against the stock as it stands at that craft, the result and the remainders
  * of what was consumed credited once the craft is done. A plan passes only if no slot of any craft
- * comes up empty. {@link RecipeGraphSolver#solve} returns no plan this rejects.
+ * comes up empty.
  *
- * <p>Cost is O(steps x slots), not O(crafts): {@link SlotAssignment}'s choice for a craft depends on
- * each alternative's stock only up to the number of slots that list it, so a run of crafts during
- * which no such capped count changes repeats one assignment and is applied in one go.
+ * <p>The chunking is bounded by the number of times a capped count changes, not by the crafts:
+ * {@link SlotAssignment}'s choice for a craft depends on each alternative's stock only up to the
+ * number of slots that list it, so a run of crafts during which no such capped count moves repeats
+ * one assignment and is applied in one go. Without remainders that refill a listed alternative that
+ * is O(steps x slots) chunks; WITH them the capped counts can flip-flop every craft (X leaves Y, Y
+ * leaves X) and the chunking can degrade to one chunk per craft.
  */
 public final class PlanSimulator {
 
@@ -129,6 +132,19 @@ public final class PlanSimulator {
         return slots;
     }
 
+    /** One chunk of {@link #run}: {@code repeat} consecutive crafts that all took {@code chosen}. */
+    static final class Chunk<K> {
+        /** How many crafts used this assignment (>= 1). */
+        final long repeat;
+        /** Per non-empty slot (see {@link #nonEmptySlots}), the item taken; null where unfilled. */
+        final Object[] chosen;
+
+        Chunk(long repeat, Object[] chosen) {
+            this.repeat = repeat;
+            this.chosen = chosen;
+        }
+    }
+
     /**
      * Runs {@code crafts} crafts of {@code recipe} against {@code inv}, mutating it. A short craft
      * consumes what it could assign and credits nothing; with {@code stopAtShort} the run ends at the
@@ -136,6 +152,17 @@ public final class PlanSimulator {
      */
     static <R, K> Batch<K> run(RecipeGraphSolver.RecipeInfo<R, K> recipe, long crafts, UndoMap<K, Long> inv,
                                UnaryOperator<K> remainder, boolean stopAtShort) {
+        return run(recipe, crafts, inv, remainder, stopAtShort, null);
+    }
+
+    /**
+     * {@link #run} that additionally reports each chunk it applied: {@code chunks} (a fresh list per
+     * call) receives one entry per chunk of crafts that shared one assignment, in craft order — the
+     * exact pass records them as the step's layout runs. The chunks of a run that never came up
+     * short hold no null {@code chosen} entry.
+     */
+    static <R, K> Batch<K> run(RecipeGraphSolver.RecipeInfo<R, K> recipe, long crafts, UndoMap<K, Long> inv,
+                               UnaryOperator<K> remainder, boolean stopAtShort, List<Chunk<K>> chunks) {
         List<List<K>> slots = nonEmptySlots(recipe);
         Batch<K> batch = new Batch<>(slots);
         K result = recipe.result();
@@ -180,6 +207,9 @@ public final class PlanSimulator {
             // Repeat this assignment while no listed alternative's capped count moves
             // (SlotAssignment.stableRepeats, the rule shared with the executors' batched craft).
             long repeat = SlotAssignment.stableRepeats(slots, item -> count(inv, item), use, made, left);
+            if (chunks != null) {
+                chunks.add(new Chunk<>(repeat, chosen));
+            }
             // Net each item's change per craft before applying it: a craft can consume an item it is
             // also credited (its own result in a slot, a remainder equal to an alternative), and
             // booking the two separately would clamp the consumption at zero and inflate the stock.

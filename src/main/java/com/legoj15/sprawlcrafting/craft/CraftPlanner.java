@@ -7,6 +7,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import com.legoj15.solver.PlannedStep;
 import com.legoj15.solver.RecipeGraphSolver;
 import com.legoj15.solver.RecipeGraphSolver.Result;
 
@@ -222,10 +223,13 @@ public final class CraftPlanner {
 
             Result<ResourceLocation, Item> result = solver.solve(target, inventory);
             if (result instanceof Result.Success<ResourceLocation, Item> success) {
-                List<CraftStep> steps = success.steps().stream()
-                        .map(step -> new CraftStep(step.recipeId(), step.crafts(),
-                                !fits2x2(step.recipeId(), target)))
-                        .toList();
+                List<PlannedStep<ResourceLocation>> planned = success.steps();
+                List<CraftStep> steps = new ArrayList<>(planned.size());
+                for (int i = 0; i < planned.size(); i++) {
+                    PlannedStep<ResourceLocation> step = planned.get(i);
+                    steps.add(new CraftStep(step.recipeId(), step.crafts(),
+                            !fits2x2(step.recipeId(), target), success.layouts().get(i)));
+                }
                 return new PlanOutcome.Planned(new CraftJob(RecipeIds.id(targetHolder), target.resultStack(), steps));
             }
             Result.Failure<ResourceLocation, Item> failure = (Result.Failure<ResourceLocation, Item>) result;
@@ -355,8 +359,9 @@ public final class CraftPlanner {
 
     /**
      * One solver slot: the ingredient's distinct items in its own order (empty when it resolves to
-     * nothing). {@code CraftExecutor} builds its {@code SlotAssignment} input with this too, so the
-     * executor fills slots from exactly the lists the plan was made with.
+     * nothing). {@code CraftExecutor} checks the plan's layout items against these lists and builds
+     * its {@code SlotAssignment} input with them too, so the executor fills slots from exactly the
+     * lists the plan was made with.
      */
     static List<Item> slotAlternatives(Ingredient ingredient) {
         //? if >=1.21.11 {
