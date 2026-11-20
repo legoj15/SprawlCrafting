@@ -13,7 +13,8 @@ import net.minecraft.client.multiplayer.ClientPacketListener;
  * (or paused) job. Unbound by default — never a literal key code, which 26.3 renumbered — so it
  * only fires after the player binds it in Controls. The send is gated on an active job (nothing to
  * cancel otherwise) and on the server having negotiated the channel, so on an older or modless
- * server the key silently does nothing.
+ * server the key silently does nothing. The progress-toast click (issue #34) reuses the same
+ * gate and send through {@link ToastCancelClick}.
  */
 public final class CancelCraftKey {
 
@@ -42,11 +43,20 @@ public final class CancelCraftKey {
         if (!clicked) {
             return;
         }
-        ClientPacketListener listener = Minecraft.getInstance().getConnection();
-        if (!ClientJobTracker.hasActiveJob() || listener == null
-                || !Services.PLATFORM.canSendToServer(listener.getConnection(), CancelCraftPayload.ID)) {
-            return;
+        if (canCancel()) {
+            sendCancel();
         }
+    }
+
+    /** The gate both the key and the toast click share: a job to cancel and a server that can act on it. */
+    public static boolean canCancel() {
+        ClientPacketListener listener = Minecraft.getInstance().getConnection();
+        return ClientJobTracker.hasActiveJob() && listener != null
+                && Services.PLATFORM.canSendToServer(listener.getConnection(), CancelCraftPayload.ID);
+    }
+
+    /** Sends the cancel request — only meaningful when {@link #canCancel()} passed. */
+    public static void sendCancel() {
         Services.PLATFORM.sendToServer(CancelCraftPayload.INSTANCE);
     }
 }

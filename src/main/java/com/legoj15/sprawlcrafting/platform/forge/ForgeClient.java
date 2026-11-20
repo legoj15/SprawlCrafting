@@ -7,11 +7,13 @@ import com.legoj15.sprawlcrafting.client.DeferredClickState;
 import com.legoj15.sprawlcrafting.client.DeferredCraftableCache;
 import com.legoj15.sprawlcrafting.client.MissingIngredients;
 import com.legoj15.sprawlcrafting.client.SprawlConfigScreen;
+import com.legoj15.sprawlcrafting.client.ToastCancelClick;
 import com.legoj15.sprawlcrafting.config.SprawlConfig;
 
 import net.minecraftforge.client.ConfigScreenHandler;
 import net.minecraftforge.client.event.ClientPlayerNetworkEvent;
 import net.minecraftforge.client.event.RegisterKeyMappingsEvent;
+import net.minecraftforge.client.event.ScreenEvent;
 //? if <1.21.11 {
 import net.minecraftforge.common.MinecraftForge;
 //?}
@@ -43,13 +45,35 @@ final class ForgeClient {
         ModLoadingContext.get().registerExtensionPoint(ConfigScreenHandler.ConfigScreenFactory.class,
                 () -> new ConfigScreenHandler.ConfigScreenFactory((mc, modListScreen) -> new SprawlConfigScreen(modListScreen)));*/
         //?}
-        // Forge 26.x (EventBus 7) has no MinecraftForge.EVENT_BUS: every event class carries its own static BUS.
+        // Forge 26.x (EventBus 7) deprecates MinecraftForge.EVENT_BUS (slated for removal in 26.4):
+        // every event class carries its own static BUS instead.
         //? if >=1.21.11 {
         /*ClientPlayerNetworkEvent.LoggingOut.BUS.addListener(ForgeClient::onLoggingOut);
         TickEvent.ClientTickEvent.Post.BUS.addListener(ForgeClient::onClientTick);*/
         //?} else {
         MinecraftForge.EVENT_BUS.addListener(ForgeClient::onLoggingOut);
         MinecraftForge.EVENT_BUS.addListener(ForgeClient::onClientTick);
+        //?}
+        // Clicking the progress toast while any screen is open cancels the craft (issue #34):
+        // canceling the Pre event keeps the press from the screen underneath, and its release is
+        // dropped too (a lone release can drop a carried stack). On 26.x (EventBus 7)
+        // the listener is a predicate whose true return cancels.
+        //? if >=1.21.11 {
+        /*ScreenEvent.MouseButtonPressed.Pre.BUS.addListener((ScreenEvent.MouseButtonPressed.Pre e) ->
+                ToastCancelClick.onScreenClick(e.getMouseX(), e.getMouseY(), e.getButton()));
+        ScreenEvent.MouseButtonReleased.Pre.BUS.addListener((ScreenEvent.MouseButtonReleased.Pre e) ->
+                ToastCancelClick.onScreenRelease(e.getButton()));*/
+        //?} else {
+        MinecraftForge.EVENT_BUS.addListener((ScreenEvent.MouseButtonPressed.Pre e) -> {
+            if (ToastCancelClick.onScreenClick(e.getMouseX(), e.getMouseY(), e.getButton())) {
+                e.setCanceled(true);
+            }
+        });
+        MinecraftForge.EVENT_BUS.addListener((ScreenEvent.MouseButtonReleased.Pre e) -> {
+            if (ToastCancelClick.onScreenRelease(e.getButton())) {
+                e.setCanceled(true);
+            }
+        });
         //?}
         // The cancel key, registered through the loader's key-registration event (never added to
         // Options by hand). Forge 26 (EventBus 7) made it a game-bus event on its own static BUS;
@@ -68,6 +92,7 @@ final class ForgeClient {
         DeferredCraftableCache.invalidate(); // drop the synced/solved craftable set
         DeferredClickState.clear();          // drop any pending click preview
         MissingIngredients.reset();          // drop any pending/cached gather list
+        ToastCancelClick.clear();            // the toast's clickable rectangle dies with the job state
     }
 
     // Tell the server which crafting grid is on screen (only while a job is active), so a
