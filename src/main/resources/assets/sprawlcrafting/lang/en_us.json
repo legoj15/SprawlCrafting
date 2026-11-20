@@ -8,6 +8,7 @@
   "sprawlcrafting.craft.busy": "Already crafting. Cancel it with the \"Cancel deferred craft\" key (Controls), or let it finish",
   "sprawlcrafting.craft.unsupported": "%s is not a plannable crafting recipe",
   "sprawlcrafting.craft.unsolvable": "Not enough raw resources for %s (missing: %s)",
+  "sprawlcrafting.craft.unsolvable_order": "Can't plan %s: you have the materials, but every order of crafts uses up an item a later step needs",
   "sprawlcrafting.craft.too_complex": "The recipe tree for %s is too complex to plan",
   "sprawlcrafting.craft.needs_table": "%s needs a crafting table.",
   "sprawlcrafting.toast.crafting": "Crafting %s",

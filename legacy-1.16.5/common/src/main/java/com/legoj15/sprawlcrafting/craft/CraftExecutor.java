@@ -621,10 +621,12 @@ public final class CraftExecutor {
     /**
      * One inventory slot per ingredient ({@code -1} for an empty cell), chosen without mutating anything,
      * or the first ingredient nothing could satisfy. A stack {@link #usableAsIngredient} rejects is chosen
-     * only when no acceptable stack matches and {@code ledger} (null: never) still admits its item through
-     * {@link LedgerTally#admissible}: only rejected copies above those the player held before the job
-     * produced anything. Every pick is recorded in the tally, which {@link Assignment#chargeTo} charges:
-     * rejected picks, plus plain picks beyond the job's rejected copies of that item the pool still holds.
+     * only while {@code ledger} (null: never) still admits its item through {@link LedgerTally#admissible}
+     * — only rejected copies above those the player held before the job produced anything — first for the
+     * cell's preferred item (the plan counted the job's altered intermediates, so the rule must too),
+     * otherwise only when no acceptable stack matches. Every pick is recorded in the tally, which
+     * {@link Assignment#chargeTo} charges: rejected picks, plus plain picks beyond the job's rejected
+     * copies of that item the pool still holds.
      *
      * <p>With an open crafting station's storage ({@code station}, null for none) in the pool,
      * {@link #preferredItems} picks each cell's item from inventory plus station stock, exactly as the plan's
@@ -634,6 +636,9 @@ public final class CraftExecutor {
      *   <li>the preferred item from the inventory;</li>
      *   <li>the preferred item from the station (rather than an inventory alternative: taking a different
      *       item than the plan's rule chose could starve a later step the plan counted on);</li>
+     *   <li>(with a ledger) a refused inventory copy of the preferred item the ledger admits — the job's
+     *       altered intermediate, which the plan's counts also include, after the station's plain copy of
+     *       the same item but before any alternative;</li>
      *   <li>any usable inventory match;</li>
      *   <li>any of the ingredient's items from the station;</li>
      *   <li>(with a ledger) a refused inventory stack the ledger admits, the last resort as before.</li>
@@ -656,7 +661,7 @@ public final class CraftExecutor {
         }
         StationPool pool = station == null ? null : new StationPool(station);
         Map<Item, Integer> taken = pool == null ? Collections.<Item, Integer>emptyMap() : pool.taken;
-        Item[] preferred = preferredItems(inventory, ingredients, pool);
+        Item[] preferred = preferredItems(inventory, ingredients, pool, admitting);
         for (int n = 0; n < slots.length; n++) {
             Ingredient ingredient = ingredients.get(n);
             if (ingredient == null || ingredient.isEmpty()) {
@@ -672,6 +677,12 @@ public final class CraftExecutor {
                 if (slot < 0) {
                     fromStation = pool.take(ingredient,
                             preferred[n] == null ? null : Collections.singletonList(preferred[n]));
+                }
+                if (slot < 0 && fromStation == null && preferred[n] != null && admitting != null) {
+                    // The station's plain copy of the preferred item came first; the job's altered
+                    // copy of it still beats an alternative item, which a later cell may need alone.
+                    slot = findRefusedPreferredSlot(inventory, ingredient, preferred[n], reserved, admitting,
+                            ledgerTakes);
                 }
                 if (slot < 0 && fromStation == null) {
                     slot = findUsableSlot(inventory, ingredient, reserved);
@@ -755,6 +766,29 @@ public final class CraftExecutor {
     }
 
     /**
+     * Adds to {@code stock} the refused stacks of the 36 main slots that {@code admitting} still
+     * admits, per item only up to its outstanding count: the job's altered intermediates, which the
+     * plan's counts include, so {@link #preferredItems} must see them too.
+     */
+    private static void countAdmitted(PlayerInventory inventory, ProducedLedger<Item> admitting,
+                                      Map<Item, Integer> stock) {
+        Map<Item, Integer> counted = new HashMap<>(); // admit budget already spent per item
+        for (int i = 0; i < MAIN_SLOTS; i++) {
+            ItemStack stack = inventory.getItem(i);
+            if (stack.isEmpty() || usableAsIngredient(stack)) {
+                continue;
+            }
+            Item item = stack.getItem();
+            int add = (int) Math.min(stack.getCount(),
+                    admitting.outstanding(item) - counted.getOrDefault(item, 0));
+            if (add > 0) {
+                stock.merge(item, add, (a, b) -> (int) Math.min((long) a + b, Integer.MAX_VALUE));
+                counted.merge(item, add, Integer::sum);
+            }
+        }
+    }
+
+    /**
      * {@code stationTakes}: plain items per kind the station supplies to this craft (cells marked
      * {@link #STATION_CELL}), empty without a station. {@code stationItems}: the item each of those cells gets
      * (null elsewhere) — {@link #craftOnce} consumes by kind, but the grid hand-off places the station's share
@@ -787,15 +821,22 @@ public final class CraftExecutor {
      * rule over the same slot lists ({@link CraftPlanner#slotAlternatives}) and counts, so each craft takes
      * what the plan counted on, not whichever stack sits first in the inventory. With a crafting station open
      * ({@code pool} non-null) its stock of every candidate item joins the counts, as it joined the plan's
-     * snapshot.
+     * snapshot. With {@code admitting} non-null ({@link LedgerTally#admissible}'s view) the refused stacks it
+     * admits join the counts too, each item only up to its outstanding count: the solver credits every item
+     * a step produces, altered or not, so without them the rule could starve a cell the plan fed through a
+     * job-made intermediate a mod has since altered.
      */
-    private static Item[] preferredItems(PlayerInventory inventory, List<Ingredient> ingredients, StationPool pool) {
+    private static Item[] preferredItems(PlayerInventory inventory, List<Ingredient> ingredients, StationPool pool,
+                                         ProducedLedger<Item> admitting) {
         Map<Item, Integer> stock = new HashMap<>();
         for (int i = 0; i < MAIN_SLOTS; i++) {
             ItemStack stack = inventory.getItem(i);
             if (!stack.isEmpty() && usableAsIngredient(stack)) {
                 stock.merge(stack.getItem(), stack.getCount(), Integer::sum);
             }
+        }
+        if (admitting != null) {
+            countAdmitted(inventory, admitting, stock);
         }
         List<List<Item>> slots = new ArrayList<>();
         List<Integer> cells = new ArrayList<>();
@@ -828,23 +869,28 @@ public final class CraftExecutor {
     }
 
     /**
-     * A stack of {@code preferred} ({@link #preferredItems}) when one matches; otherwise the first match in
-     * inventory order, then (with a ledger) a refused stack the ledger admits.
+     * A usable stack of {@code preferred} ({@link #preferredItems}) when one matches; then a refused
+     * copy of {@code preferred} the admitting ledger still admits (the job's altered intermediate,
+     * which the plan's counts include); otherwise the first usable match in inventory order, and
+     * only then (with a ledger) any refused stack the ledger admits.
      */
     private static int findMatchingSlot(PlayerInventory inventory, Ingredient ingredient, Item preferred,
-                                        int[] reserved, ProducedLedger<Item> ledger,
+                                        int[] reserved, ProducedLedger<Item> admitting,
                                         Map<Item, Integer> ledgerTakes) {
         if (preferred != null) {
             int slot = findPreferredSlot(inventory, ingredient, preferred, reserved);
+            if (slot < 0 && admitting != null) {
+                slot = findRefusedPreferredSlot(inventory, ingredient, preferred, reserved, admitting, ledgerTakes);
+            }
             if (slot >= 0) {
                 return slot;
             }
         }
         int slot = findUsableSlot(inventory, ingredient, reserved);
-        if (slot >= 0 || ledger == null) {
+        if (slot >= 0 || admitting == null) {
             return slot;
         }
-        return findRefusedSlot(inventory, ingredient, reserved, ledger, ledgerTakes);
+        return findRefusedSlot(inventory, ingredient, reserved, admitting, ledgerTakes);
     }
 
     /** The first unreserved usable stack of {@code preferred} the ingredient accepts, or -1. */
@@ -854,6 +900,25 @@ public final class CraftExecutor {
             ItemStack stack = inventory.getItem(i);
             if (!stack.isEmpty() && stack.getItem() == preferred && stack.getCount() - reserved[i] > 0
                     && usableAsIngredient(stack) && ingredient.test(stack)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * The first unreserved refused stack of {@code preferred} the admitting ledger still admits and
+     * the ingredient accepts, or -1.
+     */
+    private static int findRefusedPreferredSlot(PlayerInventory inventory, Ingredient ingredient, Item preferred,
+                                                int[] reserved, ProducedLedger<Item> admitting,
+                                                Map<Item, Integer> ledgerTakes) {
+        for (int i = 0; i < MAIN_SLOTS; i++) {
+            ItemStack stack = inventory.getItem(i);
+            if (!stack.isEmpty() && stack.getCount() - reserved[i] > 0 && stack.getItem() == preferred
+                    && !usableAsIngredient(stack)
+                    && admitting.canTake(stack.getItem(), ledgerTakes.getOrDefault(stack.getItem(), 0))
+                    && ingredient.test(stack)) {
                 return i;
             }
         }

@@ -96,8 +96,12 @@ public final class CraftRequests {
                 for (Item item : outcome.missing()) {
                     names.add(new TranslationTextComponent(item.getDescriptionId()).getString());
                 }
-                text = new TranslationTextComponent("sprawlcrafting.craft.unsolvable", recipeName,
-                        new StringTextComponent(names.isEmpty() ? "?" : String.join(", ", names)));
+                // No missing names: every pass was rejected on replay — the materials are there, but
+                // no order of crafts works, and a "not enough resources" message would be false.
+                text = names.isEmpty()
+                        ? new TranslationTextComponent("sprawlcrafting.craft.unsolvable_order", recipeName)
+                        : new TranslationTextComponent("sprawlcrafting.craft.unsolvable", recipeName,
+                                new StringTextComponent(String.join(", ", names)));
                 break;
             }
             case UNSUPPORTED:

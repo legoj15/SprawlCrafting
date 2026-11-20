@@ -462,11 +462,14 @@ public final class CraftExecutor {
      * One source per ingredient ({@code -1} for a gap: null or {@link Ingredient#EMPTY}) over the
      * pool {@link #buildSources} describes, chosen without mutating anything, or the first
      * ingredient nothing could satisfy. A stack {@link #usableAsIngredient} rejects is chosen only
-     * when no acceptable stack matches and {@code ledger} (null: never) still admits its identity
-     * through {@link LedgerTally#admissible}: only rejected copies above those the player held
-     * before the job produced anything. Every pick is recorded in the tally, which
-     * {@link Assignment#chargeTo} charges: rejected picks, plus plain picks beyond the job's
-     * rejected copies of that identity the pool still
+     * while {@code ledger} (null: never) still admits its identity through
+     * {@link LedgerTally#admissible} — only rejected copies above those the player held before the
+     * job produced anything. Within an ingredient, {@link #findMatchingSource} takes the preferred
+     * identity ({@link #preferredKeys}) first — a usable stack, then a refused copy the admitting
+     * ledger admits (the job's altered intermediate, which the plan's counts include) — before any
+     * other usable match, and any refused stack the ledger admits only as the last resort. Every
+     * pick is recorded in the tally, which {@link Assignment#chargeTo} charges: rejected picks,
+     * plus plain picks beyond the job's rejected copies of that identity the pool still
      * holds. Package-visible: the final-step hand-off ({@link ServerGridPlacer}) lays out the same
      * choice.
      */
@@ -493,7 +496,7 @@ public final class CraftExecutor {
             countRefused(sources, tally);
             admitting = tally.admissible(ledger);
         }
-        ItemKey[] preferred = preferredKeys(sources, ingredients);
+        ItemKey[] preferred = preferredKeys(sources, ingredients, admitting);
         for (int i = 0; i < chosen.length; i++) {
             Ingredient ingredient = ingredients.get(i);
             if (ingredient == null || ingredient == Ingredient.EMPTY) {
@@ -530,6 +533,33 @@ public final class CraftExecutor {
         }
         for (Map.Entry<ItemKey, Long> entry : refused.entrySet()) {
             tally.held(entry.getKey(), (int) Math.min(entry.getValue(), Integer.MAX_VALUE));
+        }
+    }
+
+    /**
+     * Adds to {@code stock} the refused stacks of the pool that {@code admitting} still admits: the
+     * job's altered intermediates, which the plan's counts include, so {@link #preferredKeys} must
+     * see them too. Budgeted per {@link #ledgerKey} by its outstanding count, added under
+     * {@link ItemKey#of} — the preference identity, which differs for damageable items.
+     */
+    private static void countAdmitted(List<Source> sources, ProducedLedger<ItemKey> admitting,
+                                      Map<ItemKey, Integer> stock) {
+        Map<ItemKey, Integer> counted = new HashMap<ItemKey, Integer>(); // admit budget spent per ledger identity
+        for (Source source : sources) {
+            ItemStack stack = source.peek();
+            if (stack.isEmpty() || usableAsIngredient(stack)) {
+                continue;
+            }
+            ItemKey identity = ledgerKey(stack);
+            Integer spent = counted.get(identity);
+            int add = (int) Math.min(stack.getCount(),
+                    admitting.outstanding(identity) - (spent == null ? 0 : spent));
+            if (add > 0) {
+                ItemKey key = ItemKey.of(stack);
+                Integer have = stock.get(key);
+                stock.put(key, NetworkTerminals.saturatedAdd(have == null ? 0 : have, add));
+                counted.put(identity, (spent == null ? 0 : spent) + add);
+            }
         }
     }
 
@@ -582,9 +612,14 @@ public final class CraftExecutor {
      * Per ingredient, the identity {@link SlotAssignment} picks for it from the usable stacks of the
      * whole pool (null for a gap or when nothing usable fits). The solver plans every craft with the
      * same rule over the same slot lists ({@link CraftPlanner#slotAlternatives}) and the same pool
-     * counts, so each craft takes what the plan counted on, not whichever stack comes first.
+     * counts, so each craft takes what the plan counted on, not whichever stack comes first. With
+     * {@code admitting} non-null ({@link LedgerTally#admissible}'s view) the refused stacks it
+     * admits join the counts too, budgeted per {@link #ledgerKey} by its outstanding count: the
+     * solver credits every item a step produces, altered or not, so without them the rule could
+     * starve a cell the plan fed through a job-made intermediate a mod has since altered.
      */
-    private static ItemKey[] preferredKeys(List<Source> sources, List<Ingredient> ingredients) {
+    private static ItemKey[] preferredKeys(List<Source> sources, List<Ingredient> ingredients,
+                                           ProducedLedger<ItemKey> admitting) {
         Map<ItemKey, Integer> stock = new HashMap<ItemKey, Integer>();
         for (Source source : sources) {
             ItemStack stack = source.peek();
@@ -593,6 +628,9 @@ public final class CraftExecutor {
                 Integer have = stock.get(key);
                 stock.put(key, NetworkTerminals.saturatedAdd(have == null ? 0 : have, stack.getCount()));
             }
+        }
+        if (admitting != null) {
+            countAdmitted(sources, admitting, stock);
         }
         List<List<ItemKey>> slots = new ArrayList<List<ItemKey>>();
         List<Integer> cells = new ArrayList<Integer>();
@@ -612,11 +650,14 @@ public final class CraftExecutor {
     }
 
     /**
-     * A stack of {@code preferred} ({@link #preferredKeys}) when one matches; otherwise the first
-     * match in pool order, then (with a ledger) a refused stack the ledger admits.
+     * A usable stack of {@code preferred} ({@link #preferredKeys}) when one matches; then a refused
+     * copy of {@code preferred} the admitting ledger still admits (the job's altered intermediate,
+     * which the plan's counts include, matched on {@link ItemKey#of} and admitted by
+     * {@link #ledgerKey}); otherwise the first usable match in pool order, and only then (with a
+     * ledger) any refused stack the ledger admits.
      */
     private static int findMatchingSource(List<Source> sources, Ingredient ingredient, ItemKey preferred,
-                                          int[] reserved, ProducedLedger<ItemKey> ledger,
+                                          int[] reserved, ProducedLedger<ItemKey> admitting,
                                           Map<ItemKey, Integer> ledgerTakes) {
         if (preferred != null) {
             for (int i = 0; i < sources.size(); i++) {
@@ -624,6 +665,20 @@ public final class CraftExecutor {
                 if (!stack.isEmpty() && stack.getCount() - reserved[i] > 0 && preferred.equals(ItemKey.of(stack))
                         && usableAsIngredient(stack) && ingredient.apply(stack)) {
                     return i;
+                }
+            }
+            if (admitting != null) {
+                for (int i = 0; i < sources.size(); i++) {
+                    ItemStack stack = sources.get(i).peek();
+                    if (stack.isEmpty() || stack.getCount() - reserved[i] <= 0
+                            || !preferred.equals(ItemKey.of(stack)) || usableAsIngredient(stack)) {
+                        continue;
+                    }
+                    ItemKey key = ledgerKey(stack);
+                    Integer taken = ledgerTakes.get(key);
+                    if (admitting.canTake(key, taken == null ? 0 : taken) && ingredient.apply(stack)) {
+                        return i;
+                    }
                 }
             }
         }
@@ -634,7 +689,7 @@ public final class CraftExecutor {
                 return i;
             }
         }
-        if (ledger == null) {
+        if (admitting == null) {
             return -1;
         }
         for (int i = 0; i < sources.size(); i++) {
@@ -644,7 +699,7 @@ public final class CraftExecutor {
             }
             ItemKey key = ledgerKey(stack);
             Integer taken = ledgerTakes.get(key);
-            if (ledger.canTake(key, taken == null ? 0 : taken) && ingredient.apply(stack)) {
+            if (admitting.canTake(key, taken == null ? 0 : taken) && ingredient.apply(stack)) {
                 return i;
             }
         }
