@@ -531,21 +531,21 @@ public final class CraftExecutor {
     }
 
     /**
-     * Inserts {@code count} copies of {@code template} (its item and tag) in stacks of at most its
-     * max stack size, through {@link #insertIntoMainInventory} so overflow goes to the open station,
-     * then the feet.
+     * Inserts {@code count} copies of {@code template} (its item and tag) as ONE oversized stack through
+     * {@link #insertIntoMainInventory}: its slot loops split it into normal stacks, the overflow reaches
+     * the open station in a single insert, and anything left drops as normal stacks. One call per max
+     * stack would cost a station insert per 64 items, tens of thousands in one tick for a
+     * million-craft batch. {@code count} fits an int: craftBatch caps k * result count at
+     * Integer.MAX_VALUE.
      *
      * @return whether the station took any of it
      */
     private static boolean insertCopies(ServerPlayerEntity player, StationStorage station,
                                         ItemStack template, long count) {
-        boolean stored = false;
-        for (long left = count; left > 0; ) {
-            int chunk = (int) Math.min(left, template.getMaxStackSize());
-            left -= chunk;
-            stored |= insertIntoMainInventory(player, copyWithCount(template, chunk), station);
+        if (count <= 0) {
+            return false;
         }
-        return stored;
+        return insertIntoMainInventory(player, copyWithCount(template, (int) count), station);
     }
 
     private static long count(Map<Item, Integer> stock, Item item) {
@@ -1278,8 +1278,12 @@ public final class CraftExecutor {
             stack = insertIntoStation(station, stack);
             stored = stack.getCount() < before;
         }
-        if (!stack.isEmpty()) {
-            player.drop(stack, false);
+        // A batch's stack can be far over the max stack size: drop it as ordinary stacks, never one
+        // oversized item entity.
+        while (!stack.isEmpty()) {
+            ItemStack chunk = copyWithCount(stack, Math.min(stack.getCount(), stack.getMaxStackSize()));
+            stack.shrink(chunk.getCount());
+            player.drop(chunk, false);
         }
         return stored;
     }

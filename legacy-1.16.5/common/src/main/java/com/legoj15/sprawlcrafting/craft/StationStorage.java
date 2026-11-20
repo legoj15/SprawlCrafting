@@ -43,7 +43,9 @@ public interface StationStorage {
     int extract(Item item, int count);
 
     /**
-     * Inserts as much of {@code stack} as the storage accepts. Does not modify the argument.
+     * Inserts as much of {@code stack} as the storage accepts. Does not modify the argument. The stack may
+     * be far over its max stack size (a batched craft's whole overflow, up to Integer.MAX_VALUE items);
+     * the storage must take it by count, not as one slot's worth.
      *
      * @return what was not accepted ({@link ItemStack#EMPTY} when all of it went in)
      */
