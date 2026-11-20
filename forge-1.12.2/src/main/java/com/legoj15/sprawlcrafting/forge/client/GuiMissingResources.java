@@ -25,9 +25,9 @@ import org.lwjgl.input.Mouse;
  */
 public class GuiMissingResources extends GuiScreen {
 
-    /** Narrowest the panel gets; it widens past this when a row's name and need text would not fit. */
+    /** Narrowest the panel gets; it widens past this when the title or a row would not fit. */
     private static final int MIN_PANEL_WIDTH = 256;
-    /** Screen margin kept clear on each side when the panel is widened to fit its rows. */
+    /** Screen margin kept clear on each side when the panel is widened to fit its title or rows. */
     private static final int SIDE_MARGIN = 10;
     private static final int ROW_HEIGHT = 20;
     /** Item name starts this far in from the panel's left edge (after the 16-px icon). */
@@ -36,6 +36,11 @@ public class GuiMissingResources extends GuiScreen {
     private static final int NEED_INSET = 12;
     /** Minimum space between the end of an item name and the start of its need text. */
     private static final int NAME_NEED_GAP = 8;
+    /**
+     * The title ends this far in from the panel's right edge, keeping clear of the scroll hint
+     * ({@code ^ v}, drawn at {@code panelRight - 16} on the title line).
+     */
+    private static final int TITLE_RIGHT_INSET = 20;
     private static final String ELLIPSIS = "...";
     private static final int DONE_BUTTON = 0;
 
@@ -43,7 +48,7 @@ public class GuiMissingResources extends GuiScreen {
     private final GuiScreen parent;
 
     private int scrollOffset;
-    /** Computed in {@link #initGui}: {@link #MIN_PANEL_WIDTH} widened to fit the longest row. */
+    /** Computed in {@link #initGui}: {@link #MIN_PANEL_WIDTH} widened to fit the title and the longest row. */
     private int panelWidth = MIN_PANEL_WIDTH;
     private int panelLeft;
     private int panelTop;
@@ -107,9 +112,10 @@ public class GuiMissingResources extends GuiScreen {
     }
 
     /**
-     * The panel width that fits the widest row (name + gap + need text) without clipping: never under
-     * {@link #MIN_PANEL_WIDTH}, and past it only as far as the window's side margins allow. A row still
-     * too long for a small window has its name cut short in {@link #drawScreen}.
+     * The panel width that fits the title and the widest row (name + gap + need text) without
+     * clipping: never under {@link #MIN_PANEL_WIDTH}, and past it only as far as the window's side
+     * margins allow. A title or row name still too long for a small window is cut short in
+     * {@link #drawScreen}.
      */
     private int fitPanelWidth() {
         int widestRow = 0;
@@ -118,9 +124,22 @@ public class GuiMissingResources extends GuiScreen {
             int need = this.fontRenderer.getStringWidth(needText(demand.count()));
             widestRow = Math.max(widestRow, name + NAME_NEED_GAP + need);
         }
-        int wanted = NAME_INSET + widestRow + NEED_INSET;
+        int wanted = Math.max(NAME_INSET + widestRow + NEED_INSET,
+                titleLeftInset() + this.fontRenderer.getStringWidth(titleText()) + TITLE_RIGHT_INSET);
         int available = Math.max(MIN_PANEL_WIDTH, this.width - 2 * SIDE_MARGIN);
         return Math.max(MIN_PANEL_WIDTH, Math.min(wanted, available));
+    }
+
+    /** The title: "Materials needed", plus ": <target name>" when the target is known. */
+    private String titleText() {
+        ItemStack target = data.target();
+        return TextFormatting.WHITE + I18n.format("sprawlcrafting.gather.title")
+                + (target.isEmpty() ? "" : ": " + target.getDisplayName());
+    }
+
+    /** Title text starts after the target icon when there is one, else at the panel's padding. */
+    private int titleLeftInset() {
+        return data.target().isEmpty() ? 8 : 28;
     }
 
     @Override
@@ -154,22 +173,30 @@ public class GuiMissingResources extends GuiScreen {
         drawRect(panelLeft, panelTop, panelRight, panelTop + 1, 0xFF000000);
 
         ItemStack target = data.target();
-        String title = TextFormatting.WHITE + I18n.format("sprawlcrafting.gather.title")
-                + (target.isEmpty() ? "" : ": " + target.getDisplayName());
+        ItemStack hovered = null;
+        String fullTitle = titleText();
+        int titleLeft = panelLeft + titleLeftInset();
+        int titleRight = panelRight - TITLE_RIGHT_INSET;
+        String title = fit(fullTitle, titleRight - titleLeft);
         if (!target.isEmpty()) {
             renderIcon(target, panelLeft + 8, panelTop + 6);
-            this.drawString(this.fontRenderer, title, panelLeft + 28, panelTop + 10, 0xFFFFFF);
-        } else {
-            this.drawString(this.fontRenderer, title, panelLeft + 8, panelTop + 10, 0xFFFFFF);
+        }
+        this.drawString(this.fontRenderer, title, titleLeft, panelTop + 10, 0xFFFFFF);
+        // A cut-short title is read in full by hovering it (or the icon): the target's item tooltip.
+        boolean overTitleIcon = !target.isEmpty() && mouseX >= panelLeft + 8 && mouseX <= panelLeft + 24;
+        boolean overCutTitle = !target.isEmpty() && !title.equals(fullTitle)
+                && mouseX >= titleLeft && mouseX < titleRight;
+        if ((overTitleIcon || overCutTitle) && mouseY >= panelTop + 6 && mouseY <= panelTop + 22) {
+            hovered = target;
         }
         if (data.approximate()) {
             this.drawString(this.fontRenderer,
-                    TextFormatting.GRAY + I18n.format("sprawlcrafting.gather.approximate"),
+                    fit(TextFormatting.GRAY + I18n.format("sprawlcrafting.gather.approximate"),
+                            panelWidth - 16),
                     panelLeft + 8, panelTop + 24, 0xA0A0A0);
         }
 
         List<ItemDemand> demands = data.demands();
-        ItemStack hovered = null;
         if (demands.isEmpty()) {
             this.drawCenteredString(this.fontRenderer,
                     TextFormatting.GREEN + I18n.format("sprawlcrafting.gather.have_raws"),
