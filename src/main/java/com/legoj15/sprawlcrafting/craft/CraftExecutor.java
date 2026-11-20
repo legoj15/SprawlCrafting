@@ -245,8 +245,8 @@ public final class CraftExecutor {
      * made {@code k} times, which is only provably the same as k single crafts while
      * {@link SlotAssignment#stableRepeats} says the choice holds and every cell took its preferred
      * item; any case that cannot be proven — a fallback pick, a ledger-held candidate stack,
-     * remainders with no station open, output that would not fit — runs a plain
-     * {@link #craftOnce} (k = 1) instead, with exactly its result, message and partial progress.
+     * remainders with no station open, output that would not fit — runs a single craft (k = 1) on
+     * the plan already prepared, with exactly craftOnce's result, message and partial progress.
      */
     public static CraftResult craftBatch(ServerPlayer player, ResourceLocation recipeId,
                                          ProducedLedger<Item> ledger, boolean stationPlanned, int maxCrafts) {
@@ -388,15 +388,20 @@ public final class CraftExecutor {
         // Output room: a batch never plans to drop anything at the feet (single crafts would spread such
         // drops over many ticks; a batch would land them all in one). Room is the inventory's, read before
         // the consumption that frees slots (conservative), plus what an open station says it would take.
-        // Empty slots count for the result only, so a remainder never counts a slot the result fills.
+        // Each output's room must be its own: empty slots and the station's capacity count for the
+        // result only (two simulated inserts would both be told about the same free space), so a
+        // remainder is bounded by the free space of its own partial stacks in the inventory.
         // With a station, outputs may end up split differently between inventory and station than single
         // crafts would leave them (a single craft overflows before the next one frees a slot); the
         // per-item totals across the two are the same, and nothing is dropped or lost.
         k = Math.min(k, outputRoom(inventory, plan.station(), result, k * perResult, true) / perResult);
         for (Map.Entry<Item, Long> remainder : remainders.entrySet()) {
             long perCraft = remainder.getValue();
-            k = Math.min(k, outputRoom(inventory, plan.station(), new ItemStack(remainder.getKey()),
+            k = Math.min(k, outputRoom(inventory, null, new ItemStack(remainder.getKey()),
                     k * perCraft, false) / perCraft);
+        }
+        if (remainders.containsKey(result.getItem())) {
+            return null; // result and remainder would both count the same partial stacks as room
         }
         if (k <= 1) {
             return null;
@@ -510,15 +515,16 @@ public final class CraftExecutor {
             tally.chargeTo(plan.ledger());
         }
         // Results and remainders go to the main inventory as always; with a station open, what would
-        // otherwise drop at the player's feet goes into its storage first (craftOnce's order:
-        // remainders, then the result).
+        // otherwise drop at the player's feet goes into its storage first. The result goes in before
+        // the remainders: batchPlan gave only the result empty slots and station room, so a remainder
+        // inserted first could take space the result was promised.
         boolean storedInStation = false;
+        ItemStack crafted = plan.result().copy();
+        storedInStation |= insertCopies(player, station, plan.result(), (long) batch.crafts() * crafted.getCount());
         for (Map.Entry<Item, Long> remainder : batch.remainders().entrySet()) {
             storedInStation |= insertCopies(player, station, new ItemStack(remainder.getKey()),
                     (long) batch.crafts() * remainder.getValue());
         }
-        ItemStack crafted = plan.result().copy();
-        storedInStation |= insertCopies(player, station, plan.result(), (long) batch.crafts() * crafted.getCount());
         if (plan.ledger() != null) {
             plan.ledger().produced(crafted.getItem(), (long) batch.crafts() * crafted.getCount());
         }
