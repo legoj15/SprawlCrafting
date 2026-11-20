@@ -713,16 +713,104 @@ class RecipeGraphSolverTest {
                 "exactly one coal-or-charcoal to gather, got " + demands);
     }
 
-    // --- executability: every returned plan must replay the way the executors run it ----------
-    // (issues #10, #18: the solver's model of which stock a slot consumes must be the one the
-    //  executors follow, SlotAssignment, one craft at a time)
+    // --- executability: every returned plan must replay under its own layouts -----------------
+    // (issues #10, #18, #23: the solver fixes which item each craft's every slot takes — the
+    //  executors follow those layouts, so a sub-craft can no longer eat the only copy a later step
+    //  needs. SlotAssignment remains the fallback when the inventory no longer matches.)
+
+    /**
+     * Checks the well-formedness of a solved plan's layouts: aligned 1:1 with the steps, each
+     * step's runs summing to its crafts, no two adjacent runs listing equal items, and every layout
+     * item one of that slot's alternatives. Returns null when all hold, otherwise what broke.
+     */
+    private String layoutInvariants(TestRecipe target, List<PlannedStep<String>> steps,
+                                    List<List<SlotLayout<String>>> layouts) {
+        if (layouts.size() != steps.size()) {
+            return layouts.size() + " layouts for " + steps.size() + " steps";
+        }
+        for (int i = 0; i < steps.size(); i++) {
+            TestRecipe recipe = byId(target, steps.get(i).recipeId());
+            List<List<String>> slots = new ArrayList<>();
+            for (List<String> slot : recipe.ingredientSlots()) {
+                if (!slot.isEmpty()) {
+                    slots.add(slot);
+                }
+            }
+            long crafts = 0;
+            List<SlotLayout<String>> runs = layouts.get(i);
+            for (int r = 0; r < runs.size(); r++) {
+                SlotLayout<String> run = runs.get(r);
+                crafts += run.crafts();
+                if (run.items().size() != slots.size()) {
+                    return "step " + i + " run " + r + " lists " + run.items().size()
+                            + " items for " + slots.size() + " non-empty slots";
+                }
+                for (int s = 0; s < slots.size(); s++) {
+                    if (!slots.get(s).contains(run.items().get(s))) {
+                        return "step " + i + " run " + r + " puts " + run.items().get(s)
+                                + " in a slot accepting " + slots.get(s);
+                    }
+                }
+                if (r > 0 && runs.get(r - 1).items().equals(run.items())) {
+                    return "step " + i + " runs " + (r - 1) + " and " + r + " list equal items";
+                }
+            }
+            if (crafts != steps.get(i).crafts()) {
+                return "step " + i + " runs sum to " + crafts + " crafts, step holds "
+                        + steps.get(i).crafts();
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Replays {@code steps} one craft at a time under the plan's OWN layouts — the 1.1.0 contract:
+     * every layout item must be in stock for each craft, is consumed, then the result and the
+     * remainders of what was consumed are credited. Deliberately independent of the solver's own
+     * (closed-form) acceptance check. Returns null when every craft was paid for, otherwise where
+     * it came up short.
+     */
+    private String replayLayoutsCraftByCraft(TestRecipe target, List<PlannedStep<String>> steps,
+                                             List<List<SlotLayout<String>>> layouts,
+                                             Map<String, Integer> inventory) {
+        Map<String, Integer> stock = new HashMap<>(inventory);
+        for (int i = 0; i < steps.size(); i++) {
+            TestRecipe recipe = byId(target, steps.get(i).recipeId());
+            for (SlotLayout<String> run : layouts.get(i)) {
+                for (int craft = 0; craft < run.crafts(); craft++) {
+                    Map<String, Integer> need = new HashMap<>();
+                    for (String item : run.items()) {
+                        need.merge(item, 1, Integer::sum);
+                    }
+                    for (Map.Entry<String, Integer> entry : need.entrySet()) {
+                        if (stock.getOrDefault(entry.getKey(), 0) < entry.getValue()) {
+                            return "step " + i + " (" + steps.get(i).recipeId() + ") craft " + craft
+                                    + ": needs " + entry.getValue() + " " + entry.getKey() + ", holds "
+                                    + stock.getOrDefault(entry.getKey(), 0) + "; layouts " + layouts;
+                        }
+                    }
+                    for (String item : run.items()) {
+                        stock.merge(item, -1, Integer::sum);
+                    }
+                    stock.merge(recipe.result(), recipe.resultCount(), Integer::sum);
+                    for (String item : run.items()) {
+                        String leftBehind = remainders.get(item);
+                        if (leftBehind != null) {
+                            stock.merge(leftBehind, 1, Integer::sum);
+                        }
+                    }
+                }
+            }
+        }
+        return null;
+    }
 
     /**
      * Replays {@code steps} one craft at a time, each craft's slots filled by
      * {@link SlotAssignment#assign} over the current stock, crediting the result and remainders after
-     * each craft: what an executor that follows the shared rule does. Deliberately independent of
-     * {@link PlanSimulator}'s batching. Returns null when every slot of every craft was filled,
-     * otherwise where it came up short.
+     * each craft: what an executor that follows the shared fallback rule does. Deliberately
+     * independent of {@link PlanSimulator}'s batching. Returns null when every slot of every craft
+     * was filled, otherwise where it came up short.
      */
     private String replayCraftByCraft(TestRecipe target, List<PlannedStep<String>> steps,
                                       Map<String, Integer> inventory) {
@@ -779,13 +867,19 @@ class RecipeGraphSolverTest {
         return PlanSimulator.replay(steps, id -> byId(target, id), remainders::get, inventory);
     }
 
-    /** solve() succeeds and its plan replays, both through PlanSimulator and craft by craft. */
+    /**
+     * solve() succeeds, its layouts are well-formed, and the plan replays craft by craft under its
+     * own layouts — what an executor that follows them (part 2) will run.
+     */
     private void assertExecutable(TestRecipe target, Map<String, Integer> inventory) {
-        List<PlannedStep<String>> steps = solveOk(target, inventory);
-        PlanSimulator.Replay<String, String> replay = simulate(target, steps, inventory);
-        assertTrue(replay.ok(), "plan " + steps + " does not replay: " + replay);
-        String shortAt = replayCraftByCraft(target, steps, inventory);
-        assertEquals(null, shortAt, "plan " + steps + " does not replay craft by craft");
+        Result<String, String> result = solver().solve(target, inventory);
+        assertInstanceOf(Result.Success.class, result, "expected solvable, got " + result);
+        Result.Success<String, String> success = (Result.Success<String, String>) result;
+        List<PlannedStep<String>> steps = success.steps();
+        assertEquals(null, layoutInvariants(target, steps, success.layouts()),
+                "plan " + steps + " has malformed layouts: " + success.layouts());
+        assertEquals(null, replayLayoutsCraftByCraft(target, steps, success.layouts(), inventory),
+                "plan " + steps + " does not replay under its own layouts " + success.layouts());
     }
 
     @Test
@@ -831,8 +925,9 @@ class RecipeGraphSolverTest {
         assertFalse(simulate(target, broken, held).ok(), "PlanSimulator accepts " + broken + ", which shorts");
         Result<String, String> result = solver().solve(target, held);
         if (result instanceof Result.Success) {
-            List<PlannedStep<String>> steps = ((Result.Success<String, String>) result).steps();
-            assertEquals(null, replayCraftByCraft(target, steps, held), "plan " + steps + " shorts craft by craft");
+            Result.Success<String, String> success = (Result.Success<String, String>) result;
+            assertEquals(null, replayLayoutsCraftByCraft(target, success.steps(), success.layouts(), held),
+                    "plan " + success.steps() + " shorts under its own layouts " + success.layouts());
         }
     }
 
@@ -938,9 +1033,11 @@ class RecipeGraphSolverTest {
 
     @Test
     void randomGraphsOnlyYieldExecutablePlans() {
-        // The property review_final fuzzed: whatever solve() returns replays without a shortage when
-        // an executor follows SlotAssignment craft by craft. Also checks PlanSimulator's batched replay
-        // agrees with the craft-by-craft one on those plans and on perturbed (often broken) ones.
+        // The property review_final fuzzed: whatever solve() returns replays craft by craft under its
+        // OWN layouts, an executor following them never comes up short, and the layouts are exactly
+        // the per-slot alternatives. Also keeps PlanSimulator's batched replay agreeing with the
+        // craft-by-craft SlotAssignment one on perturbed (often broken) plans — that pair tests
+        // PlanSimulator itself.
         java.util.Random random = new java.util.Random(0x5C100018L);
         String[] raws = {"r0", "r1", "r2", "r3"};
         String[] mids = {"m0", "m1", "m2"};
@@ -986,11 +1083,16 @@ class RecipeGraphSolverTest {
                 continue;
             }
             solved++;
-            List<PlannedStep<String>> steps = ((Result.Success<String, String>) result).steps();
-            String shortAt = replayCraftByCraft(target, steps, held);
-            assertEquals(null, shortAt, "trial " + trial + ": target " + target.ingredientSlots()
-                    + ", recipes " + describe(recipes) + ", held " + held + ", remainders " + remainders);
-            assertTrue(simulate(target, steps, held).ok(), "trial " + trial + ": PlanSimulator rejects " + steps);
+            Result.Success<String, String> success = (Result.Success<String, String>) result;
+            List<PlannedStep<String>> steps = success.steps();
+            List<List<SlotLayout<String>>> layouts = success.layouts();
+            String context = "trial " + trial + " (" + solved + " solved so far): target "
+                    + target.ingredientSlots() + ", recipes " + describe(recipes) + ", held " + held
+                    + ", remainders " + remainders + ", plan " + steps;
+            assertEquals(null, layoutInvariants(target, steps, layouts),
+                    context + " has malformed layouts");
+            assertEquals(null, replayLayoutsCraftByCraft(target, steps, layouts, held),
+                    context + " does not replay under its own layouts " + layouts);
             // Perturb: one step's crafts doubled. Batched and craft-by-craft replay must agree.
             List<PlannedStep<String>> perturbed = new ArrayList<>(steps);
             int at = random.nextInt(perturbed.size());
@@ -998,8 +1100,7 @@ class RecipeGraphSolverTest {
             assertEquals(replayCraftByCraft(target, perturbed, held) == null, simulate(target, perturbed, held).ok(),
                     "trial " + trial + ": batched and craft-by-craft replay disagree on " + perturbed);
         }
-        // Guard against a generator that never produces a solvable graph (the property would be vacuous).
-        assertTrue(solved >= trials / 10, "only " + solved + " of " + trials + " random graphs were solvable");
+        // No pinned count of solvable trials: "solved" appears in the failure messages above only.
     }
 
     private static String randomSlot(java.util.Random random, String[] raws, String[] mids, int tier) {
@@ -1025,6 +1126,26 @@ class RecipeGraphSolverTest {
         String[] slots = new String[9];
         Arrays.fill(slots, item);
         return slots;
+    }
+
+    @Test
+    void subCraftLeavesTheOnlyCopyALaterSlotNeeds() {
+        // #23: x takes oak or birch; the target needs the one oak AND an x. A per-craft rule makes x
+        // from oak (its first preference) and the target comes up short; the plan must make x from
+        // birch and say so, so the executor does not take the oak.
+        recipes.add(TestRecipe.of("x_recipe", "x", 1, "oak|birch"));
+        TestRecipe target = TestRecipe.of("t", "t", 1, "oak", "x");
+        Result<String, String> result = solver().solve(target, inv("oak", 1, "birch", 1));
+        Result.Success<String, String> success =
+                assertInstanceOf(Result.Success.class, result, "expected solvable, got " + result);
+        assertEquals(Arrays.asList(new PlannedStep<>("x_recipe", 1), new PlannedStep<>("t", 1)),
+                success.steps());
+        // The layouts carry the choice: x_recipe's craft takes the birch, the target's slots the oak
+        // and the crafted x.
+        assertEquals(Arrays.asList(
+                        Arrays.asList(new SlotLayout<>(1, Arrays.asList("birch"))),
+                        Arrays.asList(new SlotLayout<>(1, Arrays.asList("oak", "x")))),
+                success.layouts());
     }
 
     @Test

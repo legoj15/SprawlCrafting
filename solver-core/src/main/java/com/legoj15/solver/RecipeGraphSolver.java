@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.function.Function;
 import java.util.function.UnaryOperator;
 
@@ -36,13 +37,16 @@ import java.util.function.UnaryOperator;
  *       per slot in slot order — the pre-batching planner exactly — so a recipe whose slots
  *       compete for shared stock (oak-or-birch, oak, oak-or-birch) is never lost to the batching
  *       order.</li>
- *   <li>Executable as run: every plan {@link #solve} returns replays through {@link PlanSimulator},
- *       which fills each craft's slots with {@link SlotAssignment} — the same rule the executors use
- *       to pick inventory stacks — one craft at a time. A pass whose plan does not replay is
- *       discarded, and an exact pass that applies that replay as it plans gets a turn (see
- *       {@code plan}). A plan therefore never depends on inventory layout; what the rule cannot do is
- *       look ahead, so a sub-craft whose slot prefers an item a later step needs (and holds the only
- *       copy of) takes it, and such a target fails rather than stalling mid-job.</li>
+ *   <li>Executable as run: every plan {@link #solve} returns carries its own per-slot item choice —
+ *       {@link Result.Success#layouts()} fixes, for each step, the item every craft puts in every
+ *       non-empty slot, as the pass that built the step decided — and a plan is accepted only when it
+ *       replays under those fixed layouts (a plain count check, see {@code replays}). The executors
+ *       follow the layouts and fall back to {@link SlotAssignment} only when the inventory no longer
+ *       matches, so a sub-craft whose slot prefers an item a later step needs (and holds the only
+ *       copy of) is told to take the other alternative instead of eating it (#23). Only the exact
+ *       pass still fills its slots with {@link SlotAssignment} as it plans (it is the contention
+ *       fallback), so that rule's inability to look ahead limits the exact pass alone; a target it
+ *       cannot lay out fails rather than stalling mid-job.</li>
  *   <li>Stock first: items already (virtually) in the inventory satisfy a slot before any
  *       sub-craft is planned.</li>
  *   <li>Each ingredient slot lists its acceptable alternatives in preference order; stock is
@@ -113,16 +117,68 @@ public final class RecipeGraphSolver<R, K> {
     /** Outcome of a solve: either an executable plan or a best-effort set of missing items. */
     public interface Result<R, K> {
 
-        /** An executable plan: the ordered, merged list of steps to run. */
+        /**
+         * An executable plan: the ordered, merged list of steps to run, each with the per-slot item
+         * choice its pass decided.
+         */
         final class Success<R, K> implements Result<R, K> {
             private final List<PlannedStep<R>> steps;
+            private final List<List<SlotLayout<K>>> layouts;
 
+            /**
+             * A plan whose steps carry no layout: an executor falls back to {@link SlotAssignment}
+             * for every slot of every craft.
+             */
             public Success(List<PlannedStep<R>> steps) {
                 this.steps = steps;
+                this.layouts = new ArrayList<>(Collections.<List<SlotLayout<K>>>nCopies(
+                        steps.size(), Collections.<SlotLayout<K>>emptyList()));
+            }
+
+            /**
+             * @param steps   the ordered steps to run
+             * @param layouts per step (aligned 1:1 with {@code steps}), the step's {@link SlotLayout}
+             *                runs: consecutive crafts with identical layouts compressed, so adjacent
+             *                runs never list equal items, and each step's runs sum to its crafts
+             * @throws IllegalArgumentException when the two lists are not aligned 1:1 or a step's
+             *                                  runs break those invariants
+             */
+            public Success(List<PlannedStep<R>> steps, List<List<SlotLayout<K>>> layouts) {
+                if (layouts.size() != steps.size()) {
+                    throw new IllegalArgumentException("layouts must align 1:1 with steps: "
+                            + layouts.size() + " layouts for " + steps.size() + " steps");
+                }
+                for (int i = 0; i < steps.size(); i++) {
+                    List<SlotLayout<K>> runs = layouts.get(i);
+                    long crafts = 0;
+                    for (int r = 0; r < runs.size(); r++) {
+                        crafts += runs.get(r).crafts();
+                        if (r > 0 && Objects.equals(runs.get(r).items(), runs.get(r - 1).items())) {
+                            throw new IllegalArgumentException("step " + i + " runs " + (r - 1) + " and "
+                                    + r + " list equal items: consecutive runs must be merged");
+                        }
+                    }
+                    if (crafts != steps.get(i).crafts()) {
+                        throw new IllegalArgumentException("step " + i + " runs sum to " + crafts
+                                + " crafts, step holds " + steps.get(i).crafts());
+                    }
+                }
+                this.steps = steps;
+                this.layouts = layouts;
             }
 
             public List<PlannedStep<R>> steps() {
                 return steps;
+            }
+
+            /**
+             * Per step (aligned 1:1 with {@link #steps()}), the step's layout runs in craft order:
+             * run {@code r} says the next {@code crafts()} crafts put {@code items().get(i)} in
+             * non-empty slot {@code i}. An empty list per step means "no layout": an executor uses
+             * {@link SlotAssignment}.
+             */
+            public List<List<SlotLayout<K>>> layouts() {
+                return layouts;
             }
         }
 
@@ -253,26 +309,182 @@ public final class RecipeGraphSolver<R, K> {
         if (plan.steps == null) {
             return new Result.Failure<>(plan.missing, plan.budgetExceeded);
         }
-        List<PlannedStep<R>> steps = new ArrayList<>(plan.steps.size());
-        for (Step<R, K> step : plan.steps) {
-            steps.add(new PlannedStep<>(step.recipe.id(), (int) step.crafts));
-        }
-        return new Result.Success<>(mergeAdjacent(steps));
+        return mergeAdjacent(plan.steps);
     }
 
     /**
-     * Up to three planning passes over {@code held}, each result accepted only if
-     * {@link PlanSimulator} replays it without a shortage (the executors follow the same
-     * {@link SlotAssignment} rule the replay does):
+     * Collapses consecutive identical recipe ids into one step (a {@link PlannedStep} holds an int,
+     * so a pair whose sum overflows stays two steps), concatenating their layout runs — a boundary
+     * pair that lists equal items is one run, or {@link Result.Success} would reject the merge.
+     */
+    private static <R, K> Result<R, K> mergeAdjacent(List<Step<R, K>> plan) {
+        List<PlannedStep<R>> steps = new ArrayList<>(plan.size());
+        List<List<SlotLayout<K>>> layouts = new ArrayList<>(plan.size());
+        for (Step<R, K> step : plan) {
+            int last = steps.size() - 1;
+            if (last >= 0 && steps.get(last).recipeId().equals(step.recipe.id())
+                    && (long) steps.get(last).crafts() + step.crafts <= Integer.MAX_VALUE) {
+                steps.set(last, steps.get(last).withCrafts(steps.get(last).crafts() + (int) step.crafts));
+                layouts.set(last, concatRuns(layouts.get(last), step.runs));
+            } else {
+                steps.add(new PlannedStep<>(step.recipe.id(), (int) step.crafts));
+                layouts.add(step.runs);
+            }
+        }
+        return new Result.Success<>(steps, layouts);
+    }
+
+    /** Two step's runs concatenated, merging a boundary pair that lists equal items. */
+    private static <K> List<SlotLayout<K>> concatRuns(List<SlotLayout<K>> first, List<SlotLayout<K>> second) {
+        if (first.isEmpty()) {
+            return second;
+        }
+        if (second.isEmpty()) {
+            return first;
+        }
+        List<SlotLayout<K>> out = new ArrayList<>(first.size() + second.size());
+        out.addAll(first);
+        SlotLayout<K> boundary = second.get(0);
+        SlotLayout<K> tail = out.get(out.size() - 1);
+        if (tail.items().equals(boundary.items())) {
+            out.set(out.size() - 1, new SlotLayout<>(tail.crafts() + boundary.crafts(), boundary.items()));
+            out.addAll(second.subList(1, second.size()));
+        } else {
+            out.addAll(second);
+        }
+        return out;
+    }
+
+    /**
+     * One satisfied batch's consumption as layout runs. Each group's units (its per-item takes, in
+     * preference order) form one sequence; unit {@code u} of a group with {@code count} slots goes
+     * to craft {@code u / count}, the group's {@code (u % count)}-th slot — every slot of a group
+     * lists the same alternatives, so any consumed item fits any of them. Crafts with identical
+     * full layouts compress into one run.
+     */
+    private static <K> List<SlotLayout<K>> layoutRuns(long crafts, List<Group<K>> groups, List<Map<K, Long>> use) {
+        int slotCount = 0;
+        for (Group<K> group : groups) {
+            slotCount += group.slotIndexes.size();
+        }
+        // Per group, its consumed items as contiguous segments (preference order): segment i ends,
+        // exclusive, at ends[i] units into the group's block.
+        List<List<K>> segmentItems = new ArrayList<>(groups.size());
+        List<long[]> segmentEnds = new ArrayList<>(groups.size());
+        for (int g = 0; g < groups.size(); g++) {
+            Group<K> group = groups.get(g);
+            List<K> items = new ArrayList<>();
+            long[] ends = new long[group.alternatives.size()];
+            long at = 0;
+            for (K item : group.alternatives) {
+                Long units = use.get(g).get(item);
+                long n = units == null ? 0 : units;
+                if (n > 0) {
+                    at += n;
+                    ends[items.size()] = at;
+                    items.add(item);
+                }
+            }
+            segmentItems.add(items);
+            segmentEnds.add(Arrays.copyOf(ends, items.size()));
+        }
+        // A craft's layout can only differ from the previous craft's where a group's item boundary
+        // falls inside the craft's own unit block or straddles the two: with a boundary at unit p of
+        // a count-slot group, that is craft p/count or the one after. Inspecting those candidates
+        // (plus the first craft) finds every change without walking all crafts — a 6561-craft batch
+        // of one-item groups is still a single run.
+        TreeSet<Long> candidates = new TreeSet<>();
+        candidates.add(0L);
+        for (int g = 0; g < groups.size(); g++) {
+            long count = groups.get(g).count;
+            long[] ends = segmentEnds.get(g);
+            for (int i = 0; i + 1 < ends.length; i++) {
+                candidates.add(ends[i] / count);
+                candidates.add(ends[i] / count + 1);
+            }
+        }
+        List<SlotLayout<K>> runs = new ArrayList<>();
+        long start = 0;
+        List<K> layout = layoutAt(0, groups, segmentItems, segmentEnds, slotCount);
+        for (long c : candidates) {
+            if (c <= start) {
+                continue;
+            }
+            if (c >= crafts) {
+                break;
+            }
+            List<K> at = layoutAt(c, groups, segmentItems, segmentEnds, slotCount);
+            if (!at.equals(layout)) {
+                runs.add(new SlotLayout<>((int) (c - start), layout));
+                start = c;
+                layout = at;
+            }
+        }
+        runs.add(new SlotLayout<>((int) (crafts - start), layout));
+        return runs;
+    }
+
+    /** The full slot layout of craft {@code c}: every group's block of units, laid on its slots. */
+    private static <K> List<K> layoutAt(long c, List<Group<K>> groups, List<List<K>> segmentItems,
+                                        List<long[]> segmentEnds, int slotCount) {
+        List<K> items = new ArrayList<>(Collections.<K>nCopies(slotCount, null));
+        for (int g = 0; g < groups.size(); g++) {
+            Group<K> group = groups.get(g);
+            int count = (int) group.count;
+            long[] ends = segmentEnds.get(g);
+            List<K> segItems = segmentItems.get(g);
+            long unit = c * count;
+            for (int j = 0; j < count; j++, unit++) {
+                int seg = 0;
+                while (seg + 1 < ends.length && unit >= ends[seg]) {
+                    seg++;
+                }
+                items.set(group.slotIndexes.get(j), segItems.get(seg));
+            }
+        }
+        return items;
+    }
+
+    /**
+     * One exact-pass replay's chunks as layout runs. Every craft of a chunk was laid out the same
+     * way by construction, so a chunk is a run; a chunk boundary that repeats the previous
+     * assignment merges, keeping the runs canonical (never two adjacent with equal items).
+     */
+    @SuppressWarnings("unchecked")
+    private static <K> List<SlotLayout<K>> chunkRuns(List<PlanSimulator.Chunk<K>> chunks) {
+        List<SlotLayout<K>> runs = new ArrayList<>(chunks.size());
+        for (PlanSimulator.Chunk<K> chunk : chunks) {
+            int repeat = (int) chunk.repeat;
+            List<K> items = new ArrayList<>(chunk.chosen.length);
+            for (Object item : chunk.chosen) {
+                items.add((K) item);
+            }
+            int last = runs.size() - 1;
+            if (last >= 0 && runs.get(last).items().equals(items)) {
+                SlotLayout<K> tail = runs.get(last);
+                runs.set(last, new SlotLayout<>(tail.crafts() + repeat, items));
+            } else {
+                runs.add(new SlotLayout<>(repeat, items));
+            }
+        }
+        return runs;
+    }
+
+    /**
+     * Up to three planning passes over {@code held}, each result accepted only if it replays from
+     * {@code held} under the per-slot layouts the pass itself decided (see {@link #replays}; the
+     * executors follow those layouts, so that replay — not a {@link SlotAssignment} one — is the
+     * contract a plan must meet):
      * <ol>
      *   <li>batched: each slot group's whole demand at once (fast, the usual answer);</li>
      *   <li>unitwise: one unit per slot in slot order, the pre-batching planner, so a recipe whose
      *       slots compete for shared stock in a way batching loses is still found;</li>
      *   <li>exact: only when a pass's plan was rejected or a pass came up short on an item another
-     *       slot group had taken (contention). Every step's consumption is the replay itself, applied
-     *       at the moment the step is emitted, so stock a later step counted on is never "reserved"
-     *       in the model while an earlier step physically eats it (#10), and slots are filled most
-     *       constrained first (#18).</li>
+     *       slot group had taken (contention). Every step's consumption is a {@link PlanSimulator}
+     *       replay applied at the moment the step is emitted, so stock a later step counted on is
+     *       never "reserved" in the model while an earlier step physically eats it (#10), and slots
+     *       are filled most constrained first (#18). This pass still decides items with
+     *       {@link SlotAssignment}, which cannot look ahead — the layouts carry its choice.</li>
      * </ol>
      *
      * @param capInt cap a batch at {@link Integer#MAX_VALUE} crafts (what a {@link PlannedStep} holds)
@@ -320,25 +532,100 @@ public final class RecipeGraphSolver<R, K> {
         return new Plan<>(null, missing, noCleanFailure && anyBudget);
     }
 
-    /** Whether {@code steps} replay from {@code held} without any slot of any craft coming up empty. */
+    /**
+     * Whether {@code steps} replay from {@code held} under their own recorded layouts: every craft's
+     * items must be in stock, and every step is credited its result and the remainders of what it
+     * consumed (the same netting rule {@link PlanSimulator#run} applies). The plan already fixed
+     * which item each slot takes, so this is a count check, not a {@link SlotAssignment} replay.
+     */
     private boolean replays(List<Step<R, K>> steps, Map<K, Long> held) {
         UndoMap<K, Long> inv = new UndoMap<>(held);
         for (Step<R, K> step : steps) {
-            if (PlanSimulator.run(step.recipe, step.crafts, inv, remainder, true).isShort()) {
-                return false;
+            for (SlotLayout<K> run : step.runs) {
+                if (!applyRun(step.recipe, run, inv)) {
+                    return false;
+                }
             }
         }
         return true;
     }
 
-    /** One planned batch, with the recipe itself (for replay) and a long count (uncapped passes). */
+    /**
+     * Applies one run of crafts of {@code recipe} to {@code inv} under run's fixed layout, or
+     * returns false (nothing applied) when a craft would come up short. Every craft of the run uses
+     * and is credited the same amounts, so an item's stock moves linearly craft by craft and only
+     * the first or the last craft of the run can be the binding one — a closed-form check, exact
+     * even for a run that feeds itself (its result or a remainder among its own layout items),
+     * without walking the crafts one at a time. Use and credit are netted per item before applying,
+     * so an item a craft both consumes and is credited is not inflated (the same rule
+     * {@link PlanSimulator#run} nets by).
+     */
+    private boolean applyRun(RecipeInfo<R, K> recipe, SlotLayout<K> run, UndoMap<K, Long> inv) {
+        Map<K, Long> use = new LinkedHashMap<>();
+        for (K item : run.items()) {
+            use.merge(item, 1L, Long::sum);
+        }
+        Map<K, Long> credit = new LinkedHashMap<>();
+        if (recipe.result() != null && recipe.resultCount() > 0) {
+            credit.merge(recipe.result(), (long) recipe.resultCount(), Long::sum);
+        }
+        if (remainder != null) {
+            for (Map.Entry<K, Long> entry : use.entrySet()) {
+                K leftBehind = remainder.apply(entry.getKey());
+                if (leftBehind != null) {
+                    credit.merge(leftBehind, entry.getValue(), Long::sum);
+                }
+            }
+        }
+        Set<K> items = new LinkedHashSet<>(use.keySet());
+        items.addAll(credit.keySet());
+        long crafts = run.crafts();
+        for (K item : items) {
+            long perUse = use.getOrDefault(item, 0L);
+            long perCredit = credit.getOrDefault(item, 0L);
+            long have = count(inv, item);
+            long net = perCredit - perUse; // stock change per craft (negative: consumed)
+            if (net >= 0) {
+                if (have < perUse) { // stock only grows: the first craft is the binding one
+                    return false;
+                }
+            } else if (have - satMul(crafts - 1, perUse - perCredit) < perUse) {
+                // Stock falls every craft: the last craft is the binding one.
+                return false;
+            }
+        }
+        for (K item : items) {
+            long net = credit.getOrDefault(item, 0L) - use.getOrDefault(item, 0L);
+            if (net == 0) {
+                continue;
+            }
+            long have = count(inv, item);
+            long after = net > 0
+                    ? satAdd(have, satMul(crafts, net))
+                    : have - satMul(crafts, -net); // the check above keeps this non-negative
+            if (after <= 0) {
+                inv.remove(item);
+            } else {
+                inv.put(item, after);
+            }
+        }
+        return true;
+    }
+
+    /**
+     * One planned batch, with the recipe itself (for replay), a long count (uncapped passes) and the
+     * per-slot item runs the pass that built the step decided (never empty when the step was
+     * recorded: even a recipe whose slots all repeat one item holds a single run).
+     */
     private static final class Step<R, K> {
         final RecipeInfo<R, K> recipe;
         final long crafts;
+        final List<SlotLayout<K>> runs;
 
-        Step(RecipeInfo<R, K> recipe, long crafts) {
+        Step(RecipeInfo<R, K> recipe, long crafts, List<SlotLayout<K>> runs) {
             this.recipe = recipe;
             this.crafts = crafts;
+            this.runs = runs;
         }
     }
 
@@ -467,10 +754,16 @@ public final class RecipeGraphSolver<R, K> {
         }
     }
 
-    /** One ingredient slot of a recipe (or a set of identical ones) and how many it stands for. */
+    /**
+     * One ingredient slot of a recipe (or a set of identical ones) and how many it stands for.
+     * {@link #slotIndexes} maps the group back to its slots' positions in the recipe's non-empty
+     * slot order (what {@link PlanSimulator#nonEmptySlots} returns), so a group's consumption can
+     * be laid out per craft and per slot.
+     */
     private static final class Group<T> {
         final List<T> alternatives;
         final List<T> craftable;
+        final List<Integer> slotIndexes = new ArrayList<>();
         long count;
 
         Group(List<T> alternatives, List<T> craftable) {
@@ -548,6 +841,7 @@ public final class RecipeGraphSolver<R, K> {
             List<List<K>> craftableSlots = recipe.craftableIngredientSlots();
             List<Group<K>> groups = new ArrayList<>();
             Map<List<List<K>>, Group<K>> byKey = new HashMap<>();
+            int nonEmpty = 0;
             for (int s = 0; s < slots.size(); s++) {
                 List<K> slot = slots.get(s);
                 if (slot.isEmpty()) {
@@ -569,6 +863,7 @@ public final class RecipeGraphSolver<R, K> {
                     }
                 }
                 group.count++;
+                group.slotIndexes.add(nonEmpty++);
             }
             groupCache.put(recipe, groups);
             return groups;
@@ -612,12 +907,20 @@ public final class RecipeGraphSolver<R, K> {
                 int invMark = inv.mark();
                 int stepMark = steps == null ? 0 : steps.size();
                 Map<K, Long> consumed = new LinkedHashMap<>();
+                // What each group took, per item: the batched/unitwise pass's own per-slot choice,
+                // recorded per craft as the step's layout (merged {@code consumed} still drives
+                // remainder crediting, where groups sharing an item must be summed).
+                List<Map<K, Long>> groupUse = new ArrayList<>(Collections.<Map<K, Long>>nCopies(
+                        groups.size(), null));
+                for (int i = 0; i < groups.size(); i++) {
+                    groupUse.set(i, new LinkedHashMap<K, Long>());
+                }
                 int shortGroup = -1;
                 long supplied = 0;
                 for (int i = 0; i < groups.size(); i++) {
                     Group<K> group = groups.get(i);
                     long need = satMul(size, group.count);
-                    long got = satisfySlot(group, need, inv, steps, crafting, depth, consumed);
+                    long got = satisfySlot(group, need, inv, steps, crafting, depth, consumed, groupUse.get(i));
                     if (got < need) {
                         missing.add(group.alternatives.get(0));
                         if (!contention) {
@@ -636,7 +939,7 @@ public final class RecipeGraphSolver<R, K> {
                 }
                 if (shortGroup < 0) {
                     if (steps != null) {
-                        steps.add(new Step<>(recipe, size));
+                        steps.add(new Step<>(recipe, size, layoutRuns(size, groups, groupUse)));
                     }
                     addTo(inv, recipe.result(), satMul(size, recipe.resultCount()));
                     // Remainders of consumed items physically reappear when this step executes.
@@ -675,6 +978,8 @@ public final class RecipeGraphSolver<R, K> {
          * Gathers up to {@code need} units for one slot group: stock across the alternatives in
          * preference order, then crafts the rest from the craftable alternatives in order.
          *
+         * @param use this group's own consumption, per item (the step's layout); {@code consumed} is
+         *            the merged cross-group total that drives remainder crediting
          * @return units consumed (recorded in {@code consumed} for remainder crediting)
          */
         private long satisfySlot(Group<K> group,
@@ -683,13 +988,18 @@ public final class RecipeGraphSolver<R, K> {
                                  List<Step<R, K>> steps,
                                  Set<K> crafting,
                                  int depth,
-                                 Map<K, Long> consumed) {
+                                 Map<K, Long> consumed,
+                                 Map<K, Long> use) {
             long got = 0;
             for (K item : group.alternatives) {
                 if (got >= need) {
                     return got;
                 }
-                got += taken(group, item, take(item, need - got, inv, consumed));
+                long n = take(item, need - got, inv, consumed);
+                if (n > 0) {
+                    use.merge(item, n, RecipeGraphSolver::satAdd);
+                }
+                got += taken(group, item, n);
             }
             // Only craft an alternative whose crafted (bare) form would actually satisfy the slot:
             // a filled-bucket alternative is matchable from stock above but never manufactured here
@@ -699,7 +1009,11 @@ public final class RecipeGraphSolver<R, K> {
                     break;
                 }
                 if (produce(item, need - got, inv, steps, crafting, depth + 1) > 0) {
-                    got += taken(group, item, take(item, need - got, inv, consumed));
+                    long n = take(item, need - got, inv, consumed);
+                    if (n > 0) {
+                        use.merge(item, n, RecipeGraphSolver::satAdd);
+                    }
+                    got += taken(group, item, n);
                 }
             }
             return got;
@@ -738,9 +1052,11 @@ public final class RecipeGraphSolver<R, K> {
                 int stepMark = steps == null ? 0 : steps.size();
                 long complete = 0;
                 boolean done = false;
+                List<PlanSimulator.Chunk<K>> chunks = new ArrayList<>();
                 for (int round = 0; ; round++) {
                     int replayMark = inv.mark();
-                    PlanSimulator.Batch<K> replay = PlanSimulator.run(recipe, size, inv, remainder, false);
+                    chunks = new ArrayList<>();
+                    PlanSimulator.Batch<K> replay = PlanSimulator.run(recipe, size, inv, remainder, false, chunks);
                     if (!replay.isShort()) {
                         done = true;
                         break;
@@ -756,7 +1072,9 @@ public final class RecipeGraphSolver<R, K> {
                 }
                 if (done) {
                     if (steps != null) {
-                        steps.add(new Step<>(recipe, size));
+                        // The chunks ARE the layout: each is a run of crafts SlotAssignment laid out
+                        // identically, so the plan carries the choice the exact pass made.
+                        steps.add(new Step<>(recipe, size, chunkRuns(chunks)));
                     }
                     return size;
                 }
@@ -1195,19 +1513,5 @@ public final class RecipeGraphSolver<R, K> {
     /** Ceiling division of a non-negative count by a positive divisor, without overflow. */
     static long ceilDiv(long a, long b) {
         return a / b + (a % b == 0 ? 0 : 1);
-    }
-
-    private List<PlannedStep<R>> mergeAdjacent(List<PlannedStep<R>> steps) {
-        List<PlannedStep<R>> merged = new ArrayList<>();
-        for (PlannedStep<R> step : steps) {
-            int last = merged.size() - 1;
-            if (last >= 0 && merged.get(last).recipeId().equals(step.recipeId())
-                    && (long) merged.get(last).crafts() + step.crafts() <= Integer.MAX_VALUE) {
-                merged.set(last, merged.get(last).withCrafts(merged.get(last).crafts() + step.crafts()));
-            } else {
-                merged.add(step);
-            }
-        }
-        return merged;
     }
 }
