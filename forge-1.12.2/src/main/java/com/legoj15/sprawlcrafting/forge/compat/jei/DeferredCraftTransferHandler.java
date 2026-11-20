@@ -320,16 +320,18 @@ public class DeferredCraftTransferHandler<C extends Container> implements IRecip
                 recipeLayout.getItemStacks().getGuiIngredients();
         // Grouped by full stack identity (item + meta + NBT), not ItemKey: fluid-in-NBT buckets
         // must neither match an empty same-(item, meta) bucket nor merge with a different fluid's
-        // bucket into one drag. Templates are copies of the matched INVENTORY stack, so the pick
+        // bucket into one drag. Templates are copies of the matched INVENTORY stack, so the drag
         // phase below is guaranteed to find them again.
         List<ItemStack> dragTemplates = new ArrayList<ItemStack>();
         List<List<Integer>> dragSlotGroups = new ArrayList<List<Integer>>();
-        // The inventory's distinct stack identities (item + meta + NBT) and how many of each it holds.
+        // The inventory's distinct usable stack identities (item + meta + NBT) and how many of each
+        // it holds. Damaged, enchanted and renamed stacks are left out, as the planner leaves them
+        // out: they differ in meta or NBT, so the drag below never touches them either.
         List<ItemStack> identities = new ArrayList<ItemStack>();
         Map<Integer, Integer> stock = new HashMap<Integer, Integer>();
         for (int inv : invSlotIndices) {
             ItemStack inSlot = container.getSlot(inv).getStack();
-            if (inSlot.isEmpty()) {
+            if (inSlot.isEmpty() || !CraftExecutor.usableAsIngredient(inSlot)) {
                 continue;
             }
             int id = identities.size();
@@ -370,12 +372,10 @@ public class DeferredCraftTransferHandler<C extends Container> implements IRecip
                 continue;
             }
             List<Integer> alternatives = new ArrayList<Integer>();
-            for (int pass = 0; pass < 3 && (pass < 2 || alternatives.isEmpty()); pass++) {
-                for (int i = 0; i < identities.size(); i++) {
-                    if (!alternatives.contains(Integer.valueOf(i)) && passHit(pass, identities.get(i), options)) {
-                        alternatives.add(Integer.valueOf(i));
-                    }
-                }
+            addAlternatives(alternatives, 0, options, identities);
+            addAlternatives(alternatives, 1, options, identities);
+            if (alternatives.isEmpty()) {
+                addAlternatives(alternatives, 2, options, identities);
             }
             if (alternatives.isEmpty()) {
                 return false;
@@ -386,7 +386,7 @@ public class DeferredCraftTransferHandler<C extends Container> implements IRecip
 
         // Which identity fills which cell is the planner's own rule (SlotAssignment: most
         // constrained cell first, non-scarce alternative, augmenting re-route), so no two cells
-        // count on one lone stack and the layout never depends on inventory order. No full layout
+        // count on one lone stack and a layout is found whenever one exists. No full layout
         // means the caller hands the craft to the engine (on a server without the mod: its
         // missing-mod notice; the grid was already swept into the inventory, so nothing is lost).
         List<Integer> chosen = SlotAssignment.assign(cellAlternatives, stock);
@@ -469,28 +469,32 @@ public class DeferredCraftTransferHandler<C extends Container> implements IRecip
         return true;
     }
 
-    /** Whether {@code inSlot} matches any of {@code options} under the drag-fill's {@code pass} (0 exact, 1 tag-less, 2 legacy). */
-    private static boolean passHit(int pass, ItemStack inSlot, List<ItemStack> options) {
-        if (inSlot.isEmpty()) {
-            return false;
-        }
+    /**
+     * Appends to {@code alternatives}, in the recipe's option order (the planner's preference
+     * order), every identity not yet listed that matches an option under {@code pass}: 0 exact,
+     * 1 (item, meta) against a tag-less option, 2 legacy (item, meta) against any option.
+     */
+    private static void addAlternatives(List<Integer> alternatives, int pass, List<ItemStack> options,
+                                        List<ItemStack> identities) {
         for (ItemStack option : options) {
             if (option.isEmpty()) {
                 continue;
             }
-            boolean hit;
-            if (pass == 0) {
-                hit = sameStackIdentity(inSlot, option);
-            } else if (pass == 1) {
-                hit = !option.hasTagCompound() && ItemKey.of(inSlot).equals(ItemKey.of(option));
-            } else {
-                hit = ItemKey.of(inSlot).equals(ItemKey.of(option));
-            }
-            if (hit) {
-                return true;
+            for (int i = 0; i < identities.size(); i++) {
+                ItemStack identity = identities.get(i);
+                boolean hit;
+                if (pass == 0) {
+                    hit = sameStackIdentity(identity, option);
+                } else if (pass == 1) {
+                    hit = !option.hasTagCompound() && ItemKey.of(identity).equals(ItemKey.of(option));
+                } else {
+                    hit = ItemKey.of(identity).equals(ItemKey.of(option));
+                }
+                if (hit && !alternatives.contains(Integer.valueOf(i))) {
+                    alternatives.add(Integer.valueOf(i));
+                }
             }
         }
-        return false;
     }
 
     /** Same item, same metadata, same NBT — count-independent (the drag-fill's match identity). */
