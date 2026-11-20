@@ -52,7 +52,7 @@ public final class CraftExecutor {
 
     /** Outcome of one craft. Java 8 stand-in for the modern sealed interface. */
     public static final class CraftResult {
-        public enum Kind { SUCCESS, MISSING_INGREDIENT, RECIPE_GONE }
+        public enum Kind { SUCCESS, MISSING_INGREDIENT, RECIPE_GONE, NO_ROOM }
 
         private final Kind kind;
         private final ItemStack crafted;
@@ -77,6 +77,10 @@ public final class CraftExecutor {
             return new CraftResult(Kind.RECIPE_GONE, ItemStack.EMPTY, null, false, 0);
         }
 
+        static CraftResult noRoom(ITextComponent what) {
+            return new CraftResult(Kind.NO_ROOM, ItemStack.EMPTY, what, false, 0);
+        }
+
         public Kind kind() {
             return kind;
         }
@@ -86,7 +90,10 @@ public final class CraftExecutor {
             return crafted;
         }
 
-        /** The vanished ingredient's name ({@link Kind#MISSING_INGREDIENT}). */
+        /**
+         * The item this failure names: the vanished ingredient ({@link Kind#MISSING_INGREDIENT}) or
+         * the output that had no room ({@link Kind#NO_ROOM}).
+         */
         public ITextComponent missing() {
             return missing;
         }
@@ -142,10 +149,16 @@ public final class CraftExecutor {
      * <p>{@code layout} is the plan's per-slot item choice for this craft
      * ({@link CraftJob#currentCraftLayout()}); null or a layout the live pool can no longer honor falls
      * back to {@link SlotAssignment}.
+     *
+     * <p>{@code refuseSpill} is the bulk-step rule: when true, a craft whose result or remainders would
+     * not all fit (inventory — including slots this craft's own consumption frees — plus an open
+     * station's storage; see {@link #spilledOutput}) is refused as {@link CraftResult.Kind#NO_ROOM}
+     * before anything moves, instead of dropping the overflow at the player's feet thousands of times
+     * per tick. A paced step passes false: a few items at the feet is fine and expected there.
      */
     public static CraftResult craftOnce(ServerPlayerEntity player, ResourceLocation recipeId,
                                         ProducedLedger<Item, LedgerVariant> ledger, boolean stationPlanned,
-                                        List<Item> layout) {
+                                        List<Item> layout, boolean refuseSpill) {
         // Phase 1: look the recipe up and match every ingredient slot to an inventory slot (or a
         // crafting station's storage) without mutating, so a shortfall discovered at slot N leaves
         // slots 1..N-1 untouched.
@@ -153,15 +166,21 @@ public final class CraftExecutor {
         if (plan == null) {
             return CraftResult.recipeGone();
         }
-        return applyOnce(player, plan);
+        return applyOnce(player, plan, refuseSpill);
     }
 
     /** {@link #craftOnce} from an already {@link #prepare}d plan (the batch's fallback reuses its own). */
-    private static CraftResult applyOnce(ServerPlayerEntity player, Plan plan) {
+    private static CraftResult applyOnce(ServerPlayerEntity player, Plan plan, boolean refuseSpill) {
         ProducedLedger<Item, LedgerVariant> ledger = plan.ledger;
         Assignment assignment = plan.assignment;
         if (assignment.missing != null) {
             return CraftResult.missing(describe(assignment.missing));
+        }
+        if (refuseSpill) {
+            ITextComponent spilled = spilledOutput(player, plan);
+            if (spilled != null) {
+                return CraftResult.noRoom(spilled);
+            }
         }
         PlayerInventory inventory = player.inventory;
         StationStorage station = plan.station;
@@ -305,10 +324,12 @@ public final class CraftExecutor {
      * item; any case that cannot be proven — a fallback pick, a ledger-held candidate stack,
      * remainders with no station open, output that would not fit — runs a single craft (k = 1) on
      * the plan already prepared, with exactly craftOnce's result, message and partial progress.
+     * That fallback (and the batch's own short-draw fallback into {@link #craftOnce}) applies the
+     * {@code refuseSpill} check like a plain bulk-step craftOnce would.
      */
     public static CraftResult craftBatch(ServerPlayerEntity player, ResourceLocation recipeId,
                                          ProducedLedger<Item, LedgerVariant> ledger, boolean stationPlanned,
-                                         List<Item> layout, int maxCrafts) {
+                                         List<Item> layout, int maxCrafts, boolean refuseSpill) {
         Plan plan = prepare(player, recipeId, ledger, stationPlanned, layout);
         if (plan == null) {
             return CraftResult.recipeGone();
@@ -318,9 +339,9 @@ public final class CraftExecutor {
         }
         Batch batch = batchPlan(player, plan, maxCrafts);
         if (batch == null) {
-            return applyOnce(player, plan); // nothing has moved yet: the plan is still this craft's
+            return applyOnce(player, plan, refuseSpill); // nothing has moved yet: the plan is still this craft's
         }
-        return applyBatch(player, plan, batch);
+        return applyBatch(player, plan, batch, refuseSpill);
     }
 
     /** A batched craft worked out ahead of applying it. */
@@ -480,11 +501,11 @@ public final class CraftExecutor {
         // With a station, outputs may end up split differently between inventory and station than single
         // crafts would leave them (a single craft overflows before the next one frees a slot); the
         // per-item totals across the two are the same, and nothing is dropped or lost.
-        k = Math.min(k, outputRoom(inventory, plan.station, result, k * perResult, true) / perResult);
+        k = Math.min(k, outputRoom(inventory, plan.station, result, k * perResult, true, null) / perResult);
         for (Map.Entry<Item, Long> remainder : remainders.entrySet()) {
             long perCraft = remainder.getValue();
             k = Math.min(k, outputRoom(inventory, null, new ItemStack(remainder.getKey()),
-                    k * perCraft, false) / perCraft);
+                    k * perCraft, false, null) / perCraft);
         }
         if (remainders.containsKey(result.getItem())) {
             return null; // result and remainder would both count the same partial stacks as room
@@ -522,19 +543,24 @@ public final class CraftExecutor {
      * Room for up to {@code needed} of {@code stack} (never reports more): the free space of same
      * item+tag stacks in the 36 main slots, a full stack per empty slot when {@code emptySlots}, then
      * what {@code station} (null for none) says it would accept of the rest. Read before any
-     * consumption, so slots the craft is about to empty do not count yet: an underestimate, the safe
-     * side for bounding a batch.
+     * consumption moves anything; {@code takes} (null for none) is how many items this one craft's
+     * consumption will draw from each main slot first, so a slot it empties already counts as an
+     * empty one and a stack it shrinks lends its leftover free space — the single-craft spill check's
+     * view ({@link #spilledOutput}), whose insert happens after the consume. {@code batchPlan} passes
+     * null and keeps the plain read-before-consumption view: an underestimate, the safe side for
+     * bounding a batch.
      */
     private static long outputRoom(PlayerInventory inventory, StationStorage station, ItemStack stack,
-                                   long needed, boolean emptySlots) {
+                                   long needed, boolean emptySlots, int[] takes) {
         long room = 0;
         int max = Math.max(1, stack.getMaxStackSize());
         for (int i = 0; i < MAIN_SLOTS && room < needed; i++) {
             ItemStack existing = inventory.getItem(i);
-            if (existing.isEmpty()) {
+            int left = existing.isEmpty() ? 0 : existing.getCount() - (takes == null ? 0 : takes[i]);
+            if (left <= 0) {
                 room += emptySlots ? max : 0;
             } else if (sameItemSameTag(existing, stack)) {
-                room += Math.max(0, max - existing.getCount());
+                room += Math.max(0, max - left);
             }
         }
         if (room < needed && station != null) {
@@ -547,8 +573,108 @@ public final class CraftExecutor {
         return Math.min(room, needed);
     }
 
+    /**
+     * The bulk-step spill check behind {@code refuseSpill} (see {@link #craftOnce}): the name of the
+     * first output one craft of this plan cannot place, or null when the result and every remainder
+     * fit. Room is {@link #batchPlan}'s rule at k = 1 — the result gets merge room, empty main slots
+     * and an open station's {@code acceptable}; each remainder merge room only — with one addition:
+     * the craft consumes before it inserts, so a main slot this craft's own consumption empties
+     * already counts as an empty slot (only slots the assignment takes their whole stack from;
+     * station takes draw from the station and free no slot). Without it, a full-inventory craft
+     * whose consumption frees a slot (logs→planks, no station open) would be refused even though it
+     * fits. Remainders may use any empty slot the result does not need, so the empty slots are
+     * counted once and handed out result first, matching {@link #applyBatch}'s insert order. The
+     * remainder lookups here run before anything has moved, so a throwing remainder mod cannot
+     * strand items (as in batchPlan).
+     */
+    private static ITextComponent spilledOutput(ServerPlayerEntity player, Plan plan) {
+        PlayerInventory inventory = player.inventory;
+        Assignment assignment = plan.assignment;
+        // This craft's inventory takes, per slot: every assignment cell shrinks its slot by one, so a
+        // slot goes empty exactly when the takes reach its whole stack.
+        int[] takes = new int[MAIN_SLOTS];
+        for (int slot : assignment.slots) {
+            if (slot >= 0) {
+                takes[slot]++;
+            }
+        }
+        long emptySlots = 0;
+        for (int i = 0; i < MAIN_SLOTS; i++) {
+            ItemStack stack = inventory.getItem(i);
+            if (stack.isEmpty() || takes[i] >= stack.getCount()) {
+                emptySlots++;
+            }
+        }
+        // The remainders applyOnce would return (one per consumed item with a remainder, inventory
+        // and station takes alike), grouped per variant so two of a kind do not count the same
+        // partial stack's room twice. A remainder of the result's own variant shares the result's
+        // merge room and empty slots, so it joins the result's need instead.
+        List<ItemStack> groups = new ArrayList<>();
+        List<Integer> counts = new ArrayList<>();
+        ItemStack result = plan.result;
+        long need = result.getCount();
+        List<ItemStack> remainders = new ArrayList<>();
+        for (int slot : assignment.slots) {
+            if (slot >= 0) {
+                Item item = inventory.getItem(slot).getItem();
+                if (item.hasCraftingRemainingItem()) {
+                    remainders.add(new ItemStack(item.getCraftingRemainingItem()));
+                }
+            }
+        }
+        for (Map.Entry<Item, Integer> take : assignment.stationTakes.entrySet()) {
+            if (take.getKey().hasCraftingRemainingItem()) {
+                for (int i = 0; i < take.getValue(); i++) {
+                    remainders.add(new ItemStack(take.getKey().getCraftingRemainingItem()));
+                }
+            }
+        }
+        for (ItemStack remainder : remainders) {
+            if (sameItemSameTag(remainder, result)) {
+                need++;
+                continue;
+            }
+            int group = groups.size();
+            for (int g = 0; g < groups.size(); g++) {
+                if (sameItemSameTag(groups.get(g), remainder)) {
+                    group = g;
+                    break;
+                }
+            }
+            if (group == groups.size()) {
+                groups.add(remainder);
+                counts.add(0);
+            }
+            counts.set(group, counts.get(group) + 1);
+        }
+        // The result first, through outputRoom's own order: merge room, then empty slots, then the
+        // station. When it needed the station at all, every empty slot went into filling it first
+        // (insertIntoMainInventory fills the inventory before the station), so nothing is spare.
+        if (outputRoom(inventory, plan.station, result, need, true, takes) < need) {
+            return result.getHoverName();
+        }
+        int resultMax = Math.max(1, result.getMaxStackSize());
+        long uncovered = need - outputRoom(inventory, null, result, need, false, takes);
+        long spare = emptySlots - Math.min(emptySlots, (uncovered + resultMax - 1) / resultMax);
+        for (int g = 0; g < groups.size(); g++) {
+            ItemStack remainder = groups.get(g);
+            long count = counts.get(g);
+            int max = Math.max(1, remainder.getMaxStackSize());
+            long room = outputRoom(inventory, null, remainder, count, false, takes);
+            if (room < count) {
+                long fromEmpty = Math.min(spare * max, count - room);
+                if (room + fromEmpty < count) {
+                    return remainder.getHoverName();
+                }
+                spare -= (fromEmpty + max - 1) / max;
+            }
+        }
+        return null;
+    }
+
     /** Applies a worked-out batch: the single-craft phases of {@link #craftOnce}, scaled to k crafts. */
-    private static CraftResult applyBatch(ServerPlayerEntity player, Plan plan, Batch batch) {
+    private static CraftResult applyBatch(ServerPlayerEntity player, Plan plan, Batch batch,
+                                          boolean refuseSpill) {
         PlayerInventory inventory = player.inventory;
         StationStorage station = plan.station;
         // Phase 2a: the station's share first, all or nothing, exactly as one craft's draw. A short
@@ -556,7 +682,8 @@ public final class CraftExecutor {
         // the whole craft over to it rather than inventing a batch-specific message.
         Map<Item, Integer> stationTakes = batch.stationTakes;
         if (!stationTakes.isEmpty() && drawFromStation(player, station, stationTakes) != null) {
-            return craftOnce(player, plan.recipeId, plan.ledger, plan.stationPlanned, plan.layout);
+            return craftOnce(player, plan.recipeId, plan.ledger, plan.stationPlanned, plan.layout,
+                    refuseSpill);
         }
         // Phase 2b: apply. The consumption is the same as k per-craft passes: per item, the batch's
         // share drains usable stacks in slot order, the order findPreferredSlot walks.

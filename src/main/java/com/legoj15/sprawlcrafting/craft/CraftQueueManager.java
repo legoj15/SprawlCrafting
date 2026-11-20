@@ -199,7 +199,7 @@ public final class CraftQueueManager {
             CraftExecutor.CraftResult craft = bulk
                     ? craftBulk(player, job)
                     : CraftExecutor.craftOnce(player, job.currentStep().recipeId(),
-                            job.produced(), job.stationDependent(), job.currentCraftLayout());
+                            job.produced(), job.stationDependent(), job.currentCraftLayout(), false);
             if (craft instanceof CraftExecutor.CraftResult.Success success) {
                 if (success.usedStation()) {
                     // From now on this job needs the station (a job that started from its inventory alone
@@ -218,8 +218,13 @@ public final class CraftQueueManager {
                 }
                 if (stepDone || !bulk) {
                     // A step boundary, or the one craft a paced step does per due tick: report it now
-                    // (progress bar + step sound), exactly as every craft was reported before bursts.
-                    sync(player, job, CraftProgressPayload.State.CRAFTING, lastCrafted);
+                    // (progress bar + step sound), exactly as every craft was reported before bursts. A boundary
+                    // into another bulk step is the exception: batching finishes a bulk step in one tick and the
+                    // next one starts on the next tick, so syncing every boundary would pop the step sound up to
+                    // 20 times a second on a deep tree. It keeps the half-second cadence of a mid-step update.
+                    if (!(stepDone && bulk && job.isBulkStep()) || job.progressSyncDue()) {
+                        sync(player, job, CraftProgressPayload.State.CRAFTING, lastCrafted);
+                    }
                     return;
                 }
                 if (System.nanoTime() - deadline >= 0) {
@@ -244,6 +249,14 @@ public final class CraftQueueManager {
                 sync(player, job, CraftProgressPayload.State.CANCELLED, ItemStack.EMPTY);
                 notify(player, Component.translatable("sprawlcrafting.craft.missing",
                         job.targetResult().getHoverName(), missing.missing()).withStyle(ChatFormatting.RED));
+            } else if (craft instanceof CraftExecutor.CraftResult.NoRoom noRoom) {
+                // A bulk step's craft had nowhere to put its output: continuing would drop every
+                // craft's result at the player's feet thousands of times per tick (the #35 freeze),
+                // so the job stops for the player to make room instead of spilling.
+                ACTIVE.remove(player.getUUID());
+                sync(player, job, CraftProgressPayload.State.CANCELLED, ItemStack.EMPTY);
+                notify(player, Component.translatable("sprawlcrafting.craft.no_room",
+                        job.targetResult().getHoverName(), noRoom.item()).withStyle(ChatFormatting.RED));
             } else if (craft instanceof CraftExecutor.CraftResult.RecipeGone) {
                 ACTIVE.remove(player.getUUID());
                 sync(player, job, CraftProgressPayload.State.CANCELLED, ItemStack.EMPTY);
@@ -266,7 +279,9 @@ public final class CraftQueueManager {
      * and never more than the current layout run still holds ({@link CraftJob#craftsLeftInLayoutRun()}):
      * the next run can change every cell's item, and one batch applies one assignment. A step with a
      * single craft left, batch or not, is a plain {@link CraftExecutor#craftOnce} —
-     * {@link CraftExecutor#craftBatch} would only fall back to it anyway.
+     * {@link CraftExecutor#craftBatch} would only fall back to it anyway. Both paths refuse a craft
+     * whose output would spill ({@code refuseSpill}: a bulk step stops rather than drop at the feet);
+     * a paced step keeps the spill, a few items at the feet being fine and expected there.
      */
     private static CraftExecutor.CraftResult craftBulk(ServerPlayer player, CraftJob job) {
         int maxCrafts = job.craftsLeftInStep();
@@ -276,10 +291,10 @@ public final class CraftQueueManager {
         maxCrafts = Math.min(maxCrafts, job.craftsLeftInLayoutRun());
         if (maxCrafts <= 1) {
             return CraftExecutor.craftOnce(player, job.currentStep().recipeId(),
-                    job.produced(), job.stationDependent(), job.currentCraftLayout());
+                    job.produced(), job.stationDependent(), job.currentCraftLayout(), true);
         }
         return CraftExecutor.craftBatch(player, job.currentStep().recipeId(),
-                job.produced(), job.stationDependent(), job.currentCraftLayout(), maxCrafts);
+                job.produced(), job.stationDependent(), job.currentCraftLayout(), maxCrafts, true);
     }
 
     /**
