@@ -8,6 +8,7 @@ import java.util.function.IntSupplier;
 
 import com.legoj15.sprawlcrafting.forge.network.CraftProgressMessage;
 import com.legoj15.sprawlcrafting.forge.network.SprawlNetwork;
+import com.legoj15.solver.CountFormat;
 
 import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraft.item.ItemStack;
@@ -52,6 +53,29 @@ public final class CraftQueueManager {
         // hand-off gate — the client re-reports from scratch once it sees this job's first sync.
         ClientCraftingView.clearScreen(player.getUniqueID());
         sync(player, job, CraftProgressMessage.State.CRAFTING, ItemStack.EMPTY);
+        return true;
+    }
+
+    /**
+     * Player-facing cancel (issue #31): drops the player's active job and reports it like the
+     * engine's own failure paths (shortfall, recipe gone). Runs on the server thread between
+     * ticks (the packet handler hops there), so it always lands between two whole crafts — each
+     * craft, station / chest draws included, is all-or-nothing inside
+     * {@link CraftExecutor#craftOnce} — and needs no step-boundary logic: the crafts that already
+     * landed simply stay crafted.
+     *
+     * @return true if a job was running and is now cancelled; false when there was none (no-op).
+     */
+    public static boolean cancel(EntityPlayerMP player) {
+        CraftJob job = ACTIVE.remove(player.getUniqueID());
+        if (job == null) {
+            return false;
+        }
+        sync(player, job, CraftProgressMessage.State.CANCELLED, ItemStack.EMPTY);
+        notify(player, message("sprawlcrafting.craft.cancelled", TextFormatting.YELLOW,
+                job.targetResult().getDisplayName(),
+                CountFormat.format(job.craftsDone()),
+                CountFormat.format(job.totalCrafts())));
         return true;
     }
 

@@ -12,7 +12,8 @@ import net.minecraftforge.fml.relauncher.SideOnly;
 
 /**
  * S2C on the v2 channel: "this server speaks SprawlCrafting v2", plus one optional trailing
- * capability byte (see {@link #CAP_NETWORK_TERMINALS}; absent from a pre-capability server, which
+ * capability byte (see {@link #CAP_NETWORK_TERMINALS} and {@link #CAP_CANCEL_CRAFT}; absent
+ * from a pre-capability server, which
  * reads as no capabilities). Sent once at login so the client knows it may use server-backed paths
  * (the {@link PlaceRecipeMessage} grid fill) instead of their client-only fallbacks. The mod is
  * deliberately joinable in every mixed setup ({@code acceptableRemoteVersions="*"}), so capability
@@ -33,15 +34,25 @@ public class ServerHelloMessage implements IMessage {
     public static final int CAP_NETWORK_TERMINALS = 1;
 
     /**
+     * Capability bit: the server registers the cancel-craft message (issue #31). A client sends
+     * that id only after seeing this bit: an older v2 server knows CHANNEL2 without id 4, and FML
+     * kicks the connection on an unknown discriminator of a KNOWN channel — so capability, not
+     * channel presence, is the gate.
+     */
+    public static final int CAP_CANCEL_CRAFT = 2;
+
+    /**
      * Optional trailing capability byte. Backward compatible both ways, verified against FML's
      * decoder ({@code FMLIndexedMessageToMessageCodec.decode} hands {@code fromBytes} a slice and
      * never checks for unread bytes): a pre-capability client ignores the extra byte, and a payload
      * from a pre-capability server is empty, which reads as "no capabilities". The server-side
      * instance advertises what this install can actually do: the network bit is set only when a
-     * {@link NetworkTerminals} provider is registered (AE2 present). A received instance's value is
+     * {@link NetworkTerminals} provider is registered (AE2 present); the cancel bit is always set
+     * (the engine can always cancel a job). A received instance's value is
      * replaced by {@link #fromBytes}.
      */
-    private int capabilities = NetworkTerminals.hasProvider() ? CAP_NETWORK_TERMINALS : 0;
+    private int capabilities = CAP_CANCEL_CRAFT
+            | (NetworkTerminals.hasProvider() ? CAP_NETWORK_TERMINALS : 0);
 
     @Override
     public void toBytes(ByteBuf buf) {
@@ -57,7 +68,8 @@ public class ServerHelloMessage implements IMessage {
         @Override
         @SideOnly(Side.CLIENT)
         public IMessage onMessage(ServerHelloMessage message, MessageContext ctx) {
-            ServerPresence.markPresent((message.capabilities & CAP_NETWORK_TERMINALS) != 0);
+            ServerPresence.markPresent((message.capabilities & CAP_NETWORK_TERMINALS) != 0,
+                    (message.capabilities & CAP_CANCEL_CRAFT) != 0);
             return new ClientHelloMessage();
         }
     }

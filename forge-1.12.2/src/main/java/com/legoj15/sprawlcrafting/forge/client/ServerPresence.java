@@ -14,6 +14,7 @@ public final class ServerPresence {
 
     private static volatile boolean present;
     private static volatile boolean networkTerminals;
+    private static volatile boolean cancelCraft;
 
     /** True once the server has identified itself as running the mod (integrated server included). */
     public static boolean active() {
@@ -25,8 +26,14 @@ public final class ServerPresence {
         return present && networkTerminals;
     }
 
-    public static void markPresent(boolean countsNetworkTerminals) {
+    /** True when the server also accepts the cancel-craft request (see the hello's capability byte). */
+    public static boolean cancelCraft() {
+        return present && cancelCraft;
+    }
+
+    public static void markPresent(boolean countsNetworkTerminals, boolean acceptsCancel) {
         networkTerminals = countsNetworkTerminals;
+        cancelCraft = acceptsCancel;
         present = true;
     }
 
@@ -34,6 +41,7 @@ public final class ServerPresence {
     public void onDisconnect(FMLNetworkEvent.ClientDisconnectionFromServerEvent event) {
         present = false;
         networkTerminals = false;
+        cancelCraft = false;
         // The HUD flyout mirrors a job on the server we just left; drop it with the connection.
         // Cleared via the main-thread queue, not directly: this event fires on the netty thread,
         // where a progress update delivered just before the disconnect may already sit scheduled —

@@ -11,7 +11,9 @@ sprawlcrafting.craft.finished=Crafted %s
 sprawlcrafting.craft.ready_in_grid=%s done in the crafting grid
 sprawlcrafting.craft.missing=Crafting %s cancelled, %s went missing
 sprawlcrafting.craft.recipe_gone=Crafting %s cancelled, recipe no longer exists
-sprawlcrafting.craft.busy=Already crafting. Finish or disrupt the current job first
+# craft.cancelled: the cancel keybind's feedback; counts arrive pre-formatted by CountFormat, done then total.
+sprawlcrafting.craft.cancelled=Cancelled crafting %s after %s of %s crafts
+sprawlcrafting.craft.busy=Already crafting. Cancel it with the "Cancel deferred craft" key (Controls), or let it finish
 sprawlcrafting.craft.unknown_recipe=Unknown recipe %s??
 sprawlcrafting.craft.unsupported=%s is not a plannable crafting recipe
 sprawlcrafting.craft.unsolvable=Not enough raw resources for %s (missing: %s)
@@ -58,6 +60,9 @@ sprawlcrafting.gather.none=Needs a crafting table, or a recipe I can't plan.
 
 # --- Modless-server notice (1.12.2-only; the modern nodes never surface a message here) ---
 sprawlcrafting.server_missing=This server is not running SprawlCrafting — deferred crafting is unavailable here.
+
+# --- Keybinds (Forge Controls screen), unbound by default ---
+key.sprawlcrafting.cancel_craft=Cancel deferred craft
 
 # --- Config: Forge @Config screen. The label is @Config.LangKey; "<langkey>.tooltip" overrides the
 # @Config.Comment as the hover text. These tooltips mirror modern's config *.desc strings. ---

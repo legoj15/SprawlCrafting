@@ -42,10 +42,7 @@ public final class ClientCraftState {
         total = message.total();
         state = message.state();
         active = true;
-        boolean terminal = state == CraftProgressMessage.State.FINISHED
-                || state == CraftProgressMessage.State.CANCELLED
-                || state == CraftProgressMessage.State.READY_IN_GRID;
-        terminalSinceMs = terminal ? System.currentTimeMillis() : 0L;
+        terminalSinceMs = isTerminal(state) ? System.currentTimeMillis() : 0L;
 
         // Presentation (runs on the client thread — the packet handler schedules update() there).
         Minecraft mc = Minecraft.getMinecraft();
@@ -67,5 +64,22 @@ public final class ClientCraftState {
         done = 0;
         total = 0;
         terminalSinceMs = 0L;
+    }
+
+    /**
+     * Whether a live (non-terminal) job is shown — running or paused. The cancel keybind gates on
+     * this: once the flyout shows a terminal state that job is already gone server-side, so a
+     * press then must not send a packet. The same notion of "live" {@code CraftingScreenWatcher}
+     * reads off {@code terminalSinceMs == 0}.
+     */
+    public static boolean hasActiveJob() {
+        return active && !isTerminal(state);
+    }
+
+    /** The states whose sync is the job's last: after them the job no longer exists server-side. */
+    private static boolean isTerminal(CraftProgressMessage.State state) {
+        return state == CraftProgressMessage.State.FINISHED
+                || state == CraftProgressMessage.State.CANCELLED
+                || state == CraftProgressMessage.State.READY_IN_GRID;
     }
 }

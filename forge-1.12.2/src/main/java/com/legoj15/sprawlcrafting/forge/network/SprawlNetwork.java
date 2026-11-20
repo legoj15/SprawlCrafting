@@ -34,7 +34,8 @@ public final class SprawlNetwork {
     public static final SimpleNetworkWrapper CHANNEL =
             NetworkRegistry.INSTANCE.newSimpleChannel(SprawlCrafting.MOD_ID);
 
-    /** v2 channel (this release): server-side grid placement + the hello/screen-state handshake. */
+    /** v2 channel (this release): server-side grid placement, the hello/screen-state handshake,
+     *  and the capability-gated cancel-craft request (issue #31). */
     public static final SimpleNetworkWrapper CHANNEL2 =
             NetworkRegistry.INSTANCE.newSimpleChannel(SprawlCrafting.MOD_ID + "2");
 
@@ -46,6 +47,13 @@ public final class SprawlNetwork {
     private static final int ID2_CLIENT_HELLO = 1;
     private static final int ID2_PLACE_RECIPE = 2;
     private static final int ID2_SCREEN_STATE = 3;
+    /**
+     * C2S-only, which is what lets this id exist at all: an older v2 server knows CHANNEL2
+     * without id 4 — and an unknown discriminator of a KNOWN channel is a kick — so it must only
+     * ever travel upstream, and only to a server that advertised
+     * {@link ServerHelloMessage#CAP_CANCEL_CRAFT} (the client gates the send on that bit).
+     */
+    private static final int ID2_CANCEL_CRAFT = 4;
 
     /** Common preInit (both sides): all message discriminators + their handlers. Every message
      *  must be registered here, even S2C ones, because the server needs the discriminator to encode
@@ -69,6 +77,8 @@ public final class SprawlNetwork {
                 PlaceRecipeMessage.class, ID2_PLACE_RECIPE, Side.SERVER);
         CHANNEL2.registerMessage(CraftingScreenStateMessage.Handler.class,
                 CraftingScreenStateMessage.class, ID2_SCREEN_STATE, Side.SERVER);
+        CHANNEL2.registerMessage(CancelCraftMessage.Handler.class,
+                CancelCraftMessage.class, ID2_CANCEL_CRAFT, Side.SERVER);
     }
 
     public static void sendProgress(EntityPlayerMP player, CraftProgressMessage message) {
@@ -95,5 +105,10 @@ public final class SprawlNetwork {
 
     public static void sendScreenState(int gridWidth, int gridHeight) {
         CHANNEL2.sendToServer(new CraftingScreenStateMessage(gridWidth, gridHeight));
+    }
+
+    /** Cancels the local player's running deferred craft; the caller gates on the server's advertised cancel capability. */
+    public static void cancelCraft() {
+        CHANNEL2.sendToServer(new CancelCraftMessage());
     }
 }

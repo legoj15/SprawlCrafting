@@ -5,6 +5,7 @@ import com.legoj15.sprawlcrafting.forge.CommonProxy;
 import org.apache.logging.log4j.LogManager;
 
 import net.minecraftforge.common.MinecraftForge;
+import net.minecraftforge.fml.client.registry.ClientRegistry;
 import net.minecraftforge.fml.common.Loader;
 import net.minecraftforge.fml.relauncher.FMLLaunchHandler;
 
@@ -23,6 +24,10 @@ public class ClientProxy extends CommonProxy {
         MinecraftForge.EVENT_BUS.register(new CraftingScreenWatcher());
         MinecraftForge.EVENT_BUS.register(new PendingGatherScreen.Ticker());
         MinecraftForge.EVENT_BUS.register(new EngineWatchdog.Ticker());
+        MinecraftForge.EVENT_BUS.register(new CancelCraftKey());
+        // Unbound by default (KEY_NONE): the cancel key claims no binding until the player gives
+        // it one in Controls, so it cannot clash with an existing save or another mod.
+        ClientRegistry.registerKeyBinding(CancelCraftKey.KEY);
         // Dev-only: RFG loads mod classes from build/classes/ but resources live in build/resources/,
         // so FMLFolderResourcePack can't serve the lang file. DevLangInjector injects from the
         // classpath instead. Production uses pack.mcmeta (pack_format 3) to avoid the
