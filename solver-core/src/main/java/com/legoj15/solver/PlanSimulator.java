@@ -79,7 +79,7 @@ public final class PlanSimulator {
         Map<K, Long> start = new HashMap<>();
         for (Map.Entry<K, Integer> entry : stock.entrySet()) {
             if (entry.getValue() != null && entry.getValue() > 0) {
-                start.put(entry.getKey(), (long) entry.getValue());
+                start.put(entry.getKey(), RecipeGraphSolver.stockCount(entry.getValue()));
             }
         }
         UndoMap<K, Long> inv = new UndoMap<>(start);

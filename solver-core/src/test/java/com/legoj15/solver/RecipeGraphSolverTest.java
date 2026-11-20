@@ -490,6 +490,16 @@ class RecipeGraphSolverTest {
     }
 
     @Test
+    void saturatedStockCountIsUnbounded() {
+        // An int stock count at Integer.MAX_VALUE means "at least that many" (an AE2 creative cell or a
+        // Sophisticated Storage infinity upgrade reports exactly this and delivers any amount), so a
+        // chain needing 9^10 raw (> int) must plan, and the gather list must be empty.
+        TestRecipe target = compressionChain(10);
+        solveOk(target, inv("raw", Integer.MAX_VALUE));
+        assertTrue(solver().shortfall(target, inv("raw", Integer.MAX_VALUE)).demandsLong().isEmpty());
+    }
+
+    @Test
     void shortfallBeyondLongRangeSaturates() {
         // 9^21 > Long.MAX_VALUE: the count pins at the ceiling and says so, never wraps negative.
         TestRecipe target = compressionChain(21);

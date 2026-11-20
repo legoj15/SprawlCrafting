@@ -88,8 +88,8 @@ public final class CraftQueueManager {
     /**
      * Advances the player's job by one tick. When a craft is due: a paced step ({@code <=}
      * {@link CraftJob#BULK_THRESHOLD} crafts) performs exactly one and syncs progress, once per
-     * {@link CraftJob#TICKS_PER_STEP} ticks; a bulk step performs a burst of up to
-     * {@link CraftJob#MAX_CRAFTS_PER_TICK} crafts (within {@link CraftJob#BURST_BUDGET_NANOS}, and within
+     * {@link CraftJob#TICKS_PER_STEP} ticks; a bulk step performs a burst of crafts
+     * (bounded only by time: {@link CraftJob#BURST_BUDGET_NANOS}, and within
      * its share of the {@link CraftJob#SERVER_TICK_BURST_BUDGET_NANOS} all players split, see
      * {@link BurstBudget}) every tick until it is done. Each craft is validated and applied by
      * {@link CraftExecutor#craftOnce} against the live inventory, exactly as a lone craft is. A burst ends
@@ -155,14 +155,14 @@ public final class CraftQueueManager {
     }
 
     /**
-     * Performs the crafts due this tick: one for a paced step, up to {@link CraftJob#MAX_CRAFTS_PER_TICK}
-     * for a bulk one. The clock is checked after a craft, never before, so a job always makes at least one
+     * Performs the crafts due this tick: one for a paced step; for a bulk one, as many as fit before
+     * {@code deadline} or the step boundary (there is no count cap: the time budget alone bounds the
+     * tick). The clock is checked after a craft, never before, so a job always makes at least one
      * craft of progress even when its {@code deadline} (nanoTime) has already passed.
      */
     private static void craftBurst(ServerPlayer player, CraftJob job, boolean bulk, long deadline) {
-        int cap = bulk ? CraftJob.MAX_CRAFTS_PER_TICK : 1;
         ItemStack lastCrafted = ItemStack.EMPTY;
-        for (int burst = 0; burst < cap; burst++) {
+        while (true) {
             // If the final craft is due and the player has a compatible crafting grid open, lay the
             // recipe out in that grid for them to grab (a real vanilla craft) instead of auto-crafting
             // it. Any case that can't cleanly hand off falls through to the normal auto-craft below.
@@ -241,7 +241,7 @@ public final class CraftQueueManager {
             }
             return;
         }
-        // A bulk burst hit its per-tick cap (count or time) mid-step; the step stays due and continues next
+        // A bulk burst spent its time budget mid-step; the step stays due and continues next
         // tick. Report progress at most once per half second so the toast (and its step sound) keeps its cadence.
         if (job.progressSyncDue()) {
             sync(player, job, CraftProgressPayload.State.CRAFTING, lastCrafted);

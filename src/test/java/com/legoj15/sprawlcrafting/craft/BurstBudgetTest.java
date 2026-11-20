@@ -86,7 +86,7 @@ class BurstBudgetTest {
     void aBurstThatEndsEarlyLeavesItsUnusedTimeForTheRest() {
         BurstBudget budget = new BurstBudget(TICK, CAP);
         budget.grant(1, jobs(1));
-        budget.charge(CAP / 4); // hit the 64-craft cap or a step boundary well inside its grant
+        budget.charge(CAP / 4); // hit a step boundary well inside its grant
         for (int i = 0; i < 4; i++) {
             assertEquals(CAP, budget.grant(1, jobs(1)));
             budget.charge(CAP);
