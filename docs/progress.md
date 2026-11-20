@@ -163,4 +163,5 @@ Unbound "Cancel deferred craft" keybind on every tree. The server's `CraftQueueM
   - a shared station can fill between plan and apply (pre-existing, narrowed).
 - 1.12.2 batching was split to #39 (different executor: per-craft computeResult, getContainerItem, chest and network sources).
 - #36: 1.12.2 network counts already saturate-add to Integer.MAX_VALUE, which the solver reads as unbounded. No code needed.
+- review_fast on 005ab0f (deepseek-flash stood in for a busy shop26, plus glm-flash): both approve. Two notes, not acted on: no test covers batchPlan's refusals (it needs a live ServerPlayer), and the planner models remainder templates by item only (pre-existing). Final reviewed sha: 005ab0f.
 - Not done: playtest of the sword tree in the Forge 1.16.5 instance, with AE2 creative cells for #36 and speed for #35. The refreshed jar is in the instance's mods folder; computer use on the CurseForge launcher was declined.
