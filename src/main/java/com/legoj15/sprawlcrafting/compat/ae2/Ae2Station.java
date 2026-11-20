@@ -49,7 +49,9 @@ import net.minecraft.world.item.ItemStack;
  *
  * <p>Reached only through {@link StationStorages#bootstrap()}, by reflection, after the loader reports
  * "ae2" loaded; this package is compiled only on nodes that pin {@code ae2_version}. Verified against
- * the decompiled AE2 19.2.17 / 19.2.19 jar (and, for the 1.20.1 line, javap on AE2 15.4.12):
+ * the decompiled AE2 19.2.17 / 19.2.19 jar (and, for the 1.20.1 line, javap on AE2 15.4.12); every
+ * AE2 member used here is signature-identical in AE2 26.1.14-beta / 26.2.1-alpha / 26.3.2-alpha
+ * (javap):
  * <ul>
  *   <li>{@code CraftingTermMenu extends MEStorageMenu}; {@code getEnergySource()} is public on it.
  *       AE2 15 has no such getter: the energy source is {@code MEStorageMenu}'s own

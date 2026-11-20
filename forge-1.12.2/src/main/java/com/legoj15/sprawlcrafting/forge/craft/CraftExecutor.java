@@ -121,8 +121,13 @@ public final class CraftExecutor {
         }
     }
 
+    /**
+     * One craft of {@code recipeId}. {@code layout} is the plan's per-slot item choice for this craft
+     * ({@link CraftJob#currentCraftLayout()}); null or a layout the live pool can no longer honor
+     * falls back to {@link SlotAssignment}.
+     */
     public static CraftResult craftOnce(EntityPlayerMP player, ResourceLocation recipeId,
-                                        ProducedLedger<ItemKey, LedgerVariant> ledger) {
+                                        ProducedLedger<ItemKey, LedgerVariant> ledger, List<ItemKey> layout) {
         IRecipe recipe = CraftingManager.getRecipe(recipeId);
         if (recipe == null) {
             return new CraftResult.RecipeGone();
@@ -133,7 +138,7 @@ public final class CraftExecutor {
         // one entry per ingredient slot (-1 for a gap in the shape) so the simulation below can
         // reconstruct the grid positions.
         InventoryPlayer inventory = player.inventory;
-        Assignment assignment = assign(player, recipe.getIngredients(), ledger, true);
+        Assignment assignment = assign(player, recipe.getIngredients(), ledger, true, layout);
         if (assignment.missing != null) {
             return new CraftResult.MissingIngredient(describe(assignment.missing));
         }
@@ -314,19 +319,11 @@ public final class CraftExecutor {
      * through the engine because it depends on the station's connected chest. Runs on either side.
      */
     public static boolean canCraftFromPlayerInventory(EntityPlayer player, IRecipe recipe) {
-        InventoryPlayer inventory = player.inventory;
-        int[] reserved = new int[MAIN];
-        for (Ingredient ingredient : recipe.getIngredients()) {
-            if (ingredient == Ingredient.EMPTY) {
-                continue;
-            }
-            int slot = findMatchingSlot(inventory, ingredient, reserved);
-            if (slot < 0) {
-                return false;
-            }
-            reserved[slot]++;
+        List<Source> sources = new ArrayList<Source>();
+        for (int i = 0; i < MAIN; i++) {
+            sources.add(new PlayerSource(player.inventory, i));
         }
-        return true;
+        return canCraftFrom(sources, recipe.getIngredients());
     }
 
     /**
@@ -338,24 +335,25 @@ public final class CraftExecutor {
      * TConstruct+JEI behavior) rather than routed through the engine.
      */
     public static boolean canCraftFromPlayerAndStation(EntityPlayer player, IRecipe recipe) {
-        InventoryPlayer inventory = player.inventory;
-        List<Slot> external = ExternalSlots.materialSlots(player);
-        int[] reserved = new int[MAIN + external.size()];
-        for (Ingredient ingredient : recipe.getIngredients()) {
-            if (ingredient == Ingredient.EMPTY) {
+        return canCraftFrom(buildSources(player, player.inventory, null), recipe.getIngredients());
+    }
+
+    /**
+     * Whether one craft can be laid out from {@code sources}, choosing stacks exactly as
+     * {@link #assign} does ({@link #preferredKeys} first, then first match, no ledger), so a gate
+     * that says yes is never contradicted by the assignment that follows. The converse holds only
+     * without a ledger: a ledger lets assign also take admitted altered stacks the gate ignores,
+     * which is the safe direction (a no routes the craft to the engine).
+     */
+    private static boolean canCraftFrom(List<Source> sources, List<Ingredient> ingredients) {
+        ItemKey[] preferred = preferredKeys(sources, ingredients, null); // a direct craft has no plan layout
+        int[] reserved = new int[sources.size()];
+        for (int i = 0; i < ingredients.size(); i++) {
+            Ingredient ingredient = ingredients.get(i);
+            if (ingredient == null || ingredient == Ingredient.EMPTY) {
                 continue;
             }
-            int idx = findMatchingSlot(inventory, ingredient, reserved);
-            if (idx < 0) {
-                for (int j = 0; j < external.size(); j++) {
-                    ItemStack stack = external.get(j).getStack();
-                    if (!stack.isEmpty() && stack.getCount() - reserved[MAIN + j] > 0
-                            && usableAsIngredient(stack) && ingredient.apply(stack)) {
-                        idx = MAIN + j;
-                        break;
-                    }
-                }
-            }
+            int idx = findMatchingSource(sources, ingredient, preferred[i], reserved, null);
             if (idx < 0) {
                 return false;
             }
@@ -473,20 +471,25 @@ public final class CraftExecutor {
      * rejected copies of that identity the player still
      * holds. Package-visible: the final-step hand-off ({@link ServerGridPlacer}) lays out the same
      * choice.
+     *
+     * <p>{@code layout} is the plan's per-slot item choice for this craft (one entry per non-empty
+     * cell in cell order; null or a mismatch: decide with {@link SlotAssignment}), see
+     * {@link #preferredKeys}.
      */
     static Assignment assign(EntityPlayer player, List<Ingredient> ingredients,
-                             ProducedLedger<ItemKey, LedgerVariant> ledger) {
-        return assign(player, ingredients, ledger, false);
+                             ProducedLedger<ItemKey, LedgerVariant> ledger, List<ItemKey> layout) {
+        return assign(player, ingredients, ledger, false, layout);
     }
 
     /**
-     * {@link #assign(EntityPlayer, List, ProducedLedger)} over a pool that, with {@code withNetwork},
-     * also holds the open network terminal's stock. Only {@link #craftOnce} passes true: it is the one
-     * consumer that {@link #prepareNetwork extracts} its network picks before taking them. The grid
-     * placer's {@link Assignment#take} never sees a network source.
+     * {@link #assign(EntityPlayer, List, ProducedLedger, List)} over a pool that, with
+     * {@code withNetwork}, also holds the open network terminal's stock. Only {@link #craftOnce}
+     * passes true: it is the one consumer that {@link #prepareNetwork extracts} its network picks
+     * before taking them. The grid placer's {@link Assignment#take} never sees a network source.
      */
     private static Assignment assign(EntityPlayer player, List<Ingredient> ingredients,
-                                     ProducedLedger<ItemKey, LedgerVariant> ledger, boolean withNetwork) {
+                                     ProducedLedger<ItemKey, LedgerVariant> ledger, boolean withNetwork,
+                                     List<ItemKey> layout) {
         List<Source> sources = buildSources(player, player.inventory,
                 withNetwork ? ingredientItems(ingredients) : null);
         int[] chosen = new int[ingredients.size()];
@@ -496,7 +499,7 @@ public final class CraftExecutor {
             countRefused(player, sources, tally);
             tally.open(ledger);
         }
-        ItemKey[] preferred = preferredKeys(sources, ingredients);
+        ItemKey[] preferred = preferredKeys(sources, ingredients, layout);
         for (int i = 0; i < chosen.length; i++) {
             Ingredient ingredient = ingredients.get(i);
             if (ingredient == null || ingredient == Ingredient.EMPTY) {
@@ -650,12 +653,18 @@ public final class CraftExecutor {
     }
 
     /**
-     * Per ingredient, the identity {@link SlotAssignment} picks for it from the usable stacks of the
-     * whole pool (null for a gap or when nothing usable fits). The solver plans every craft with the
-     * same rule over the same slot lists ({@link CraftPlanner#slotAlternatives}) and the same pool
-     * counts, so each craft takes what the plan counted on, not whichever stack comes first.
+     * Per ingredient, the identity the plan's layout fixes for it when that choice still fits the
+     * live pool, else the identity {@link SlotAssignment} picks from it (null for a gap or when
+     * nothing usable fits). The layout is honored only when every one of its identities is still an
+     * alternative of its slot and the pooled stock — the usable stacks of the whole pool, exactly
+     * what the plan counted — covers this craft's use of each; the player may have moved items
+     * since, and a stale layout must not override what the pool can actually supply.
+     * {@link SlotAssignment} runs over the same slot lists ({@link CraftPlanner#slotAlternatives})
+     * and the same pool counts, so its fallback still takes what a plan made without layouts
+     * counted on.
      */
-    private static ItemKey[] preferredKeys(List<Source> sources, List<Ingredient> ingredients) {
+    private static ItemKey[] preferredKeys(List<Source> sources, List<Ingredient> ingredients,
+                                           List<ItemKey> layout) {
         Map<ItemKey, Integer> stock = new HashMap<ItemKey, Integer>();
         for (Source source : sources) {
             ItemStack stack = source.peek();
@@ -665,21 +674,55 @@ public final class CraftExecutor {
                 stock.put(key, NetworkTerminals.saturatedAdd(have == null ? 0 : have, stack.getCount()));
             }
         }
+        List<List<ItemKey>> cells = new ArrayList<List<ItemKey>>();
+        for (Ingredient ingredient : ingredients) {
+            cells.add(ingredient == null || ingredient == Ingredient.EMPTY
+                    ? null : CraftPlanner.slotAlternatives(ingredient));
+        }
+        // The layout is indexed by non-empty cell, as the solver's slots are.
         List<List<ItemKey>> slots = new ArrayList<List<ItemKey>>();
-        List<Integer> cells = new ArrayList<Integer>();
-        for (int i = 0; i < ingredients.size(); i++) {
-            Ingredient ingredient = ingredients.get(i);
-            if (ingredient != null && ingredient != Ingredient.EMPTY) {
-                slots.add(CraftPlanner.slotAlternatives(ingredient));
-                cells.add(i);
+        for (List<ItemKey> cell : cells) {
+            if (cell != null) {
+                slots.add(cell);
             }
         }
-        List<ItemKey> chosen = SlotAssignment.assign(slots, stock);
-        ItemKey[] preferred = new ItemKey[ingredients.size()];
-        for (int s = 0; s < cells.size(); s++) {
-            preferred[cells.get(s)] = chosen.get(s);
+        if (layout != null && layout.size() == slots.size() && layoutFits(layout, slots, stock)) {
+            ItemKey[] preferred = new ItemKey[cells.size()];
+            int s = 0;
+            for (int n = 0; n < cells.size(); n++) {
+                if (cells.get(n) != null) {
+                    preferred[n] = layout.get(s++);
+                }
+            }
+            return preferred;
         }
-        return preferred;
+        return SlotAssignment.assignCells(cells, stock).toArray(new ItemKey[0]);
+    }
+
+    /**
+     * Whether the plan's layout can still be laid on the live pool: every identity remains an
+     * alternative of its slot (the i-th entry belongs to the i-th non-empty cell, the order
+     * {@code slots} is built in), and the pool holds at least as many of each identity as this one
+     * craft uses of it.
+     */
+    private static boolean layoutFits(List<ItemKey> layout, List<List<ItemKey>> slots,
+                                      Map<ItemKey, Integer> stock) {
+        Map<ItemKey, Integer> uses = new HashMap<ItemKey, Integer>();
+        for (int i = 0; i < layout.size(); i++) {
+            ItemKey item = layout.get(i);
+            if (item == null || !slots.get(i).contains(item)) { // null never satisfies a slot
+                return false;
+            }
+            Integer have = uses.get(item);
+            uses.put(item, (have == null ? 0 : have) + 1);
+        }
+        for (Map.Entry<ItemKey, Integer> use : uses.entrySet()) {
+            Integer inStock = stock.get(use.getKey());
+            if ((inStock == null ? 0 : inStock) < use.getValue()) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
@@ -946,17 +989,6 @@ public final class CraftExecutor {
     /** Vanilla recipe-book parity: never consume damaged, enchanted, or renamed stacks. */
     public static boolean usableAsIngredient(ItemStack stack) {
         return !stack.isItemDamaged() && !stack.isItemEnchanted() && !stack.hasDisplayName();
-    }
-
-    private static int findMatchingSlot(InventoryPlayer inventory, Ingredient ingredient, int[] reserved) {
-        for (int i = 0; i < MAIN; i++) {
-            ItemStack stack = inventory.mainInventory.get(i);
-            if (!stack.isEmpty() && stack.getCount() - reserved[i] > 0
-                    && usableAsIngredient(stack) && ingredient.apply(stack)) {
-                return i;
-            }
-        }
-        return -1;
     }
 
     /**

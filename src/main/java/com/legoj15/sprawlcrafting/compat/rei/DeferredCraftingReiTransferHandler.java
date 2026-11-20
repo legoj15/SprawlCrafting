@@ -27,7 +27,8 @@ import net.minecraft.world.item.crafting.RecipeHolder;
  * compile on Fabric, and the NeoForge node compiles it directly). The loader-specific plugin
  * that registers it lives in {@code platform.fabric.FabricReiPlugin} /
  * {@code platform.neoforge.NeoForgeReiPlugin}; all real logic stays in the shared
- * {@code client}/{@code craft} packages. REI ships on the 1.21.1 nodes only.
+ * {@code client}/{@code craft} packages. REI ships on 1.20.1-fabric and the 1.21.1 Fabric/NeoForge nodes only (AE2 15 on
+ * 1.20.1 Fabric and AE2 19 both carry their own REI module, which the station branch below relies on).
  */
 public class DeferredCraftingReiTransferHandler implements TransferHandler {
 

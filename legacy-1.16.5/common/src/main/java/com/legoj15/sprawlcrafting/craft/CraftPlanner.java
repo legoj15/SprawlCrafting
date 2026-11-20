@@ -247,9 +247,12 @@ public final class CraftPlanner {
             if (result instanceof RecipeGraphSolver.Result.Success) {
                 RecipeGraphSolver.Result.Success<ResourceLocation, Item> success =
                         (RecipeGraphSolver.Result.Success<ResourceLocation, Item>) result;
+                List<PlannedStep<ResourceLocation>> planned = success.steps();
                 List<CraftStep> steps = new ArrayList<>();
-                for (PlannedStep<ResourceLocation> step : success.steps()) {
-                    steps.add(new CraftStep(step.recipeId(), step.crafts(), !fits2x2(step.recipeId(), target)));
+                for (int i = 0; i < planned.size(); i++) {
+                    PlannedStep<ResourceLocation> step = planned.get(i);
+                    steps.add(new CraftStep(step.recipeId(), step.crafts(), !fits2x2(step.recipeId(), target),
+                            success.layouts().get(i)));
                 }
                 return PlanOutcome.planned(new CraftJob(targetRecipe.getId(), target.resultStack, steps));
             }
@@ -358,8 +361,9 @@ public final class CraftPlanner {
 
     /**
      * One solver slot: the ingredient's distinct items in its own order (empty when it resolves to
-     * nothing). {@code CraftExecutor} builds its {@code SlotAssignment} input with this too, so the
-     * executor fills slots from exactly the lists the plan was made with.
+     * nothing). {@code CraftExecutor} checks the plan's layout items against these lists and builds
+     * its {@code SlotAssignment} input with them too, so the executor fills slots from exactly the
+     * lists the plan was made with.
      */
     static List<Item> slotAlternatives(Ingredient ingredient) {
         LinkedHashSet<Item> distinct = new LinkedHashSet<>();

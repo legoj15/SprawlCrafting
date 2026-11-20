@@ -1,17 +1,25 @@
 # Solver library (`com.legoj15:solver`) — agent notes
 
-The Minecraft-free crafting planner (`RecipeGraphSolver`, `PlannedStep`, `SlotAssignment`,
-`PlanSimulator`, `ProducedLedger`, `LedgerTally`, `UndoMap`, `CountFormat`; package `com.legoj15.solver`) is a
-plain-Java library built from `solver-core/`. Every SprawlCrafting build depends on it and bundles it;
-a second mod (MegaBlockBot) can do the same.
+The Minecraft-free crafting planner (`RecipeGraphSolver`, `PlannedStep`, `SlotLayout`,
+`SlotAssignment`, `PlanSimulator`, `ProducedLedger`, `LedgerTally`, `UndoMap`, `CountFormat`; package
+`com.legoj15.solver`) is a plain-Java library built from `solver-core/`. Every SprawlCrafting build
+depends on it and bundles it; a second mod (MegaBlockBot) can do the same.
 
-**Executor contract (since 1.0.1).** `solve` only returns plans that `PlanSimulator` replays craft by
-craft, filling each craft's slots with `SlotAssignment.assign(slots, stock)`. An executor must make the
-same choice: build `slots` exactly as its `RecipeInfo.ingredientSlots()` (blank cells dropped) and
-`stock` from the same pool and filter the planner snapshots, then take a stack of the item named for
-each slot (falling back to its own matching only when none fits). SprawlCrafting's three
-`CraftExecutor`s do this via `CraftPlanner.slotAlternatives`. An executor that picks by inventory order
-instead can stall mid-job on plans that share stock across slots or steps (issues #10, #18).
+**Executor contract (since 1.1.0).** A plan carries its own per-slot item choice:
+`Result.Success.layouts()`, aligned 1:1 with `steps()`, holds per step a list of `SlotLayout` runs —
+`crafts` consecutive crafts that put `items().get(i)` into non-empty slot `i` of the recipe
+(`RecipeInfo.ingredientSlots()` with blank cells dropped; every item one of that slot's alternatives).
+`solve` accepts a plan only when it replays from the planned inventory under those fixed layouts, so
+the choice the planner made (which alternative each slot group takes, keeping sub-crafts from eating
+the only copy a later step needs — issue #23) is the one that executes. An executor takes a stack of
+the item its step's layout names for each slot, falling back to `SlotAssignment.assign(slots, stock)`
+only when the inventory no longer matches the plan: build `slots` exactly as its
+`RecipeInfo.ingredientSlots()` (blank cells dropped) and `stock` from the same pool and filter the
+planner snapshots, then take a stack of the item named for each slot (falling back to its own matching
+only when none fits). SprawlCrafting's three `CraftExecutor`s pick via `CraftPlanner.slotAlternatives`.
+An executor that picks by inventory order instead can stall mid-job on plans that share stock across
+slots or steps (issues #10, #18); in 1.0.x, before layouts, that same limitation bound the solver
+itself.
 
 | | |
 |---|---|

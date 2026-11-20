@@ -78,15 +78,6 @@ public final class CraftExecutor {
     }
 
     /**
-     * {@link #craftOnce(ServerPlayer, ResourceLocation, ProducedLedger, boolean)} for a job that is not
-     * planned on a crafting station's storage.
-     */
-    public static CraftResult craftOnce(ServerPlayer player, ResourceLocation recipeId,
-                                        ProducedLedger<Item, LedgerVariant> ledger) {
-        return craftOnce(player, recipeId, ledger, false);
-    }
-
-    /**
      * One craft against the live inventory and, when the player has a usable crafting station open, its
      * storage. {@code stationPlanned} says the job's plan counted on that storage
      * ({@link CraftJob#stationDependent()}): its crafts are assigned over inventory plus station stock,
@@ -94,9 +85,14 @@ public final class CraftExecutor {
      * touches the network while its own items cover the craft, and reaches into the station only for what
      * the inventory has since lost (the player moved items mid-job). {@link CraftResult.Success#usedStation()}
      * reports that, so the job pauses rather than cancels once the station goes away.
+     *
+     * <p>{@code layout} is the plan's per-slot item choice for this craft
+     * ({@link CraftJob#currentCraftLayout()}); null or a layout the live pool can no longer honor falls
+     * back to {@link SlotAssignment}.
      */
     public static CraftResult craftOnce(ServerPlayer player, ResourceLocation recipeId,
-                                        ProducedLedger<Item, LedgerVariant> ledger, boolean stationPlanned) {
+                                        ProducedLedger<Item, LedgerVariant> ledger,
+                                        boolean stationPlanned, List<Item> layout) {
         RecipeHolder<?> holder = RecipeIds.byId(player.level().getServer().getRecipeManager(), recipeId).orElse(null);
         if (holder == null || !(holder.value() instanceof CraftingRecipe recipe)) {
             return new CraftResult.RecipeGone();
@@ -119,13 +115,13 @@ public final class CraftExecutor {
         StationStorage station = StationStorages.open(player);
         Assignment assignment = null;
         if (station == null || !stationPlanned) {
-            assignment = assign(inventory, ingredients, ledger, null);
+            assignment = assign(inventory, ingredients, ledger, null, layout);
             if (assignment.missing() != null && station != null) {
                 assignment = null; // the inventory alone fell short: let the open station supply the rest
             }
         }
         if (assignment == null) {
-            assignment = assign(inventory, ingredients, ledger, station);
+            assignment = assign(inventory, ingredients, ledger, station, layout);
         }
         if (assignment.missing() != null) {
             return new CraftResult.MissingIngredient(describe(assignment.missing()));
@@ -266,9 +262,16 @@ public final class CraftExecutor {
      *
      * <p>The caller guarantees {@code player.containerMenu} is the open crafting grid and
      * fits the recipe (see {@code CraftQueueManager}); this re-resolves the grid defensively.
+     *
+     * <p>{@code layout} is the plan's per-slot item choice for this final craft
+     * ({@link CraftJob#currentCraftLayout()}); null or a layout the live pool can no longer honor
+     * falls back to {@link SlotAssignment}. It picks the stacks only on the manual lay-out (it also
+     * feeds the probe that decides whether that path is needed); vanilla's recipe-book placement
+     * picks its own stacks, which is safe because this is the job's last craft and no later
+     * step depends on which alternative it consumes.
      */
     public static FillOutcome tryFillFinalGrid(ServerPlayer player, ResourceLocation recipeId,
-                                               ProducedLedger<Item, LedgerVariant> ledger) {
+                                               ProducedLedger<Item, LedgerVariant> ledger, List<Item> layout) {
         RecipeHolder<?> holder = RecipeIds.byId(player.level().getServer().getRecipeManager(), recipeId).orElse(null);
         if (holder == null || !(holder.value() instanceof CraftingRecipe recipe)) {
             return new FillOutcome.RecipeGone();
@@ -294,13 +297,14 @@ public final class CraftExecutor {
             return new FillOutcome.Fallback();
         }
         List<Ingredient> cells = gridLayout(recipe, grid.width(), grid.height());
-        boolean needsLedger = cells != null && assign(player.getInventory(), cells, null).missing() != null
-                && assign(player.getInventory(), cells, ledger).missing() == null;
+        boolean needsLedger = cells != null
+                && assign(player.getInventory(), cells, null, null, layout).missing() != null
+                && assign(player.getInventory(), cells, ledger, null, layout).missing() == null;
         if (needsLedger || !grid.recipeBookPlacement()) {
             // No handlePlacement outside a recipe-book menu, so the layout is ours; a recipe that does
             // not fit the grid has nothing to lay out there (vanilla's own no-op falls through below).
             return cells == null ? new FillOutcome.Fallback()
-                    : placeFromLedger(player, menu, grid, cells, expected, ledger);
+                    : placeFromLedger(player, menu, grid, cells, expected, ledger, layout);
         }
         //? if >=1.21.11 {
         /*if (!(menu instanceof net.minecraft.world.inventory.AbstractCraftingMenu craftingMenu)) {
@@ -414,12 +418,15 @@ public final class CraftExecutor {
      * inventory, else feet); the rest goes to the main inventory, all of it or none
      * ({@link #returnGridToInventory} semantics), so inventory items that do not fit stay in the grid —
      * visible, never voided or duplicated.
+     *
+     * <p>{@code layout} is the plan's per-slot item choice for this craft (null: none); see
+     * {@link #tryFillFinalGrid}.
      */
     private static FillOutcome placeFromLedger(ServerPlayer player,
                                                net.minecraft.world.inventory.AbstractContainerMenu menu,
                                                CraftingGrids.Grid grid,
                                                List<Ingredient> cells, ItemStack expected,
-                                               ProducedLedger<Item, LedgerVariant> ledger) {
+                                               ProducedLedger<Item, LedgerVariant> ledger, List<Item> layout) {
         if (!returnGridToInventory(player, menu, grid)) {
             return new FillOutcome.Fallback();
         }
@@ -430,9 +437,9 @@ public final class CraftExecutor {
         // Phase 1: match every cell to an inventory slot without mutating; an open station joins the
         // pool only for what the inventory lacks, exactly as craftOnce assigns a non-station-planned job.
         StationStorage station = StationStorages.open(player);
-        Assignment assignment = assign(inventory, cells, ledger, null);
+        Assignment assignment = assign(inventory, cells, ledger, null, layout);
         if (assignment.missing() != null && station != null) {
-            assignment = assign(inventory, cells, ledger, station);
+            assignment = assign(inventory, cells, ledger, station, layout);
         }
         if (assignment.missing() != null) {
             return new FillOutcome.Fallback();
@@ -647,6 +654,9 @@ public final class CraftExecutor {
         //?}
     }
 
+    /** A cell {@link #assign} fills from the crafting station's storage, not an inventory slot. */
+    private static final int STATION_CELL = -2;
+
     /**
      * One inventory slot per ingredient ({@code -1} for an empty cell), chosen without mutating
      * anything, or the first ingredient nothing could satisfy. A stack {@link #usableAsIngredient}
@@ -655,25 +665,16 @@ public final class CraftExecutor {
      * those the player held before the job produced anything, per variant. Every pick is recorded in
      * the tally, which {@link Assignment#chargeTo} charges: rejected picks, plus plain picks beyond
      * the job's rejected copies of that item the player still holds.
-     */
-    private static Assignment assign(Inventory inventory, List<Ingredient> ingredients,
-                                     ProducedLedger<Item, LedgerVariant> ledger) {
-        return assign(inventory, ingredients, ledger, null);
-    }
-
-    /** A cell {@link #assign} fills from the crafting station's storage, not an inventory slot. */
-    private static final int STATION_CELL = -2;
-
-    /**
-     * {@link #assign(Inventory, List, ProducedLedger)} with an open crafting station's storage
-     * ({@code station}, null for none) in the pool. The station joins the pool the planner counted:
-     * {@link #preferredItems} picks each cell's item from inventory plus station stock, exactly as the
-     * plan's {@link SlotAssignment} did. Within that item the player's own stacks go first, so a craft
+     *
+     * <p>An open crafting station's storage ({@code station}, null for none) joins the pool, as it
+     * joined the planner's: {@link #preferredItems} picks each cell's item from inventory plus station
+     * stock, following the plan's layout when it still fits that pool and falling back to
+     * {@link SlotAssignment} otherwise. Within that item the player's own stacks go first, so a craft
      * only reaches into the station for what the inventory lacks:
      * <ol>
      *   <li>the preferred item from the inventory;</li>
      *   <li>the preferred item from the station (rather than an inventory alternative: taking a
-     *       different item than the plan's rule chose could starve a later step the plan counted on);</li>
+     *       different item than the plan chose could starve a later step the plan counted on);</li>
      *   <li>any usable inventory match;</li>
      *   <li>any of the ingredient's items from the station;</li>
      *   <li>(with a ledger) a refused inventory stack the tally admits, the last resort as before.</li>
@@ -681,9 +682,13 @@ public final class CraftExecutor {
      * Station cells are marked {@link #STATION_CELL} and summed per item in
      * {@link Assignment#stationTakes}; they count as plain picks in the tally (a station only holds
      * plain items), which can only draw the ledger down, never admit more.
+     *
+     * <p>{@code layout} is the plan's per-slot item choice for this craft, one entry per non-empty
+     * cell in cell order (null or a mismatch: decide with {@link SlotAssignment}); see
+     * {@link #preferredItems}.
      */
-    private static Assignment assign(Inventory inventory, List<Ingredient> ingredients,
-                                     ProducedLedger<Item, LedgerVariant> ledger, StationStorage station) {
+    private static Assignment assign(Inventory inventory, List<Ingredient> ingredients, ProducedLedger<Item, LedgerVariant> ledger,
+                                     StationStorage station, List<Item> layout) {
         int[] slots = new int[ingredients.size()];
         Item[] stationItems = new Item[ingredients.size()];
         int[] reserved = new int[Inventory.INVENTORY_SIZE];
@@ -693,7 +698,7 @@ public final class CraftExecutor {
             tally.open(ledger);
         }
         StationPool pool = station == null ? null : new StationPool(station);
-        Item[] preferred = preferredItems(inventory, ingredients, pool);
+        Item[] preferred = preferredItems(inventory, ingredients, pool, layout);
         for (int n = 0; n < slots.length; n++) {
             Ingredient ingredient = ingredients.get(n);
             if (ingredient == null || ingredient.isEmpty()) {
@@ -851,14 +856,17 @@ public final class CraftExecutor {
     }
 
     /**
-     * Per ingredient, the item {@link SlotAssignment} picks for it from the usable stacks of the 36
-     * main slots (null for a blank cell or when nothing usable fits). The solver plans every craft
-     * with the same rule over the same slot lists ({@link CraftPlanner#slotAlternatives}) and counts,
-     * so each craft takes what the plan counted on, not whichever stack sits first in the inventory.
-     * With a crafting station open ({@code pool} non-null) its stock of every candidate item joins the
-     * counts, as it joined the plan's snapshot.
+     * Per ingredient, the item the plan's layout fixes for it when that choice still fits the live
+     * pool, else the item {@link SlotAssignment} picks from it (null for a blank cell or when nothing
+     * usable fits). The layout is honored only when every one of its items is still an alternative of
+     * its slot and the pooled stock — the usable stacks of the 36 main slots plus an open station's
+     * storage, exactly what the plan counted — covers this craft's use of each; the player may have
+     * moved items since, and a stale layout must not override what the pool can actually supply.
+     * {@link SlotAssignment} runs over the same slot lists ({@link CraftPlanner#slotAlternatives})
+     * and the same counts, so its fallback still takes what a plan made without layouts counted on.
      */
-    private static Item[] preferredItems(Inventory inventory, List<Ingredient> ingredients, StationPool pool) {
+    private static Item[] preferredItems(Inventory inventory, List<Ingredient> ingredients, StationPool pool,
+                                         List<Item> layout) {
         Map<Item, Integer> stock = new HashMap<>();
         for (int i = 0; i < Inventory.INVENTORY_SIZE; i++) {
             ItemStack stack = inventory.getItem(i);
@@ -866,18 +874,17 @@ public final class CraftExecutor {
                 stock.merge(stack.getItem(), stack.getCount(), Integer::sum);
             }
         }
-        List<List<Item>> slots = new ArrayList<>();
-        List<Integer> cells = new ArrayList<>();
-        for (int n = 0; n < ingredients.size(); n++) {
-            Ingredient ingredient = ingredients.get(n);
-            if (ingredient != null && !ingredient.isEmpty()) {
-                slots.add(CraftPlanner.slotAlternatives(ingredient));
-                cells.add(n);
-            }
+        List<List<Item>> cells = new ArrayList<>();
+        for (Ingredient ingredient : ingredients) {
+            cells.add(ingredient == null || ingredient.isEmpty() ? null : CraftPlanner.slotAlternatives(ingredient));
         }
         if (pool != null) {
             java.util.Set<Item> candidates = new java.util.HashSet<>();
-            slots.forEach(candidates::addAll);
+            for (List<Item> cell : cells) {
+                if (cell != null) {
+                    candidates.addAll(cell);
+                }
+            }
             for (Item item : candidates) {
                 long inStation = pool.count(item);
                 if (inStation > 0) {
@@ -886,12 +893,48 @@ public final class CraftExecutor {
                 }
             }
         }
-        List<Item> chosen = SlotAssignment.assign(slots, stock);
-        Item[] preferred = new Item[ingredients.size()];
-        for (int s = 0; s < cells.size(); s++) {
-            preferred[cells.get(s)] = chosen.get(s);
+        // The layout is indexed by non-empty cell, as the solver's slots are.
+        List<List<Item>> slots = new ArrayList<>();
+        for (List<Item> cell : cells) {
+            if (cell != null) {
+                slots.add(cell);
+            }
         }
-        return preferred;
+        if (layout != null && layout.size() == slots.size() && layoutFits(layout, slots, stock)) {
+            Item[] preferred = new Item[cells.size()];
+            int s = 0;
+            for (int n = 0; n < cells.size(); n++) {
+                if (cells.get(n) != null) {
+                    preferred[n] = layout.get(s++);
+                }
+            }
+            return preferred;
+        }
+        return SlotAssignment.assignCells(cells, stock).toArray(new Item[0]);
+    }
+
+    /**
+     * Whether the plan's layout can still be laid on the live pool: every item remains an alternative
+     * of its slot (the i-th entry belongs to the i-th non-empty cell, the order {@code slots} is built
+     * in), and the pool holds at least as many of each item as this one craft uses of it.
+     */
+    private static boolean layoutFits(List<Item> layout, List<List<Item>> slots, Map<Item, Integer> stock) {
+        Map<Item, Integer> uses = new HashMap<>();
+        for (int i = 0; i < layout.size(); i++) {
+            Item item = layout.get(i);
+            // Null guard: a plan's SlotLayout never holds one, and immutable alternative lists
+            // (1.21.11+) throw on contains(null) rather than answering false.
+            if (item == null || !slots.get(i).contains(item)) {
+                return false;
+            }
+            uses.merge(item, 1, Integer::sum);
+        }
+        for (Map.Entry<Item, Integer> use : uses.entrySet()) {
+            if (stock.getOrDefault(use.getKey(), 0) < use.getValue()) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**

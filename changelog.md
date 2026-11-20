@@ -2,9 +2,13 @@
 - Added a "Cancel deferred craft" key (unbound by default; set it under Controls) that stops a running or paused craft. Everything already crafted stays in your inventory. Needs the mod on the server too
 - {1.21.1} Added a Forge build for Minecraft 1.21.1 (Forge 52.1 and newer)
 - {1.20.1} The Applied Energistics 2 Crafting Terminal (wired and wireless) now works with SprawlCrafting on Forge: yellow recipes in JEI craft using items from your ME network
+- {1.20.1} The Applied Energistics 2 Crafting Terminal (wired and wireless) now works with SprawlCrafting on Fabric too: yellow recipes in JEI craft using items from your ME network
+- {26.1.2, 26.2, 26.3} The Applied Energistics 2 Crafting Terminal (wired and wireless) now works with SprawlCrafting on NeoForge: yellow recipes in JEI craft using items from your ME network
 - {1.16.5} The Applied Energistics 2 Crafting Terminal now works with SprawlCrafting on Forge: yellow recipes in JEI craft using items from your ME network, the final item is placed in the terminal's crafting grid for you to take, and starting a craft moves anything left in that grid into your inventory
 - {1.20.1, 1.21.1} With an AE2 Crafting Terminal open, the final item of a craft is placed in the terminal's crafting grid for you to take, like at a crafting table; starting a craft moves anything left in that grid into your inventory
 - Very large crafts (thousands to millions of repeats, e.g. from an ME network) now finish much faster: each tick crafts as many as fit in its time limit instead of stopping at 64
 - {1.16.5, 1.20.1, 1.21.1} Huge crafts no longer show as "not enough resources" when your ME network or storage has an infinite source (AE2 creative cells, Sophisticated Storage infinity upgrade)
 - {1.12.2} Fixed the recipe book's yellow recipes: the second click now starts the craft (it often did nothing until you reopened the crafting table), the craft preview only shows while you hover that recipe, and the faded recipe outline no longer hides finished items in the crafting grid
+- {1.12.2} Recipes that can use either of two items in one spot (say, any planks) now place straight into the crafting grid when you have exactly enough, instead of being crafted step by step; on servers without the mod, the JEI "+" button no longer leaves such a recipe half-filled in the grid
 - {1.12.2} A long item name in the "Materials needed" screen title no longer runs off the panel: the panel widens to fit it, and if it still cannot fit it is cut short and shows the full name on hover
+- Recipes that need a specific item now craft when a step earlier in the chain could use either that item or a substitute: SprawlCrafting picks the substitute there instead of reporting the recipe as not craftable

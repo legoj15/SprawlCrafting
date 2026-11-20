@@ -14,7 +14,11 @@ import com.legoj15.sprawlcrafting.craft.GridContext;
 
 import mezz.jei.api.constants.RecipeTypes;
 import mezz.jei.api.gui.ingredient.IRecipeSlotsView;
+//? if >=1.21.11 {
+/*import mezz.jei.api.recipe.types.IRecipeType;*/
+//?} else {
 import mezz.jei.api.recipe.RecipeType;
+//?}
 import mezz.jei.api.recipe.transfer.IRecipeTransferError;
 import mezz.jei.api.recipe.transfer.IRecipeTransferHandler;
 import mezz.jei.api.recipe.transfer.IRecipeTransferHandlerHelper;
@@ -30,17 +34,19 @@ import net.minecraft.world.item.crafting.RecipeHolder;
  * book). AE2 19.x (the 1.21.1 line) has no JEI module of its own, so every craft goes through the
  * engine: green (all direct ingredients in inventory + storage) and yellow (needs intermediates) both
  * start a job, the single-step green one simply crafts into the inventory; red opens the gather list
- * (needs system on), as the crafting-table handler does. AE2 15 (1.20.1) does have one, passed in as
- * the {@code stock} delegate ({@code Ae2JeiStock}); wherever the engine adds nothing, stock answers
- * instead: integration off, an offline terminal (the server plans it as the 2x2 inventory), a direct
- * craft (AE2 lays the recipe into the terminal grid from the network) and an unsolvable recipe with
- * the needs helper off. The deferred and gather paths stay the engine's either way.
+ * (needs system on), as the crafting-table handler does. AE2 15 (1.20.1) and AE2 26.x do have one,
+ * passed in as the {@code stock} delegate ({@code Ae2JeiStock}); wherever the engine adds nothing,
+ * stock answers instead: integration off, an offline terminal (the server plans it as the 2x2
+ * inventory), a direct craft (AE2 lays the recipe into the terminal grid from the network) and an
+ * unsolvable recipe with the needs helper off. The deferred and gather paths stay the engine's either
+ * way; on 26.x the client cannot tell a direct craft from an unsolvable recipe (it only has the
+ * server-synced deferred set), so there AE2's simulated answer decides — see the gated branch in
+ * {@code transferRecipe}.
  *
  * <p>Generic over the menu class (from {@code StationStorages.menus()}), so it never links AE2.
  */
 // JEI's recipe type R is RecipeHolder<CraftingRecipe> on 1.20.2+, but the bare CraftingRecipe on 1.20.1
-// (JEI 15); the 1.20.1 branch wraps it in the RecipeHolder shim at the top of transferRecipe. This
-// package never compiles above 1.21.1, so no 1.21.11 IRecipeType branch is needed here.
+// (JEI 15); the 1.20.1 branch wraps it in the RecipeHolder shim at the top of transferRecipe.
 //? if >=1.20.2 {
 public class StationTransferHandler<C extends AbstractContainerMenu>
         implements IRecipeTransferHandler<C, RecipeHolder<CraftingRecipe>> {
@@ -53,8 +59,8 @@ public class StationTransferHandler<C extends AbstractContainerMenu>
     private final MenuType<C> menuType;
     private final IRecipeTransferHandlerHelper helper;
     //? if >=1.20.2 {
-    // The menu's own (AE2 15) handler for stock behaviour, or null where AE2 ships none (19.x); the
-    // stock calls below are dead branches then. Null on 1.21.1, the only line that compiles there.
+    // The menu's own (AE2 15 on 1.20.1, AE2 26.x) handler for stock behaviour, or null where AE2 ships
+    // none (19.x, the 1.21.1 line); the stock calls below are dead branches then.
     private final IRecipeTransferHandler<C, RecipeHolder<CraftingRecipe>> stock;
     //?} else {
     /*private final IRecipeTransferHandler<C, CraftingRecipe> stock;*/
@@ -84,7 +90,9 @@ public class StationTransferHandler<C extends AbstractContainerMenu>
     }
 
     @Override
-    //? if >=1.20.2 {
+    //? if >=1.21.11 {
+    /*public IRecipeType<RecipeHolder<CraftingRecipe>> getRecipeType() {*/
+    //?} else if >=1.20.2 {
     public RecipeType<RecipeHolder<CraftingRecipe>> getRecipeType() {
     //?} else {
     /*public RecipeType<CraftingRecipe> getRecipeType() {*/
@@ -118,6 +126,53 @@ public class StationTransferHandler<C extends AbstractContainerMenu>
         if (!usable && stock != null) {
             return busyOr(() -> stock.transferRecipe(container, recipe, recipeSlots, player, maxTransfer, doTransfer));
         }
+        //? if >=1.21.11 {
+        /*// 26.x: the client has no recipe contents, so DeferredCraftableCache.classify can only answer
+        // DEFERRED (the server's synced set says so) or UNSOLVABLE — its "not deferred" bucket holds both
+        // directly craftable and truly unsolvable recipes, indistinguishably. AE2's simulated result
+        // decides: asked with doTransfer=false it returns null (or an internal error) when inventory +
+        // network hold everything — a direct craft — and a user-facing / cosmetic error when a slot is
+        // missing or only AE2-autocraftable (the planner ignores AE2 patterns, as on 1.20.1): the gather
+        // list, or AE2's own report with the helper off. The simulation never transfers, so only the
+        // performing calls are busy-guarded; the gather list stays available mid-job, as at the table.
+        Craftability craftability = DeferredCraftableCache.classify(holder, GridContext.CRAFTING_TABLE);
+        if (craftability == Craftability.DEFERRED) {
+            // Busy first: a second craft mid-job would race the running one for the same materials.
+            if (ClientJobTracker.hasActiveJob()) {
+                return helper.createUserErrorWithTooltip(Component.translatable("sprawlcrafting.craft.busy"));
+            }
+            if (doTransfer) {
+                DeferredClickState.sendStartPacket(holder);
+                return null;
+            }
+            return DeferredTransfers.DEFERRED_AVAILABLE;
+        }
+        // stock is never null here: StationJeiPlugin's >=1.21.11 branch always builds AE2 26.x's handler.
+        IRecipeTransferError simulated =
+                stock.transferRecipe(container, recipe, recipeSlots, player, maxTransfer, false);
+        boolean missing = simulated != null && (simulated.getType() == IRecipeTransferError.Type.USER_FACING
+                || simulated.getType() == IRecipeTransferError.Type.COSMETIC);
+        if (!missing) {
+            // Everything present (or another AE2 answer, passed through): AE2's own transfer handles it.
+            // Drawing the button needs no second scan: the simulation already is AE2's answer.
+            return doTransfer || ClientJobTracker.hasActiveJob()
+                    ? busyOr(() -> stock.transferRecipe(container, recipe, recipeSlots, player, maxTransfer, doTransfer))
+                    : simulated;
+        }
+        if (SprawlConfig.get().needsSystem()) {
+            if (doTransfer) {
+                // Same as the crafting-table handler: open after JEI's click handling settles.
+                MissingIngredients.requestOpenNextTick(
+                        () -> MissingIngredientsView.open(holder, GridContext.CRAFTING_TABLE));
+                return null;
+            }
+            return DeferredTransfers.gatherListError(holder);
+        }
+        // Helper off: AE2's own missing report (or its partial transfer on the click), same shape as above.
+        return doTransfer || ClientJobTracker.hasActiveJob()
+                ? busyOr(() -> stock.transferRecipe(container, recipe, recipeSlots, player, maxTransfer, doTransfer))
+                : simulated;*/
+        //?} else {
         GridContext grid = usable ? GridContext.CRAFTING_TABLE : GridContext.INVENTORY;
         Craftability craftability = DeferredCraftableCache.classify(holder, grid);
         if (craftability == Craftability.DIRECT || craftability == Craftability.DEFERRED) {
@@ -149,6 +204,7 @@ public class StationTransferHandler<C extends AbstractContainerMenu>
             return busyOr(() -> stock.transferRecipe(container, recipe, recipeSlots, player, maxTransfer, doTransfer));
         }
         return helper.createUserErrorWithTooltip(Component.translatable("jei.tooltip.error.recipe.transfer.missing"));
+        //?}
     }
 
     /**

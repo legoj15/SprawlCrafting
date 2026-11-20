@@ -144,9 +144,16 @@ public final class ServerGridPlacer {
      * <p>The vanilla counting skips damaged, enchanted, and renamed stacks, so when the craft
      * needs an intermediate the job made that has since been altered (see {@link ProducedLedger}),
      * {@link #placeFromLedger} lays out the executor's own assignment instead.
+     *
+     * <p>{@code layout} is the plan's per-slot item choice for this final craft
+     * ({@code CraftJob.currentCraftLayout()}); null or a layout the live pool can no longer honor
+     * falls back to {@link com.legoj15.solver.SlotAssignment}. Only {@link #placeFromLedger} reads it:
+     * vanilla's {@code distribute} picks its own stacks, which is safe because this is the job's last
+     * craft and no later step depends on which alternative it consumes.
      */
     public static HandOffResult placeFinalCraft(EntityPlayerMP player, IRecipe recipe,
-                                                ProducedLedger<ItemKey, CraftExecutor.LedgerVariant> ledger) {
+                                                ProducedLedger<ItemKey, CraftExecutor.LedgerVariant> ledger,
+                                                List<ItemKey> layout) {
         if (player.isSpectator()) {
             return HandOffResult.FALLBACK;
         }
@@ -166,7 +173,7 @@ public final class ServerGridPlacer {
         accountStationChest(player, helper);
         IntList packed = new IntArrayList();
         if (!helper.canCraft(recipe, packed, 1)) {
-            return placeFromLedger(player, container, grid, recipe, ledger);
+            return placeFromLedger(player, container, grid, recipe, ledger, layout);
         }
         returnGridToInventory(player, grid);
         distribute(player, grid, recipe, 1, packed);
@@ -188,17 +195,21 @@ public final class ServerGridPlacer {
      * cell, then verifies and reverts exactly like {@link #placeFinalCraft}. Any other refusal
      * (genuinely missing materials, NBT-sensitive ingredients the vanilla path handles) stays a
      * FALLBACK, untouched.
+     *
+     * <p>{@code layout} is the plan's per-slot item choice for this craft (null: none); see
+     * {@link #placeFinalCraft}.
      */
     private static HandOffResult placeFromLedger(EntityPlayerMP player, Container container, Grid grid,
                                                  IRecipe recipe,
-                                                 ProducedLedger<ItemKey, CraftExecutor.LedgerVariant> ledger) {
+                                                 ProducedLedger<ItemKey, CraftExecutor.LedgerVariant> ledger,
+                                                 List<ItemKey> layout) {
         List<Ingredient> cells = gridLayout(recipe, grid.width(), grid.height());
-        if (cells == null || CraftExecutor.assign(player, cells, null).complete()
-                || !CraftExecutor.assign(player, cells, ledger).complete()) {
+        if (cells == null || CraftExecutor.assign(player, cells, null, layout).complete()
+                || !CraftExecutor.assign(player, cells, ledger, layout).complete()) {
             return HandOffResult.FALLBACK;
         }
         returnGridToInventory(player, grid);
-        CraftExecutor.Assignment assignment = CraftExecutor.assign(player, cells, ledger);
+        CraftExecutor.Assignment assignment = CraftExecutor.assign(player, cells, ledger, layout);
         if (!assignment.complete()) {
             finishSync(player, container);
             return HandOffResult.FALLBACK;
