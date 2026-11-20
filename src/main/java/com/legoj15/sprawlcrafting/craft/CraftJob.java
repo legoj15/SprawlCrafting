@@ -149,8 +149,8 @@ public final class CraftJob {
      * The plan's per-slot items for the craft about to run — the layout run covering
      * {@code craftsDoneInStep} within the current step — or null when the step carries no layout
      * (a step built without one, or the counter past the last run: defensive, the step advances with
-     * the last craft): the executor then falls back to {@code SlotAssignment}. Must be read before
-     * {@link #onCraftPerformed()}, which advances the counter (and the step).
+     * the last craft) or the job is finished: the executor then falls back to {@code SlotAssignment}.
+     * Read it before {@link #onCraftPerformed()}, which advances the counter (and the step).
      */
     public List<Item> currentCraftLayout() {
         if (isFinished()) {

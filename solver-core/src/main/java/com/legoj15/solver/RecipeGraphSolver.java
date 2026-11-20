@@ -138,8 +138,10 @@ public final class RecipeGraphSolver<R, K> {
             /**
              * @param steps   the ordered steps to run
              * @param layouts per step (aligned 1:1 with {@code steps}), the step's {@link SlotLayout}
-             *                runs: consecutive crafts with identical layouts compressed, so adjacent
-             *                runs never list equal items, and each step's runs sum to its crafts
+             *                runs, or an empty list for "no layout": consecutive crafts with identical
+             *                layouts compressed, so adjacent runs never list equal items; every run of
+             *                a step lists the same number of slots; a non-empty step's runs sum to its
+             *                crafts
              * @throws IllegalArgumentException when the two lists are not aligned 1:1 or a step's
              *                                  runs break those invariants
              */
@@ -165,7 +167,7 @@ public final class RecipeGraphSolver<R, K> {
                                     + r + " list equal items: consecutive runs must be merged");
                         }
                     }
-                    if (crafts != steps.get(i).crafts()) {
+                    if (!runs.isEmpty() && crafts != steps.get(i).crafts()) {
                         throw new IllegalArgumentException("step " + i + " runs sum to " + crafts
                                 + " crafts, step holds " + steps.get(i).crafts());
                     }
