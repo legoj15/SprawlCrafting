@@ -130,9 +130,10 @@ public final class LedgerTally<K, V> {
         return Math.max(0, get(refusedHeld, variant) - ledger.preexisting(variant));
     }
 
+    /** Saturates at Integer.MAX_VALUE: a held count that wrapped negative would freeze into a baseline that admits the player's own copies. */
     private static <K> void add(Map<K, Integer> map, K key, int count) {
         Integer current = map.get(key);
-        map.put(key, current == null ? count : current + count);
+        map.put(key, current == null ? count : (int) Math.min((long) current + count, Integer.MAX_VALUE));
     }
 
     private static <K> int get(Map<K, Integer> map, K key) {
