@@ -15,9 +15,9 @@ import java.util.Set;
  *
  * <p>Rejected copies the player held before the job produced anything are the player's own, and the
  * ledger keeps that count per variant (the tallies opened before any production record it). {@code held}
- * spans all the player's holdings — the consumable pool plus the offhand, armour, cursor, and open
- * crafting-grid slots no finder may pick from — which is what makes moving a stack between holdings
- * neutral. Only rejected copies above the baseline can be the job's: a rejected pick of a variant is
+ * spans the player's holdings the executor can see — the slots it picks from plus any it may not
+ * (offhand, armour, cursor, a crafting grid outside the pool) — which is what makes moving a stack
+ * between them neutral. Only rejected copies above the baseline can be the job's: a rejected pick of a variant is
  * admitted while {@link #admits} says so, which caps the job's count at those copies per variant and
  * per identity, so the player's own altered copies held when the job started are never admitted and
  * admissions never exceed what the job produced. A player discarding (dropping, storing in a chest) a
@@ -25,7 +25,8 @@ import java.util.Set;
  * inadmissible — a safe stall — while a discarded copy of any other variant affects nothing. What
  * remains indistinguishable from the job's altered copies is a player-owned copy of exactly the same
  * variant — interchangeable with the job's in every observable way — and altered copies that enter the
- * player's holdings only after the job's first production (a pickup, an item altered mid-job); both
+ * holdings counted in {@code held} only after the job's first production (a pickup, an item altered
+ * mid-job, a copy taken out of storage the executor does not count); both
  * stay bounded by the produced count.
  *
  * <p>A plain pick needs no headroom, but it may be the job's own copy, and leaving its count behind

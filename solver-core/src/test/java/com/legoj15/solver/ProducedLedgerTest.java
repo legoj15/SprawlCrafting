@@ -137,8 +137,7 @@ class ProducedLedgerTest {
     void discardingThePlayersOwnVariantMidJobStillAdmitsTheJobs() {
         // Baseline 1 renamed sword; the job produces 1 sword, a mod enchants it, and the player then
         // discards their own renamed copy (drops it, stores it away). The player holds only the job's
-        // enchanted variant, which a
-        // per-identity baseline (held 1, baseline 1) would refuse and stall the job on.
+        // enchanted variant, which a per-identity baseline (held 1, baseline 1) would refuse and stall the job on.
         ProducedLedger<String, String> ledger = new ProducedLedger<>();
         tally(ledger, "sword", "sword#named", 1);
         ledger.produced("sword", 1);

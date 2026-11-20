@@ -749,9 +749,11 @@ public final class CraftExecutor {
     /**
      * Records in {@code tally} every stack among the player's holdings that {@link #usableAsIngredient}
      * rejects, per variant: the whole player inventory (36 main slots — the pool — plus armour and
-     * offhand), the carried stack of the open menu, and the open grid's input cells. Only the main
-     * slots are ever picked from; the rest are counted for the player's-own baseline alone, so moving
-     * a stack between holdings cannot make it look like one of the job's copies.
+     * offhand), the carried stack of the open menu, and the open grid's input cells. Rejected stacks
+     * are only ever picked from the main slots (an open station supplies plain items only, so its
+     * storage is not counted: a refused copy pulled out of it mid-job is an arrival, bounded by the
+     * produced count); the rest are counted for the player's-own baseline alone, so moving a stack
+     * between them cannot make it look like one of the job's copies.
      */
     private static void countRefused(PlayerInventory inventory, LedgerTally<Item, LedgerVariant> tally) {
         for (int i = 0; i < inventory.getContainerSize(); i++) {

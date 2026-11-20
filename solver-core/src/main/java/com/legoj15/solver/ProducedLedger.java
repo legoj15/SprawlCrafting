@@ -18,9 +18,9 @@ import java.util.Map;
  *
  * <p>Outstanding counts are keyed by identity rather than by the exact stack produced because the
  * alteration happens after production: the stack recorded at insertion and the stack found later no
- * longer compare equal. The player's-own baseline is keyed by variant instead and spans every one of
- * the player's holdings, so the player's altered copy of one variant says nothing about the job's
- * altered copies of another and moving a stack between holdings leaves the baseline unchanged; a copy
+ * longer compare equal. The player's-own baseline is keyed by variant instead and spans the player's
+ * holdings the executor counts, so the player's altered copy of one variant says nothing about the job's
+ * altered copies of another and moving a stack between those holdings leaves the baseline unchanged; a copy
  * the player discards (drops, stores in a chest) can only make that many of the job's copies of the
  * same variant inadmissible (a safe stall), never a player's own copy takeable.
  */

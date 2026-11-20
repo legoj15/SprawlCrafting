@@ -43,7 +43,7 @@ import net.minecraftforge.common.crafting.IShapedRecipe;
  *       slots and, when a recognised crafting station is open, its connected side inventory (a
  *       Tinkers' Construct Crafting Station's bound chest — see {@link ExternalSlots}). Armor and
  *       offhand are never consumed; the ledger's player-own baseline counts them, the cursor stack,
- *       and the open grid's cells read-only (see {@link #countRefused}), never as material. Results
+ *       and a staged grid's cells (outside the pool) read-only (see {@link #countRefused}). Results
  *       and crafting remainders are always inserted into the 36
  *       main slots, never the chest: consume-from-chest, deposit-to-player is safe and matches
  *       intuition. With a network crafting terminal open ({@link NetworkTerminals}, the AE2 Crafting
