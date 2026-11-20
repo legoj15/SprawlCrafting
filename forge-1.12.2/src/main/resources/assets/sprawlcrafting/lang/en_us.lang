@@ -12,7 +12,7 @@ sprawlcrafting.craft.ready_in_grid=%s done in the crafting grid
 sprawlcrafting.craft.missing=Crafting %s cancelled, %s went missing
 sprawlcrafting.craft.recipe_gone=Crafting %s cancelled, recipe no longer exists
 # craft.cancelled: the cancel keybind's feedback; counts arrive pre-formatted by CountFormat, done then total.
-sprawlcrafting.craft.cancelled=Cancelled crafting %s after %s of %s crafts
+sprawlcrafting.craft.cancelled=Cancelled crafting %s after %s out of %s crafts
 sprawlcrafting.craft.busy=Already crafting. Cancel it with the "Cancel deferred craft" key (Controls), or let it finish
 sprawlcrafting.craft.unknown_recipe=Unknown recipe %s??
 sprawlcrafting.craft.unsupported=%s is not a plannable crafting recipe

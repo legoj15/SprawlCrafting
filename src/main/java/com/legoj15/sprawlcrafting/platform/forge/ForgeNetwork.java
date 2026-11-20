@@ -52,9 +52,9 @@ import net.minecraftforge.network.simple.SimpleChannel;*/
  * same {@code sprawlcrafting:*} ids Fabric and NeoForge use.
  *
  * <p>Forge 47 (MC 1.20.1) predates payload channels: there the same three payloads ride one
- * {@code SimpleChannel} ({@code sprawlcrafting:main}, discriminators 0-2, frozen — append new messages
- * only) whose version predicates accept everything, including {@code ABSENT} (peer lacks the channel)
- * and {@code ACCEPTVANILLA} (vanilla peer), so it is optional both ways. Presence is per channel on that
+ * {@code SimpleChannel} ({@code sprawlcrafting:main}, discriminators 0-2, frozen: a peer on an older
+ * jar fails on any id it lacks, so nothing may be appended) whose version predicates accept
+ * everything, including {@code ABSENT} (peer lacks the channel) and {@code ACCEPTVANILLA} (vanilla peer), so it is optional both ways. Presence is per channel on that
  * line, not per payload ({@link #isRemotePresent}). {@code CancelCraftPayload} arrived after that
  * freeze, so on this line it rides its own {@code sprawlcrafting:cancel_craft} channel (discriminator 0)
  * built with the same predicates, and answers presence through {@link #isCancelRemotePresent}.
