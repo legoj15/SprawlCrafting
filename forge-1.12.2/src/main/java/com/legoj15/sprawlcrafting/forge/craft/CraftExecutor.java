@@ -40,7 +40,9 @@ import net.minecraftforge.common.crafting.IShapedRecipe;
  * <p>Invariants shared with {@link CraftPlanner}:
  * <ul>
  *   <li>Ingredients are consumed from the same pool the planner counted: the 36 main inventory
- *       slots and, when a recognised crafting station is open, its connected side inventory (a
+ *       slots, the open container's crafting grid while no complete craft is staged in it (see
+ *       {@link ExternalSlots#materialSlots}) and, when a recognised crafting station is open, its
+ *       connected side inventory (a
  *       Tinkers' Construct Crafting Station's bound chest — see {@link ExternalSlots}). Armor and
  *       offhand are never consumed; the ledger's player-own baseline counts them, the cursor stack,
  *       and a staged grid's cells (outside the pool) read-only (see {@link #countRefused}). Results
