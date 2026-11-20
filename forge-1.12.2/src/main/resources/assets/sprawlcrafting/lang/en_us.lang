@@ -19,7 +19,7 @@ sprawlcrafting.craft.unsupported=%s is not a plannable crafting recipe
 sprawlcrafting.craft.unsolvable=Not enough raw resources for %s (missing: %s)
 # unsolvable_order replaces unsolvable when nothing is missing: the materials are there, but every
 # order of crafts uses up an item a later step needs. Same single %s (the target) as modern.
-sprawlcrafting.craft.unsolvable_order=Can't plan %s: you have the materials, but every order of crafts uses up an item a later step needs
+sprawlcrafting.craft.unsolvable_order=Can't plan %s: you have the materials, but every craft order tried uses up an item a later step needs
 sprawlcrafting.craft.too_complex=The recipe tree for %s is too complex to plan
 sprawlcrafting.craft.needs_table=%s needs a crafting table.
 

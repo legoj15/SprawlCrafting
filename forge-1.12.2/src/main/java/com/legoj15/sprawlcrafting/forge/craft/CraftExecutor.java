@@ -539,8 +539,9 @@ public final class CraftExecutor {
     /**
      * Adds to {@code stock} the refused stacks of the pool that {@code admitting} still admits: the
      * job's altered intermediates, which the plan's counts include, so {@link #preferredKeys} must
-     * see them too. Budgeted per {@link #ledgerKey} by its outstanding count, added under
-     * {@link ItemKey#of} — the preference identity, which differs for damageable items.
+     * see them too. Budgeted and added per {@link #ledgerKey}, not {@link ItemKey#of}: the plan
+     * credited the fresh output, whose key is its ledger identity, and an altered damageable copy's
+     * own key carries its damage, which no slot alternative names.
      */
     private static void countAdmitted(List<Source> sources, ProducedLedger<ItemKey> admitting,
                                       Map<ItemKey, Integer> stock) {
@@ -555,9 +556,8 @@ public final class CraftExecutor {
             int add = (int) Math.min(stack.getCount(),
                     admitting.outstanding(identity) - (spent == null ? 0 : spent));
             if (add > 0) {
-                ItemKey key = ItemKey.of(stack);
-                Integer have = stock.get(key);
-                stock.put(key, NetworkTerminals.saturatedAdd(have == null ? 0 : have, add));
+                Integer have = stock.get(identity);
+                stock.put(identity, NetworkTerminals.saturatedAdd(have == null ? 0 : have, add));
                 counted.put(identity, (spent == null ? 0 : spent) + add);
             }
         }
@@ -652,8 +652,8 @@ public final class CraftExecutor {
     /**
      * A usable stack of {@code preferred} ({@link #preferredKeys}) when one matches; then a refused
      * copy of {@code preferred} the admitting ledger still admits (the job's altered intermediate,
-     * which the plan's counts include, matched on {@link ItemKey#of} and admitted by
-     * {@link #ledgerKey}); otherwise the first usable match in pool order, and only then (with a
+     * which the plan's counts include, matched and admitted by {@link #ledgerKey}, the identity
+     * {@link #countAdmitted} stocked it under); otherwise the first usable match in pool order, and only then (with a
      * ledger) any refused stack the ledger admits.
      */
     private static int findMatchingSource(List<Source> sources, Ingredient ingredient, ItemKey preferred,
@@ -670,11 +670,13 @@ public final class CraftExecutor {
             if (admitting != null) {
                 for (int i = 0; i < sources.size(); i++) {
                     ItemStack stack = sources.get(i).peek();
-                    if (stack.isEmpty() || stack.getCount() - reserved[i] <= 0
-                            || !preferred.equals(ItemKey.of(stack)) || usableAsIngredient(stack)) {
+                    if (stack.isEmpty() || stack.getCount() - reserved[i] <= 0 || usableAsIngredient(stack)) {
                         continue;
                     }
                     ItemKey key = ledgerKey(stack);
+                    if (!preferred.equals(key)) {
+                        continue;
+                    }
                     Integer taken = ledgerTakes.get(key);
                     if (admitting.canTake(key, taken == null ? 0 : taken) && ingredient.apply(stack)) {
                         return i;
