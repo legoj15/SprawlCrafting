@@ -147,10 +147,13 @@ public class StationTransferHandler<C extends AbstractContainerMenu>
             }
             return DeferredTransfers.DEFERRED_AVAILABLE;
         }
+        // stock is never null here: StationJeiPlugin's >=1.21.11 branch always builds AE2 26.x's handler.
         IRecipeTransferError simulated =
                 stock.transferRecipe(container, recipe, recipeSlots, player, maxTransfer, false);
-        if (simulated == null || simulated.getType() == IRecipeTransferError.Type.INTERNAL) {
-            // Everything present (or AE2 cannot say): AE2's own direct transfer lays it into the grid.
+        boolean missing = simulated != null && (simulated.getType() == IRecipeTransferError.Type.USER_FACING
+                || simulated.getType() == IRecipeTransferError.Type.COSMETIC);
+        if (!missing) {
+            // Everything present (or another AE2 answer, passed through): AE2's own transfer handles it.
             // Drawing the button needs no second scan: the simulation already is AE2's answer.
             return doTransfer || ClientJobTracker.hasActiveJob()
                     ? busyOr(() -> stock.transferRecipe(container, recipe, recipeSlots, player, maxTransfer, doTransfer))
