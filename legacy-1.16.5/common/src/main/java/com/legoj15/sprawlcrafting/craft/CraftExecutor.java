@@ -1721,8 +1721,8 @@ public final class CraftExecutor {
         if (station != null) {
             try {
                 stillAcceptable = station.acceptable(overflow, overflow.getCount());
-            } catch (RuntimeException | LinkageError ignored) {
-                // Diagnostics only.
+            } catch (RuntimeException | Error ignored) {
+                // Diagnostics only: whatever the station's mod throws, the overflow must still drop below.
             }
         }
         Constants.LOG.warn("SprawlCrafting: dropping {} x{} at the player's feet (station: {}, took part of it: {},"

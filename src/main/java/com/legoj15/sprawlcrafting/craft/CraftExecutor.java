@@ -68,7 +68,9 @@ public final class CraftExecutor {
 
         /**
          * A bulk step refused this craft before anything moved: its result or a remainder had nowhere
-         * to go ({@code item} names what did not fit; see {@code craftOnce}'s {@code refuseSpill}).
+         * to go ({@code item} names what did not fit; see {@code craftOnce}'s {@code refuseSpill}). Also
+         * returned by {@code CraftQueueManager.craftBulk} after a craft that applied but still dropped
+         * {@code item} at the feet, so the job stops instead of repeating the drop.
          */
         record NoRoom(Component item) implements CraftResult {}
 
@@ -1722,8 +1724,8 @@ public final class CraftExecutor {
         if (station != null) {
             try {
                 stillAcceptable = station.acceptable(overflow, overflow.getCount());
-            } catch (RuntimeException | LinkageError ignored) {
-                // Diagnostics only.
+            } catch (RuntimeException | Error ignored) {
+                // Diagnostics only: whatever the station's mod throws, the overflow must still drop below.
             }
         }
         Constants.LOG.warn("SprawlCrafting: dropping {} x{} at the player's feet (station: {}, took part of it: {},"
