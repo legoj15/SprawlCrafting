@@ -76,20 +76,6 @@ public final class CraftExecutor {
     }
 
     /**
-     * {@link #craftOnce(ServerPlayer, ResourceLocation, ProducedLedger, boolean, List)} for a job that
-     * is not planned on a crafting station's storage and carries no layout.
-     */
-    public static CraftResult craftOnce(ServerPlayer player, ResourceLocation recipeId, ProducedLedger<Item> ledger) {
-        return craftOnce(player, recipeId, ledger, false, null);
-    }
-
-    /** {@link #craftOnce(ServerPlayer, ResourceLocation, ProducedLedger, boolean, List)} with no layout. */
-    public static CraftResult craftOnce(ServerPlayer player, ResourceLocation recipeId, ProducedLedger<Item> ledger,
-                                        boolean stationPlanned) {
-        return craftOnce(player, recipeId, ledger, stationPlanned, null);
-    }
-
-    /**
      * One craft against the live inventory and, when the player has a usable crafting station open, its
      * storage. {@code stationPlanned} says the job's plan counted on that storage
      * ({@link CraftJob#stationDependent()}): its crafts are assigned over inventory plus station stock,
@@ -276,7 +262,9 @@ public final class CraftExecutor {
      *
      * <p>{@code layout} is the plan's per-slot item choice for this final craft
      * ({@link CraftJob#currentCraftLayout()}); null or a layout the live pool can no longer honor
-     * falls back to {@link SlotAssignment}.
+     * falls back to {@link SlotAssignment}. Only the manual lay-out reads it: vanilla's recipe-book
+     * placement picks its own stacks, which is safe because this is the job's last craft and no later
+     * step depends on which alternative it consumes.
      */
     public static FillOutcome tryFillFinalGrid(ServerPlayer player, ResourceLocation recipeId,
                                                ProducedLedger<Item> ledger, List<Item> layout) {
@@ -305,7 +293,8 @@ public final class CraftExecutor {
             return new FillOutcome.Fallback();
         }
         List<Ingredient> cells = gridLayout(recipe, grid.width(), grid.height());
-        boolean needsLedger = cells != null && assign(player.getInventory(), cells, null, null, layout).missing() != null
+        boolean needsLedger = cells != null
+                && assign(player.getInventory(), cells, null, null, layout).missing() != null
                 && assign(player.getInventory(), cells, ledger, null, layout).missing() == null;
         if (needsLedger || !grid.recipeBookPlacement()) {
             // No handlePlacement outside a recipe-book menu, so the layout is ours; a recipe that does
@@ -661,6 +650,9 @@ public final class CraftExecutor {
         //?}
     }
 
+    /** A cell {@link #assign} fills from the crafting station's storage, not an inventory slot. */
+    private static final int STATION_CELL = -2;
+
     /**
      * One inventory slot per ingredient ({@code -1} for an empty cell), chosen without mutating
      * anything, or the first ingredient nothing could satisfy. A stack {@link #usableAsIngredient}
@@ -669,26 +661,11 @@ public final class CraftExecutor {
      * those the player held before the job produced anything. Every pick is recorded in the tally,
      * which {@link Assignment#chargeTo} charges: rejected picks, plus plain picks beyond the job's
      * rejected copies of that item the pool still holds.
-     */
-    private static Assignment assign(Inventory inventory, List<Ingredient> ingredients, ProducedLedger<Item> ledger) {
-        return assign(inventory, ingredients, ledger, null, null);
-    }
-
-    /** {@link #assign(Inventory, List, ProducedLedger, StationStorage, List)} without a layout. */
-    private static Assignment assign(Inventory inventory, List<Ingredient> ingredients, ProducedLedger<Item> ledger,
-                                     StationStorage station) {
-        return assign(inventory, ingredients, ledger, station, null);
-    }
-
-    /** A cell {@link #assign} fills from the crafting station's storage, not an inventory slot. */
-    private static final int STATION_CELL = -2;
-
-    /**
-     * {@link #assign(Inventory, List, ProducedLedger)} with an open crafting station's storage
-     * ({@code station}, null for none) in the pool. The station joins the pool the planner counted:
-     * {@link #preferredItems} picks each cell's item from inventory plus station stock, following the
-     * plan's layout when it still fits that pool and falling back to {@link SlotAssignment} otherwise.
-     * Within that item the player's own stacks go first, so a craft
+     *
+     * <p>An open crafting station's storage ({@code station}, null for none) joins the pool, as it
+     * joined the planner's: {@link #preferredItems} picks each cell's item from inventory plus station
+     * stock, following the plan's layout when it still fits that pool and falling back to
+     * {@link SlotAssignment} otherwise. Within that item the player's own stacks go first, so a craft
      * only reaches into the station for what the inventory lacks:
      * <ol>
      *   <li>the preferred item from the inventory;</li>

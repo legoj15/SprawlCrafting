@@ -1,6 +1,5 @@
 package com.legoj15.sprawlcrafting.craft;
 
-import java.util.Collections;
 import java.util.List;
 
 import com.google.common.collect.ImmutableList;
@@ -25,10 +24,6 @@ public final class CraftStep {
     private final int crafts;
     private final boolean needsFullGrid;
     private final List<SlotLayout<Item>> layouts;
-
-    public CraftStep(ResourceLocation recipeId, int crafts, boolean needsFullGrid) {
-        this(recipeId, crafts, needsFullGrid, Collections.<SlotLayout<Item>>emptyList());
-    }
 
     public CraftStep(ResourceLocation recipeId, int crafts, boolean needsFullGrid,
                      List<SlotLayout<Item>> layouts) {

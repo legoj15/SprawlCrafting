@@ -474,15 +474,10 @@ public final class CraftExecutor {
      * rejected copies of that identity the pool still
      * holds. Package-visible: the final-step hand-off ({@link ServerGridPlacer}) lays out the same
      * choice.
-     */
-    static Assignment assign(EntityPlayer player, List<Ingredient> ingredients, ProducedLedger<ItemKey> ledger) {
-        return assign(player, ingredients, ledger, false, null);
-    }
-
-    /**
-     * {@link #assign(EntityPlayer, List, ProducedLedger)} with the plan's per-slot item choice for
-     * this craft ({@code layout}, one entry per non-empty cell in cell order; null or a mismatch:
-     * decide with {@link SlotAssignment}) — see {@link #preferredKeys}.
+     *
+     * <p>{@code layout} is the plan's per-slot item choice for this craft (one entry per non-empty
+     * cell in cell order; null or a mismatch: decide with {@link SlotAssignment}), see
+     * {@link #preferredKeys}.
      */
     static Assignment assign(EntityPlayer player, List<Ingredient> ingredients, ProducedLedger<ItemKey> ledger,
                              List<ItemKey> layout) {

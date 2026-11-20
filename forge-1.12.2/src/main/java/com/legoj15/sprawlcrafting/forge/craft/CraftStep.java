@@ -33,10 +33,6 @@ public final class CraftStep {
     private final boolean needsFullGrid;
     private final List<SlotLayout<ItemKey>> layouts;
 
-    public CraftStep(ResourceLocation recipeId, int crafts, boolean needsFullGrid) {
-        this(recipeId, crafts, needsFullGrid, Collections.<SlotLayout<ItemKey>>emptyList());
-    }
-
     public CraftStep(ResourceLocation recipeId, int crafts, boolean needsFullGrid,
                      List<SlotLayout<ItemKey>> layouts) {
         if (crafts < 1) {

@@ -286,7 +286,9 @@ public final class CraftExecutor {
      *
      * <p>{@code layout} is the plan's per-slot item choice for this final craft
      * ({@link CraftJob#currentCraftLayout()}); null or a layout the live pool can no longer honor
-     * falls back to {@link SlotAssignment}.
+     * falls back to {@link SlotAssignment}. Only the manual lay-out reads it: vanilla's recipe-book
+     * placement picks its own stacks, which is safe because this is the job's last craft and no later
+     * step depends on which alternative it consumes.
      */
     public static FillOutcome tryFillFinalGrid(ServerPlayerEntity player, ResourceLocation recipeId,
                                                ProducedLedger<Item> ledger, List<Item> layout) {

@@ -22,6 +22,7 @@ import net.minecraft.world.item.Item;
  *
  * @param needsFullGrid true if the recipe does not fit a 2×2 grid; such steps only
  *                      execute while a crafting table is within the player's reach
+ * @param layouts       the plan's {@link SlotLayout} runs for this step's crafts, in order (empty: none)
  */
 public record CraftStep(ResourceLocation recipeId, int crafts, boolean needsFullGrid,
                         List<SlotLayout<Item>> layouts) {
@@ -31,10 +32,5 @@ public record CraftStep(ResourceLocation recipeId, int crafts, boolean needsFull
             throw new IllegalArgumentException("crafts must be >= 1, got " + crafts);
         }
         layouts = layouts == null ? List.of() : List.copyOf(layouts);
-    }
-
-    /** A step with no layout: the executor picks each craft's items with {@code SlotAssignment}. */
-    public CraftStep(ResourceLocation recipeId, int crafts, boolean needsFullGrid) {
-        this(recipeId, crafts, needsFullGrid, List.of());
     }
 }

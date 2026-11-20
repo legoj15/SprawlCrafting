@@ -147,7 +147,9 @@ public final class ServerGridPlacer {
      *
      * <p>{@code layout} is the plan's per-slot item choice for this final craft
      * ({@code CraftJob.currentCraftLayout()}); null or a layout the live pool can no longer honor
-     * falls back to {@link com.legoj15.solver.SlotAssignment}.
+     * falls back to {@link com.legoj15.solver.SlotAssignment}. Only {@link #placeFromLedger} reads it:
+     * vanilla's {@code distribute} picks its own stacks, which is safe because this is the job's last
+     * craft and no later step depends on which alternative it consumes.
      */
     public static HandOffResult placeFinalCraft(EntityPlayerMP player, IRecipe recipe,
                                                 ProducedLedger<ItemKey> ledger, List<ItemKey> layout) {
