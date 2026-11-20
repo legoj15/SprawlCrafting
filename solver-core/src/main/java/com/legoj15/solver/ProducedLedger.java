@@ -10,21 +10,22 @@ import java.util.Map;
  * copy), which would make a job refuse the intermediate it just crafted. A stack the filter rejects
  * may still be taken while this ledger has an outstanding count for its identity; each such take is
  * {@linkplain #consumed recorded} against it. The executor runs each craft through a
- * {@link LedgerTally}, which admits rejected copies only above those the pool held before the job
- * produced anything (the player's own, kept here as {@link #preexisting}), and also records plain
- * takes of an identity beyond the job's rejected copies still held, so a count does not outlive the
- * copies it described. The vanilla final hand-off is exempt: it never takes rejected stacks and
- * ends the job.
+ * {@link LedgerTally}, which admits rejected copies only above those of the same exact variant
+ * ({@code V}: item + damage/meta + components/NBT) the pool held before the job produced anything
+ * (the player's own, kept here as {@link #preexisting}), and also records plain takes of an identity
+ * beyond the job's rejected copies still held, so a count does not outlive the copies it described.
+ * The vanilla final hand-off is exempt: it never takes rejected stacks and ends the job.
  *
- * <p>Keyed by identity rather than by the exact stack produced because the alteration happens
- * after production: the stack recorded at insertion and the stack found later no longer compare
- * equal. A player-owned altered stack of the same identity is interchangeable with the job's
- * while both are held, but only up to the count this job made.
+ * <p>Outstanding counts are keyed by identity rather than by the exact stack produced because the
+ * alteration happens after production: the stack recorded at insertion and the stack found later no
+ * longer compare equal. The player's-own baseline is keyed by variant instead: the player's altered
+ * copy of one variant says nothing about the job's altered copies of another, and freezing it per
+ * variant keeps the baseline right even if the player moves their own copy out mid-job.
  */
-public final class ProducedLedger<K> {
+public final class ProducedLedger<K, V> {
 
     private final Map<K, Long> outstanding = new HashMap<>();
-    private final Map<K, Integer> preexisting = new HashMap<>();
+    private final Map<V, Integer> preexisting = new HashMap<>();
     private boolean producedAny;
 
     public void produced(K key, long count) {
@@ -56,16 +57,16 @@ public final class ProducedLedger<K> {
     }
 
     /**
-     * Filter-rejected copies of {@code key} the pool held before this job produced anything: the
-     * player's own, never admitted as the job's.
+     * Filter-rejected copies of this exact variant the pool held before this job produced anything:
+     * the player's own, never admitted as the job's.
      */
-    public long preexisting(K key) {
-        Integer count = preexisting.get(key);
+    public long preexisting(V variant) {
+        Integer count = preexisting.get(variant);
         return count == null ? 0 : count;
     }
 
-    /** Replaces the player's-own snapshot with {@code refusedHeld}; the job's first production freezes it. */
-    void notePreexisting(Map<K, Integer> refusedHeld) {
+    /** Replaces the player's-own snapshot (per variant) with {@code refusedHeld}; the job's first production freezes it. */
+    void notePreexisting(Map<V, Integer> refusedHeld) {
         if (!producedAny) {
             preexisting.clear();
             preexisting.putAll(refusedHeld);

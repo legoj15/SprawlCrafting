@@ -118,7 +118,7 @@ public final class CraftExecutor {
     }
 
     public static CraftResult craftOnce(EntityPlayerMP player, ResourceLocation recipeId,
-                                        ProducedLedger<ItemKey> ledger) {
+                                        ProducedLedger<ItemKey, LedgerVariant> ledger) {
         IRecipe recipe = CraftingManager.getRecipe(recipeId);
         if (recipe == null) {
             return new CraftResult.RecipeGone();
@@ -129,7 +129,7 @@ public final class CraftExecutor {
         // one entry per ingredient slot (-1 for a gap in the shape) so the simulation below can
         // reconstruct the grid positions.
         InventoryPlayer inventory = player.inventory;
-        Assignment assignment = assign(player, recipe.getIngredients(), ledger, true);
+        Assignment assignment = assign(player, recipe.getIngredients(), ledger, true, null);
         if (assignment.missing != null) {
             return new CraftResult.MissingIngredient(describe(assignment.missing));
         }
@@ -462,16 +462,27 @@ public final class CraftExecutor {
      * One source per ingredient ({@code -1} for a gap: null or {@link Ingredient#EMPTY}) over the
      * pool {@link #buildSources} describes, chosen without mutating anything, or the first
      * ingredient nothing could satisfy. A stack {@link #usableAsIngredient} rejects is chosen only
-     * when no acceptable stack matches and {@code ledger} (null: never) still admits its identity
-     * through {@link LedgerTally#admissible}: only rejected copies above those the player held
-     * before the job produced anything. Every pick is recorded in the tally, which
+     * when no acceptable stack matches and {@code ledger} (null: never) still admits its exact
+     * variant through {@link LedgerTally#admits}: only rejected copies above those the player held
+     * before the job produced anything, per variant. Every pick is recorded in the tally, which
      * {@link Assignment#chargeTo} charges: rejected picks, plus plain picks beyond the job's
      * rejected copies of that identity the pool still
      * holds. Package-visible: the final-step hand-off ({@link ServerGridPlacer}) lays out the same
      * choice.
      */
-    static Assignment assign(EntityPlayer player, List<Ingredient> ingredients, ProducedLedger<ItemKey> ledger) {
-        return assign(player, ingredients, ledger, false);
+    static Assignment assign(EntityPlayer player, List<Ingredient> ingredients,
+                             ProducedLedger<ItemKey, LedgerVariant> ledger) {
+        return assign(player, ingredients, ledger, false, null);
+    }
+
+    /**
+     * {@link #assign(EntityPlayer, List, ProducedLedger)} with {@code owned}: refused stacks the grid
+     * hand-off just returned to the inventory, summed per variant by the caller, the player's own
+     * for this craft.
+     */
+    static Assignment assign(EntityPlayer player, List<Ingredient> ingredients,
+                             ProducedLedger<ItemKey, LedgerVariant> ledger, Map<LedgerVariant, Integer> owned) {
+        return assign(player, ingredients, ledger, false, owned);
     }
 
     /**
@@ -481,17 +492,21 @@ public final class CraftExecutor {
      * placer's {@link Assignment#take} never sees a network source.
      */
     private static Assignment assign(EntityPlayer player, List<Ingredient> ingredients,
-                                     ProducedLedger<ItemKey> ledger, boolean withNetwork) {
+                                     ProducedLedger<ItemKey, LedgerVariant> ledger, boolean withNetwork,
+                                     Map<LedgerVariant, Integer> owned) {
         List<Source> sources = buildSources(player, player.inventory,
                 withNetwork ? ingredientItems(ingredients) : null);
         int[] chosen = new int[ingredients.size()];
         int[] reserved = new int[sources.size()];
-        LedgerTally<ItemKey> tally = new LedgerTally<ItemKey>();
-        Map<ItemKey, Integer> ledgerTakes = tally.refusedTakes();
-        ProducedLedger<ItemKey> admitting = null;
+        LedgerTally<ItemKey, LedgerVariant> tally = new LedgerTally<ItemKey, LedgerVariant>();
         if (ledger != null) {
             countRefused(sources, tally);
-            admitting = tally.admissible(ledger);
+            if (owned != null) {
+                for (Map.Entry<LedgerVariant, Integer> entry : owned.entrySet()) {
+                    tally.owned(entry.getKey().key(), entry.getKey(), entry.getValue());
+                }
+            }
+            tally.open(ledger);
         }
         ItemKey[] preferred = preferredKeys(sources, ingredients);
         for (int i = 0; i < chosen.length; i++) {
@@ -500,7 +515,7 @@ public final class CraftExecutor {
                 chosen[i] = -1;
                 continue;
             }
-            int idx = findMatchingSource(sources, ingredient, preferred[i], reserved, admitting, ledgerTakes);
+            int idx = findMatchingSource(sources, ingredient, preferred[i], reserved, ledger == null ? null : tally);
             if (idx < 0) {
                 return new Assignment(sources, chosen, tally, ingredient);
             }
@@ -508,38 +523,45 @@ public final class CraftExecutor {
             chosen[i] = idx;
             if (ledger != null) {
                 ItemStack stack = sources.get(idx).peek();
-                tally.picked(ledgerKey(stack), !usableAsIngredient(stack));
+                tally.picked(ledgerKey(stack), variantOf(stack), !usableAsIngredient(stack));
             }
         }
         return new Assignment(sources, chosen, tally, null);
     }
 
-    /** Records in {@code tally}, by {@link #ledgerKey}, every stack in the pool that {@link #usableAsIngredient} rejects. */
-    private static void countRefused(List<Source> sources, LedgerTally<ItemKey> tally) {
-        // Summed in a long and saturated per key before the tally sees it: a network source's peek is
-        // the network's whole count (up to Integer.MAX_VALUE), and an int overflow would flip held
-        // negative and admit the player's own altered copies. Over-counting held is the safe side.
-        Map<ItemKey, Long> refused = new LinkedHashMap<ItemKey, Long>();
+    /**
+     * Records in {@code tally}, by {@link #ledgerKey} and variant, every stack in the pool that
+     * {@link #usableAsIngredient} rejects.
+     */
+    private static void countRefused(List<Source> sources, LedgerTally<ItemKey, LedgerVariant> tally) {
+        // Summed in a long and saturated per variant before the tally sees it: a network source's peek
+        // is the network's whole count (up to Integer.MAX_VALUE), and an int overflow would flip held
+        // negative and admit the player's own altered copies. Over-counting held is the safe side. The
+        // identity rides along: a variant (item, metadata, NBT) determines its key.
+        Map<LedgerVariant, Long> refused = new LinkedHashMap<LedgerVariant, Long>();
+        Map<LedgerVariant, ItemKey> keys = new HashMap<LedgerVariant, ItemKey>();
         for (Source source : sources) {
             ItemStack stack = source.peek();
             if (!stack.isEmpty() && !usableAsIngredient(stack)) {
-                ItemKey key = ledgerKey(stack);
-                Long sum = refused.get(key);
-                refused.put(key, (sum == null ? 0L : sum) + stack.getCount());
+                LedgerVariant variant = variantOf(stack);
+                Long sum = refused.get(variant);
+                refused.put(variant, (sum == null ? 0L : sum) + stack.getCount());
+                keys.put(variant, ledgerKey(stack));
             }
         }
-        for (Map.Entry<ItemKey, Long> entry : refused.entrySet()) {
-            tally.held(entry.getKey(), (int) Math.min(entry.getValue(), Integer.MAX_VALUE));
+        for (Map.Entry<LedgerVariant, Long> entry : refused.entrySet()) {
+            tally.held(keys.get(entry.getKey()), entry.getKey(),
+                    (int) Math.min(entry.getValue(), Integer.MAX_VALUE));
         }
     }
 
     static final class Assignment {
         private final List<Source> sources;
         private final int[] chosen;
-        private final LedgerTally<ItemKey> tally;
+        private final LedgerTally<ItemKey, LedgerVariant> tally;
         private final Ingredient missing;
 
-        private Assignment(List<Source> sources, int[] chosen, LedgerTally<ItemKey> tally,
+        private Assignment(List<Source> sources, int[] chosen, LedgerTally<ItemKey, LedgerVariant> tally,
                            Ingredient missing) {
             this.sources = sources;
             this.chosen = chosen;
@@ -563,9 +585,46 @@ public final class CraftExecutor {
             return one;
         }
 
-        void chargeTo(ProducedLedger<ItemKey> ledger) {
+        void chargeTo(ProducedLedger<ItemKey, LedgerVariant> ledger) {
             tally.chargeTo(ledger);
         }
+    }
+
+    /**
+     * The ledger's variant of a stack — item, metadata (damage included), and NBT — as a count-1
+     * copy: what the per-variant baseline ({@link ProducedLedger#preexisting}) and per-variant
+     * admission ({@link LedgerTally#admits}) are keyed by. {@link #hashCode} is the item's identity
+     * hash alone (collisions only within one item, which {@link #equals} separates); {@link #equals}
+     * is the tree's exact stack equality.
+     */
+    static final class LedgerVariant {
+        private final ItemStack stack;
+
+        LedgerVariant(ItemStack stack) {
+            this.stack = stack;
+        }
+
+        /** The ledger identity this variant belongs to. */
+        ItemKey key() {
+            return ledgerKey(stack);
+        }
+
+        @Override
+        public boolean equals(Object other) {
+            return other instanceof LedgerVariant && sameItem(stack, ((LedgerVariant) other).stack);
+        }
+
+        @Override
+        public int hashCode() {
+            return System.identityHashCode(stack.getItem());
+        }
+    }
+
+    /** The ledger's variant of one copy of {@code stack}; its count is not part of the variant. */
+    static LedgerVariant variantOf(ItemStack stack) {
+        ItemStack one = stack.copy();
+        one.setCount(1);
+        return new LedgerVariant(one);
     }
 
     /**
@@ -613,11 +672,10 @@ public final class CraftExecutor {
 
     /**
      * A stack of {@code preferred} ({@link #preferredKeys}) when one matches; otherwise the first
-     * match in pool order, then (with a ledger) a refused stack the ledger admits.
+     * match in pool order, then (with a ledger) a refused stack the tally admits.
      */
     private static int findMatchingSource(List<Source> sources, Ingredient ingredient, ItemKey preferred,
-                                          int[] reserved, ProducedLedger<ItemKey> ledger,
-                                          Map<ItemKey, Integer> ledgerTakes) {
+                                          int[] reserved, LedgerTally<ItemKey, LedgerVariant> tally) {
         if (preferred != null) {
             for (int i = 0; i < sources.size(); i++) {
                 ItemStack stack = sources.get(i).peek();
@@ -634,7 +692,7 @@ public final class CraftExecutor {
                 return i;
             }
         }
-        if (ledger == null) {
+        if (tally == null) {
             return -1;
         }
         for (int i = 0; i < sources.size(); i++) {
@@ -642,9 +700,7 @@ public final class CraftExecutor {
             if (stack.isEmpty() || stack.getCount() - reserved[i] <= 0 || usableAsIngredient(stack)) {
                 continue;
             }
-            ItemKey key = ledgerKey(stack);
-            Integer taken = ledgerTakes.get(key);
-            if (ledger.canTake(key, taken == null ? 0 : taken) && ingredient.apply(stack)) {
+            if (tally.admits(ledgerKey(stack), variantOf(stack)) && ingredient.apply(stack)) {
                 return i;
             }
         }

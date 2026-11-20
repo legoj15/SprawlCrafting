@@ -70,7 +70,8 @@ public final class CraftJob {
     private final ItemStack targetResult;
     private final List<CraftStep> steps;
     private final long totalCrafts;
-    private final ProducedLedger<ItemKey> produced = new ProducedLedger<ItemKey>();
+    private final ProducedLedger<ItemKey, CraftExecutor.LedgerVariant> produced =
+            new ProducedLedger<ItemKey, CraftExecutor.LedgerVariant>();
 
     private int stepIndex;
     private int craftsDoneInStep;
@@ -147,7 +148,7 @@ public final class CraftJob {
     }
 
     /** What this job crafted and has not used back up; lets the executor take its own altered intermediates. */
-    public ProducedLedger<ItemKey> produced() {
+    public ProducedLedger<ItemKey, CraftExecutor.LedgerVariant> produced() {
         return produced;
     }
 
