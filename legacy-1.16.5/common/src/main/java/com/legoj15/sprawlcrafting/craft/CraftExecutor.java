@@ -41,8 +41,8 @@ import net.minecraft.util.text.StringTextComponent;
  * what the vanilla recipe book refuses to auto-fill, except up to what the job's {@link ProducedLedger}
  * says it produced itself (some mods enchant an item on its first inventory tick, after insertion), and
  * — only for a job planned with them after the player confirmed (issue #40) — the protected stacks
- * {@link #isProtected} describes, always after every plain stack and the station's stock could not fill
- * a cell. The ledger's player-own baseline is a read-only exception to the first: it counts the filter-rejected
+ * {@link #isProtected} describes: per cell, a protected copy of the plan's item comes after its plain
+ * copies (inventory, then station) but before any alternative item, which a later cell may need alone. The ledger's player-own baseline is a read-only exception to the first: it counts the filter-rejected
  * stacks the player holds outside the main slots too (see {@link #countRefused}), never picked from.
  */
 public final class CraftExecutor {
@@ -145,7 +145,9 @@ public final class CraftExecutor {
      * ({@link CraftJob#stationDependent()}): its crafts are assigned over inventory plus station stock,
      * exactly as the plan chose. Any other job is assigned from the inventory alone first, so it never
      * touches the network while its own items cover the craft, and reaches into the station only for what
-     * the inventory has since lost (the player moved items mid-job). {@link CraftResult#usedStation()}
+     * the inventory has since lost (the player moved items mid-job). The exception is a protected job
+     * (issue #40) with a station open: it is pooled from the start, so the station's plain stock is
+     * drawn before the player's protected copies. {@link CraftResult#usedStation()}
      * reports that, so the job pauses rather than cancels once the station goes away.
      *
      * <p>{@code layout} is the plan's per-slot item choice for this craft
@@ -159,9 +161,9 @@ public final class CraftExecutor {
      * per tick. A paced step passes false: a few items at the feet is fine and expected there.
      *
      * <p>{@code allowProtected} is the job's {@code CraftJob#usesProtected()} flag: a job planned with
-     * the player's protected stacks (issue #40) may also pick those, in {@link #assign}'s protected
-     * tier after every plain stack and the station's stock. Every other job keeps the plain rule
-     * exactly.
+     * the player's protected stacks (issue #40) may also pick those: per cell, after the plan's item as a
+     * plain inventory or station copy, but before any alternative item (see {@link #assignPass}). Every
+     * other job keeps the plain rule exactly.
      */
     public static CraftResult craftOnce(ServerPlayerEntity player, ResourceLocation recipeId,
                                         ProducedLedger<Item, LedgerVariant> ledger, boolean stationPlanned,
