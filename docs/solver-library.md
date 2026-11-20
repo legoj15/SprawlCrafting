@@ -17,6 +17,8 @@ only when the inventory no longer matches the plan: build `slots` exactly as its
 `RecipeInfo.ingredientSlots()` (blank cells dropped) and `stock` from the same pool and filter the
 planner snapshots, then take a stack of the item named for each slot (falling back to its own matching
 only when none fits). SprawlCrafting's three `CraftExecutor`s pick via `CraftPlanner.slotAlternatives`.
+`SlotAssignment.assignCells(cells, stock)` (since 1.1.0) is the same call over the grid as the game lists
+it: blank cells are null in and null out, so the result lines up with the recipe's ingredient list.
 An executor that picks by inventory order instead can stall mid-job on plans that share stock across
 slots or steps (issues #10, #18); in 1.0.x, before layouts, that same limitation bound the solver
 itself.
