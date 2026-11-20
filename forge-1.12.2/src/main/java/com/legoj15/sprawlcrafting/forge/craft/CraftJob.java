@@ -172,10 +172,13 @@ public final class CraftJob {
      * {@link #onCraftPerformed()}, which advances the counter (and the step).
      */
     public List<ItemKey> currentCraftLayout() {
+        if (isFinished()) {
+            return null;
+        }
         List<SlotLayout<ItemKey>> runs = currentStep().layouts();
         // A cursor, not a walk from the first run: a step whose remainders flip-flop can carry one
         // run per craft, and rescanning them every craft would be quadratic in the step's crafts.
-        if (layoutCursorStep != stepIndex || craftsDoneInStep < layoutRunStart) {
+        if (layoutCursorStep != stepIndex || craftsDoneInStep < layoutRunStart) { // the latter: defensive
             layoutCursorStep = stepIndex;
             layoutRun = 0;
             layoutRunStart = 0;
