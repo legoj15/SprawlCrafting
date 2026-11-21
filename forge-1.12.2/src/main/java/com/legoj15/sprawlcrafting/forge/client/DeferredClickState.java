@@ -230,16 +230,21 @@ public final class DeferredClickState {
         return networkProtectedSamples;
     }
 
+    private static boolean countedNetworkProtected;
+
     private static void recountExternal(EntityPlayer player, GridContext grid) {
         CraftPlanner.Session session = ClientPlanCache.get(player, grid);
-        if (countedSession != session) {
+        boolean networkProtected = ServerPresence.networkProtected();
+        // The capability can flip (reconnect to another server) while the session object survives.
+        if (countedSession != session || countedNetworkProtected != networkProtected) {
             externalCounts = CraftPlanner.plainExternalCounts(player, true);
             // The open terminal network's protected identities (#49): counted only while the
             // server advertised it counts them — an older server would refuse the start, so its
             // stacks must not reach the warning either.
-            networkProtectedSamples = ServerPresence.networkProtected()
+            networkProtectedSamples = networkProtected
                     ? NetworkTerminals.protectedSamples(player) : Collections.<ItemStack>emptyList();
             countedSession = session;
+            countedNetworkProtected = networkProtected;
         }
     }
 }

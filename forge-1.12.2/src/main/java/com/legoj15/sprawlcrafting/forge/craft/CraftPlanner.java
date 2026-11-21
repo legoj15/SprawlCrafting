@@ -146,14 +146,7 @@ public final class CraftPlanner {
      * Informational, so it always costs the full 3x3 chain regardless of the request grid.
      * {@code includeProtected} counts the player's protected stacks (#40) when the server can honour
      * a protected start, so the list never asks for what a confirmed craft would consume (#48).
-     */
-    public static ShortfallView shortfall(EntityPlayer player, IRecipe recipe, boolean includeProtected) {
-        return shortfall(player, recipe, includeProtected, true);
-    }
-
-    /**
-     * {@link #shortfall(EntityPlayer, IRecipe, boolean)} with the network's protected tier
-     * (issue #49) optionally held out, as in
+     * {@code includeNetworkProtected} adds the network's protected tier (issue #49), as in
      * {@link #session(EntityPlayer, GridContext, boolean, boolean)}: the client passes the
      * server's network-protected capability, so the list never credits protected network stock a
      * matching-but-older server would refuse to consume.
