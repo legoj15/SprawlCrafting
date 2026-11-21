@@ -1224,7 +1224,12 @@ class RecipeGraphSolverTest {
      * Returns the target, c(levels); making one takes 6^levels leaf crafts.
      */
     private TestRecipe quantityChain(int levels) {
-        for (int k = 1; k <= levels; k++) {
+        return quantityChain(levels, true);
+    }
+
+    /** {@code unpackFirst} false registers each decompress recipe after the item's real producer. */
+    private TestRecipe quantityChain(int levels, boolean unpackFirst) {
+        for (int k = 1; unpackFirst && k <= levels; k++) {
             recipes.add(TestRecipe.of("unpack" + k, "c" + (k - 1), 6, "c" + k));
         }
         recipes.add(TestRecipe.of("leaf", "c0", 1, "a", "a", "a", "a", "b", "b", "b", "b", "d"));
@@ -1233,6 +1238,9 @@ class RecipeGraphSolverTest {
             String lower = "c" + (k - 1);
             top = TestRecipe.of("pack" + k, "c" + k, 1, lower, lower, lower, lower, lower, lower, "b", "b", "b");
             recipes.add(top);
+            if (!unpackFirst) {
+                recipes.add(TestRecipe.of("unpack" + k, "c" + (k - 1), 6, "c" + k));
+            }
         }
         return top;
     }
@@ -1240,8 +1248,9 @@ class RecipeGraphSolverTest {
     @Test
     void largeStockThatRunsShortIsAShortfallNotABudgetFailure() {
         // 6^10 = 60,466,176 leaf crafts need 241,864,704 of raw a; ten million are held. The answer is
-        // "missing a", however many visits the leftovers of a large stock would cost to chase.
-        TestRecipe target = quantityChain(10);
+        // "missing a", however many visits the leftovers of a large stock would cost to chase (with
+        // the real producer first, every budgeted pass runs out chasing them).
+        TestRecipe target = quantityChain(10, false);
         Result<String, String> result = solver().solve(target, inv("a", 10_000_000, "b", 10_000_000, "d", 10_000_000));
         Result.Failure<String, String> failure = assertInstanceOf(Result.Failure.class, result);
         assertFalse(failure.budgetExceeded(), "a real shortfall, not a tree too complex to plan");
@@ -1262,6 +1271,19 @@ class RecipeGraphSolverTest {
             assertTrue(((Result.Failure<String, String>) result).budgetExceeded(),
                     "a makeable tree was reported short of " + ((Result.Failure<String, String>) result).missing());
         }
+    }
+
+    @Test
+    void quantityPathStillAsksAGeneratingCycleAgain() {
+        // One i1 makes three i0 and one i0 makes one i1: two i1 become nine i0 only by asking the
+        // first recipe again after its batch shrank to the i1 on hand.
+        quantityChain(17);
+        recipes.add(TestRecipe.of("split", "i0", 3, "i1"));
+        recipes.add(TestRecipe.of("join", "i1", 1, "i0"));
+        TestRecipe target = TestRecipe.of("top", "top", 1, "c17", "i0", "i0", "i0", "i0", "i0", "i0", "i0", "i0");
+        int unbounded = Integer.MAX_VALUE;
+        assertInstanceOf(Result.Success.class, solver().solve(target,
+                inv("a", unbounded, "b", unbounded, "d", unbounded, "i1", 2)));
     }
 
     @Test

@@ -605,15 +605,22 @@ public final class RecipeGraphSolver<R, K> {
      * @param missing the budgeted passes' missing set, kept when the probe has nothing better
      */
     private Plan<R, K> planByQuantity(RecipeInfo<R, K> target, Map<K, Long> held, Set<K> missing) {
-        Solve probe = new Solve(true, true, false, false);
-        probe.quantityFree = true;
-        probe.used = new ArrayList<>();
-        if (probe.craft(target, 1, new UndoMap<>(held), null, new HashSet<K>(), 0) != 1) {
+        // First with every re-ask: a generating cycle (one i1 makes three i0, one i0 makes one i1)
+        // only reaches its count by asking again after a batch that shrank. Where that probe runs
+        // out of budget chasing leftovers, the one that skips futile re-asks answers instead.
+        Solve probe = probe(target, held, false);
+        if (probe == null) {
+            probe = probe(target, held, true);
+        }
+        if (probe == null) {
+            return new Plan<>(null, missing, true);
+        }
+        if (probe.used == null) {
             // The probe is the batched strategy alone: where it came up short on an item that a
             // slot group with a choice of items had taken (or the short group has such a choice), a
             // different assignment might have worked, and its failure proves nothing. Groups that
             // each accept one item demand the same total in any order.
-            return probe.budgetHit || probe.choiceContention
+            return probe.choiceContention
                     ? new Plan<>(null, missing, true)
                     : new Plan<>(null, new LinkedHashSet<>(probe.missing), false);
         }
@@ -626,6 +633,22 @@ public final class RecipeGraphSolver<R, K> {
             return new Plan<>(steps, null, false);
         }
         return new Plan<>(null, missing, true, guided.tooLong);
+    }
+
+    /**
+     * One probe run: null if it ran out of budget, else the pass, whose {@code used} lists the
+     * recipes of a plan, or is null when the target cannot be made.
+     */
+    private Solve probe(RecipeInfo<R, K> target, Map<K, Long> held, boolean skipFutileReasks) {
+        Solve probe = new Solve(true, true, false, false);
+        probe.quantityFree = true;
+        probe.skipFutileReasks = skipFutileReasks;
+        probe.used = new ArrayList<>();
+        if (probe.craft(target, 1, new UndoMap<>(held), null, new HashSet<K>(), 0) == 1) {
+            return probe;
+        }
+        probe.used = null;
+        return probe.budgetHit ? null : probe;
     }
 
     /**
@@ -912,6 +935,8 @@ public final class RecipeGraphSolver<R, K> {
          * a remainder is not asked for again.
          */
         boolean quantityFree = false;
+        /** Do not ask a candidate again after a batch that shrank on a shortage and freed nothing. */
+        boolean skipFutileReasks = false;
         /** The recipes this pass may craft (identity), or null for every producer. */
         Set<RecipeInfo<R, K>> allowed;
         /** Every recipe whose batch is in the current result, in order (probe only; else null). */
@@ -1347,12 +1372,11 @@ public final class RecipeGraphSolver<R, K> {
                         if (done <= 0) {
                             break;
                         }
-                        // Read now: a later craft overwrites it. Only the probe stops on it:
-                        // chasing a short batch's leftovers at every level is what exhausts the
-                        // budget. A heuristic, so the probe can call a tree short that the leftovers
-                        // would have completed; it only ever answers for a tree the budgeted passes
-                        // had already given up on.
-                        boolean spent = quantityFree && steps == null && exhausted;
+                        // Read now: a later craft overwrites it. Chasing a short batch's leftovers
+                        // at every level is what exhausts the budget, so the second probe stops
+                        // here. A heuristic: it can call a tree short that the leftovers would have
+                        // completed, and only answers where the full probe ran out of budget.
+                        boolean spent = skipFutileReasks && exhausted;
                         long net = count(inv, item) - start;
                         if (net <= produced) {
                             inv.rollback(invMark);
