@@ -5,6 +5,7 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
+import com.legoj15.sprawlcrafting.Constants;
 import com.legoj15.sprawlcrafting.network.CraftProgressPayload;
 import com.legoj15.sprawlcrafting.network.ProgressStatesV2Payload;
 import com.legoj15.sprawlcrafting.platform.Services;
@@ -15,6 +16,7 @@ import net.minecraft.ChatFormatting;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.item.ItemStack;
 
 /**
@@ -97,7 +99,8 @@ public final class CraftQueueManager {
      * {@link CraftExecutor#craftBatch}, each batch an assignment provably equal to that many single
      * crafts (a single craft otherwise). A burst ends at a step boundary so the next step still
      * waits its half second — except into another bulk step, which continues on the next tick
-     * (see {@link CraftJob#onCraftsPerformed(int)}).
+     * (see {@link CraftJob#onCraftsPerformed(long)}). An interleaved job runs the same burst loop
+     * batch by batch (see {@link CraftJob#isInterleaved()}).
      */
     public static void tick(ServerPlayer player) {
         CraftJob job = ACTIVE.get(player.getUUID());
@@ -217,7 +220,11 @@ public final class CraftQueueManager {
                             job.targetResult().getHoverName()).withStyle(ChatFormatting.GREEN));
                     return;
                 }
-                if (stepDone || !bulk) {
+                // An interleaved job's batch boundaries are not step boundaries: the schedule
+                // interleaves the steps, so ending the burst at each batch would cap the job at
+                // one batch per tick. Its bursts run to the time budget across batches and report
+                // on the half-second cadence.
+                if ((stepDone && !job.isInterleaved()) || !bulk) {
                     // A step boundary, or the one craft a paced step does per due tick: report it now
                     // (progress bar + step sound), exactly as every craft was reported before bursts. A boundary
                     // into another bulk step is the exception: batching finishes a bulk step in one tick and the
@@ -246,14 +253,30 @@ public final class CraftQueueManager {
                     sync(player, job, CraftProgressPayload.State.PAUSED_STATION, ItemStack.EMPTY);
                     return;
                 }
+                // The schedule's own stock model already ran every producer this step needed ahead
+                // of it, so a shortage the model did not foresee is real — the player spent, moved
+                // or lost the material — and no reordering can recover it: cancel like any job.
                 ACTIVE.remove(player.getUUID());
                 sync(player, job, CraftProgressPayload.State.CANCELLED, ItemStack.EMPTY);
                 notify(player, Component.translatable("sprawlcrafting.craft.missing",
                         job.targetResult().getHoverName(), missing.missing()).withStyle(ChatFormatting.RED));
             } else if (craft instanceof CraftExecutor.CraftResult.NoRoom noRoom) {
+                // The batch's output had nowhere to go: shrink the schedule's batch cap and let it
+                // re-derive the next batch from the model — a smaller batch fits a tighter network,
+                // and a network only full of intermediates is drained by the consuming steps the
+                // re-derivation picks next. Only a refusal made before anything moved qualifies
+                // (items already dropped at the feet still stop the job), and a batch already at
+                // the per-craft floor cannot shrink: that storage is genuinely full.
+                if (!lastBulkDropped && job.shrinkForRoom()) {
+                    if (System.nanoTime() - deadline >= 0) {
+                        break; // time budget spent; the smaller batch is due next tick
+                    }
+                    continue;
+                }
                 // A bulk step's craft had nowhere to put its output: continuing would drop every
                 // craft's result at the player's feet thousands of times per tick (the #35 freeze),
                 // so the job stops for the player to make room instead of spilling.
+                logNoRoom(player, job, noRoom);
                 ACTIVE.remove(player.getUUID());
                 sync(player, job, CraftProgressPayload.State.CANCELLED, ItemStack.EMPTY);
                 notify(player, Component.translatable("sprawlcrafting.craft.no_room",
@@ -274,33 +297,79 @@ public final class CraftQueueManager {
     }
 
     /**
-     * One batched craft call for a bulk step: as many crafts as the step has left, except on the
-     * final step one fewer when that leaves at least 1, so the job's very last craft still goes
-     * through the grid hand-off check one craft at a time (see the top of {@link #craftBurst}),
-     * and never more than the current layout run still holds ({@link CraftJob#craftsLeftInLayoutRun()}):
-     * the next run can change every cell's item, and one batch applies one assignment. A step with a
-     * single craft left, batch or not, is a plain {@link CraftExecutor#craftOnce} —
-     * {@link CraftExecutor#craftBatch} would only fall back to it anyway. Both paths refuse a craft
-     * whose output would spill ({@code refuseSpill}: a bulk step stops rather than drop at the feet);
-     * a paced step keeps the spill, a few items at the feet being fine and expected there.
+     * The log line behind a no-room stop: what the step was making, the batch and cap, and how much of the
+     * output an open station says it would still take — enough to tell a full store from one that refuses.
      */
-    private static CraftExecutor.CraftResult craftBulk(ServerPlayer player, CraftJob job) {
-        int maxCrafts = job.craftsLeftInStep();
+    private static void logNoRoom(ServerPlayer player, CraftJob job, CraftExecutor.CraftResult.NoRoom noRoom) {
+        CraftStep step = job.currentStep();
+        long accepts = -1;
+        StationStorage station = StationStorages.open(player);
+        if (station != null && step.result() != null) {
+            try {
+                accepts = station.acceptable(new ItemStack(step.result()), 1_000_000L);
+            } catch (RuntimeException | LinkageError e) {
+                accepts = -2;
+            }
+        }
+        int freeSlots = 0;
+        for (int i = 0; i < Inventory.INVENTORY_SIZE; i++) {
+            if (player.getInventory().getItem(i).isEmpty()) {
+                freeSlots++;
+            }
+        }
+        Constants.LOG.warn("SprawlCrafting: no room for {} (dropped at feet: {}); station {} would accept {} of"
+                        + " 1000000 {}; free main slots {}; schedule:{}", noRoom.item().getString(), lastBulkDropped,
+                station == null ? "none" : station.getClass().getSimpleName(), accepts, step.result(),
+                freeSlots, job.scheduleReport());
+    }
+
+    /**
+     * How many crafts {@link #craftBulk} asks for: the current batch's crafts, one fewer on the final
+     * batch, capped at the layout run; {@link #craftBulk} caps it at an int.
+     */
+    private static long bulkRequest(CraftJob job) {
+        long maxCrafts = job.craftsLeftInStep();
         if (job.isFinalStep() && maxCrafts > 1) {
             maxCrafts--;
         }
-        maxCrafts = Math.min(maxCrafts, job.craftsLeftInLayoutRun());
+        return Math.min(maxCrafts, job.craftsLeftInLayoutRun());
+    }
+
+    /**
+     * Whether the last {@link #craftBulk} turned a success into NO_ROOM because items dropped at the
+     * feet (server thread only).
+     */
+    private static boolean lastBulkDropped;
+
+    /**
+     * One batched craft call for a bulk step: as many crafts as the current step has left (an
+     * interleaved job's current batch, {@link CraftJob#craftsLeftInStep()}), except on the final
+     * batch one fewer when that leaves at least 1, so the job's very last craft still goes through
+     * the grid hand-off check one craft at a time (see the top of {@link #craftBurst}), and never
+     * more than the current layout run still holds ({@link CraftJob#craftsLeftInLayoutRun()}):
+     * the next run can change every cell's item, and one batch applies one assignment. A step with a
+     * single craft left, batch or not, is a plain {@link CraftExecutor#craftOnce} —
+     * {@link CraftExecutor#craftBatch} would only fall back to it anyway. {@code craftBatch} takes an
+     * int, so a batch larger than that (an interleaved job's cap is an int's worth of volume, but a
+     * lagging step's backlog can exceed it) is capped at {@link Integer#MAX_VALUE}: the batch
+     * simply continues in the next call. Both paths refuse a craft whose output would spill
+     * ({@code refuseSpill}: a bulk step stops rather than drop at the feet); a paced step keeps the
+     * spill, a few items at the feet being fine and expected there.
+     */
+    private static CraftExecutor.CraftResult craftBulk(ServerPlayer player, CraftJob job) {
+        long maxCrafts = bulkRequest(job);
         CraftExecutor.takeDropped(); // forget drops from anything before this call
         CraftExecutor.CraftResult result = maxCrafts <= 1
                 ? CraftExecutor.craftOnce(player, job.currentStep().recipeId(),
                         job.produced(), job.stationDependent(), job.currentCraftLayout(), true, job.usesProtected())
                 : CraftExecutor.craftBatch(player, job.currentStep().recipeId(),
-                        job.produced(), job.stationDependent(), job.currentCraftLayout(), maxCrafts, true,
-                        job.usesProtected());
+                        job.produced(), job.stationDependent(), job.currentCraftLayout(),
+                        (int) Math.min(maxCrafts, Integer.MAX_VALUE), true, job.usesProtected());
         // Last line of defence: the room checks should leave nothing to drop, but if anything still
         // landed at the feet, stop the job here (as NO_ROOM) instead of repeating it every craft.
         Component dropped = CraftExecutor.takeDropped();
-        if (dropped != null && result instanceof CraftExecutor.CraftResult.Success) {
+        lastBulkDropped = dropped != null && result instanceof CraftExecutor.CraftResult.Success;
+        if (lastBulkDropped) {
             return new CraftExecutor.CraftResult.NoRoom(dropped);
         }
         return result;

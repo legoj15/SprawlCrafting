@@ -27,8 +27,11 @@ public interface StationStorage {
     /**
      * Plain-item counts for the planner's snapshot: what {@link #extract} could really deliver right now
      * (a storage that can be seen but not drawn from, e.g. a network without the power to move the items,
-     * counts for nothing), and empty when the station is not usable. May be expensive (a full storage
-     * scan), so it is called once per plan, never per craft.
+     * counts for nothing), and empty when the station is not usable. {@link Long#MAX_VALUE} means
+     * unbounded — a source that behaves as infinite (an AE2 creative cell, proved by a probe, not by a
+     * big listing); every other value is that finite count, however far above an int a real storage
+     * holds (issue #47). May be expensive (a full storage scan), so it is called once per plan, never
+     * per craft.
      */
     Map<Item, Long> counts();
 

@@ -50,7 +50,7 @@ public final class CraftPreview {
                     .map(holder -> RecipeIds.resultOf(holder.value(), registries))
                     .orElse(ItemStack.EMPTY);
             if (!produced.isEmpty()) {
-                totals.merge(produced.getItem(), (long) produced.getCount() * step.crafts(), CraftJob::saturatingAdd);
+                totals.merge(produced.getItem(), produced.getCount() * step.crafts(), CraftJob::saturatingAdd);
                 names.putIfAbsent(produced.getItem(), produced.getHoverName());
             }
         }
