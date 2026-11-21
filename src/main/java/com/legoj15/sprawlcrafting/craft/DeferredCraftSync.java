@@ -48,14 +48,17 @@ public final class DeferredCraftSync {
     private static final int SYNC_THROTTLE_TICKS = 10;
 
     /**
-     * Each player's last open-station storage scan ({@code StationStorage#counts}, a full storage scan),
-     * reused for up to {@link #SYNC_THROTTLE_TICKS} ticks while the same menu stays open, so an idle
-     * station screen costs one scan per window instead of one per tick. A change shows up within one
-     * window, the same latency the push throttle already allows. Empty on 1.21.1.
+     * Each player's last open-station storage scan ({@code StationStorage#counts} plus its protected
+     * tier, issue #49 — each a full storage scan), reused for up to {@link #SYNC_THROTTLE_TICKS} ticks
+     * while the same menu stays open, so an idle station screen costs one scan per window instead of
+     * one per tick. A change shows up within one window, the same latency the push throttle already
+     * allows. Empty on 1.21.1.
      */
     private static final Map<UUID, StationScan> STATION_SCANS = new ConcurrentHashMap<>();
 
-    private record StationScan(Object menu, int tick, Map<net.minecraft.world.item.Item, Long> counts) {
+    /** One scan's plain {@code counts} and protected {@code protectedCounts} (issue #49). */
+    private record StationScan(Object menu, int tick, Map<net.minecraft.world.item.Item, Long> counts,
+                               Map<net.minecraft.world.item.Item, Long> protectedCounts) {
     }
 
     /**
@@ -87,8 +90,11 @@ public final class DeferredCraftSync {
         }
         // The open station's storage (issue #2, the AE2 terminal; #33, a Sophisticated screen with its
         // crafting upgrade) joins the pool the classification plans against — the same fold the 1.21.1
-        // client's local solve makes (DeferredCraftableCache.stationCounts).
-        Map<net.minecraft.world.item.Item, Long> stationCounts = stationCounts(player, menu);
+        // client's local solve makes (DeferredCraftableCache.stationCounts) — its plain counts here,
+        // and its protected tier (#49) for the protected-only pass below, both from the one cached scan.
+        StationScan scan = stationScan(player, menu);
+        Map<net.minecraft.world.item.Item, Long> stationCounts = scan.counts();
+        Map<net.minecraft.world.item.Item, Long> stationProtected = scan.protectedCounts();
         GridContext grid = CraftingGrids.isFullGrid(openGrid) ? GridContext.CRAFTING_TABLE : GridContext.INVENTORY;
         // /reload swaps MinecraftServer.resources (a fresh RecipeManager instance) and
         // reallocates all display ids, so the manager's identity must be part of the key.
@@ -106,6 +112,7 @@ public final class DeferredCraftSync {
         key = (key ^ System.identityHashCode(recipes)) * 1099511628211L;
         key = (key ^ inventorySignature(player.getInventory())) * 1099511628211L;
         key = (key ^ stationCounts.hashCode()) * 1099511628211L;
+        key = (key ^ stationProtected.hashCode()) * 1099511628211L;
         Long prev = LAST_SYNC.get(player.getUUID());
         if (prev != null && prev == key) {
             return; // (menu, grid, inventory contents, station storage, recipes) unchanged since the last push
@@ -140,19 +147,20 @@ public final class DeferredCraftSync {
         Services.PLATFORM.sendToPlayer(player,
                 new DeferredCraftableSyncPayload(grid.ordinal(), displayIds, recipeIds));
         // The protected tier (#40), right after the deferred set: recipes the plain pool cannot make
-        // but the player's protected stacks can. An empty set clears stale yellows just as well (the
-        // last enchanted copy was used up), so this goes to every client that can receive it; the
-        // second, protected-counting session is built only when the player holds protected stock at
-        // all. Only plain-UNSOLVABLE recipes enter (a plain-DEFERRED one is already yellow and
-        // confirms with the plain packet); the client treats members as deferred and confirms them
-        // with the protected start.
+        // but the protected tier can — the player's stacks (#40) or the open station's (#49). An
+        // empty set clears stale yellows just as well (the last enchanted copy was used up), so this
+        // goes to every client that can receive it; the second, protected-counting session is built
+        // only while either side holds any. Only plain-UNSOLVABLE recipes enter (a plain-DEFERRED one
+        // is already yellow and confirms with the plain packet); the client treats members as deferred
+        // and confirms them with the protected start.
         if (Services.PLATFORM.canReceive(player,
                 com.legoj15.sprawlcrafting.network.ProtectedCraftableSyncPayload.TYPE.id())) {
             java.util.Set<Integer> protectedDisplayIds = new java.util.HashSet<>();
             java.util.Set<net.minecraft.resources.ResourceLocation> protectedRecipeIds = new java.util.HashSet<>();
             CraftPlanner.Session withProtected = CraftPlanner.hasProtected(player.getInventory())
+                    || !stationProtected.isEmpty()
                     ? CraftPlanner.session(recipes, player.registryAccess(), player.getInventory(), grid,
-                            stationCounts, true)
+                            stationCounts, stationProtected, true)
                     : null;
             if (withProtected != null) {
                 for (net.minecraft.world.item.crafting.RecipeHolder<net.minecraft.world.item.crafting.CraftingRecipe> holder
@@ -200,18 +208,20 @@ public final class DeferredCraftSync {
     //?}
 
     //? if >=1.21.11 {
-    /*// The open station's plain-item counts (see STATION_SCANS): rescanned only for a new menu, or once
-    // the cached scan is a throttle window old.
-    private static Map<net.minecraft.world.item.Item, Long> stationCounts(ServerPlayer player,
-                                                                         net.minecraft.world.inventory.AbstractContainerMenu menu) {
+    /*// The open station's plain and protected counts in one scan (see STATION_SCANS): rescanned only
+    // for a new menu, or once the cached scan is a throttle window old.
+    private static StationScan stationScan(ServerPlayer player,
+                                           net.minecraft.world.inventory.AbstractContainerMenu menu) {
         int now = player.level().getServer().getTickCount();
         StationScan scan = STATION_SCANS.get(player.getUUID());
         if (scan == null || scan.menu() != menu || now < scan.tick() || now - scan.tick() >= SYNC_THROTTLE_TICKS) {
             StationStorage station = StationStorages.open(player);
-            scan = new StationScan(menu, now, station == null ? Map.of() : station.counts());
+            scan = station == null
+                    ? new StationScan(menu, now, Map.of(), Map.of())
+                    : new StationScan(menu, now, station.counts(), station.protectedCounts());
             STATION_SCANS.put(player.getUUID(), scan);
         }
-        return scan.counts();
+        return scan;
     }*/
     //?}
 
@@ -271,32 +281,51 @@ public final class DeferredCraftSync {
             StationStorage station = outcome instanceof CraftPlanner.PlanOutcome.Planned ? null : StationStorages.open(player);
             java.util.Map<net.minecraft.world.item.Item, Long> stationCounts =
                     station == null ? java.util.Map.of() : station.counts();
+            java.util.Map<net.minecraft.world.item.Item, Long> stationProtectedCounts = java.util.Map.of();
             if (station != null) {
                 outcome = CraftPlanner.plan(player, info.parent(), grid, stationCounts);
             }
-            // The protected fallback (#40), same order as the start handler: only when both plain
-            // passes failed, only for a client that can receive the protected sync (its confirm
-            // click keys off that set), and only while the player holds protected stock. The job is
+            // The protected fallback (#40), same order and gates as the start handler: only when both
+            // plain passes failed, only for a client that can receive the protected sync (its confirm
+            // click keys off that set), and only while the player (#40) or the station (#49) holds
+            // protected stock — the station's counts scanned only when a pass needs them. The job is
             // marked usesProtected, and CraftPreview.lines appends the warning lines for it.
             if (!(outcome instanceof CraftPlanner.PlanOutcome.Planned)
                     && Services.PLATFORM.canReceive(player,
-                            com.legoj15.sprawlcrafting.network.ProtectedCraftableSyncPayload.TYPE.id())
-                    && CraftPlanner.hasProtected(player.getInventory())) {
-                CraftPlanner.PlanOutcome withProtected =
-                        CraftPlanner.plan(player, info.parent(), grid, java.util.Map.of(), true);
-                if (!(withProtected instanceof CraftPlanner.PlanOutcome.Planned) && station != null) {
-                    withProtected = CraftPlanner.plan(player, info.parent(), grid, stationCounts, true);
+                            com.legoj15.sprawlcrafting.network.ProtectedCraftableSyncPayload.TYPE.id())) {
+                boolean inventoryProtected = CraftPlanner.hasProtected(player.getInventory());
+                if (!inventoryProtected) {
+                    stationProtectedCounts = station == null
+                            ? java.util.Map.of() : station.protectedCounts();
                 }
-                if (withProtected instanceof CraftPlanner.PlanOutcome.Planned protectedPlanned) {
-                    protectedPlanned.job().setUsesProtected(true);
-                    outcome = withProtected;
+                if (inventoryProtected || !stationProtectedCounts.isEmpty()) {
+                    CraftPlanner.PlanOutcome withProtected = inventoryProtected
+                            ? CraftPlanner.plan(player, info.parent(), grid, java.util.Map.of(),
+                                    java.util.Map.of(), true)
+                            : null;
+                    if (!(withProtected instanceof CraftPlanner.PlanOutcome.Planned) && station != null) {
+                        if (stationProtectedCounts.isEmpty()) {
+                            stationProtectedCounts = station.protectedCounts();
+                        }
+                        withProtected = CraftPlanner.plan(player, info.parent(), grid, stationCounts,
+                                stationProtectedCounts, true);
+                    }
+                    if (withProtected instanceof CraftPlanner.PlanOutcome.Planned protectedPlanned) {
+                        protectedPlanned.job().setUsesProtected(true);
+                        outcome = withProtected;
+                    }
                 }
             }
             if (outcome instanceof CraftPlanner.PlanOutcome.Planned planned) {
                 // stationCounts (empty when no station is open) ride along so the protected warning
-                // credits the station's plain stock, which the executor draws before protected copies.
+                // credits the station's plain stock, which the executor draws before protected copies;
+                // the protected counts and samples (#49) ride along for the same warning's station
+                // lines, so they are scanned only for a job that would show them.
+                java.util.Map<net.minecraft.world.item.Item, net.minecraft.world.item.ItemStack> stationProtectedSamples =
+                        planned.job().usesProtected() && station != null
+                                ? station.protectedSamples() : java.util.Map.of();
                 lines = CraftPreview.lines(planned.job(), recipes, player.registryAccess(),
-                        player.getInventory(), stationCounts);
+                        player.getInventory(), stationCounts, stationProtectedCounts, stationProtectedSamples);
             }
         }
         if (Services.PLATFORM.canReceive(player, com.legoj15.sprawlcrafting.network.CraftPreviewPayload.TYPE.id())) {

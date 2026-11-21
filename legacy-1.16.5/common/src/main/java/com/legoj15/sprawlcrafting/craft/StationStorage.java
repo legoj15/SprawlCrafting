@@ -1,6 +1,8 @@
 package com.legoj15.sprawlcrafting.craft;
 
+import java.util.Collections;
 import java.util.Map;
+import java.util.function.Predicate;
 
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
@@ -12,13 +14,16 @@ import net.minecraft.item.ItemStack;
  * for the moment it was obtained from {@link StationStorages#open}; callers re-open it for every craft
  * instead of holding it across ticks.
  *
- * <p>Only <em>plain</em> items count: one stack identity per {@link Item}, the one a freshly made stack
- * of it has (see the provider's {@code canonical}). A plain stack always passes
- * {@code CraftExecutor.usableAsIngredient} (no damage, enchantment or name), so the planner's snapshot,
- * the executor's draws and the client's mirror all agree on the same pool, keyed by item exactly like
- * the player-inventory snapshot — whose protected tier (issue #40) adds only enchanted/renamed copies
- * the player holds, never anything from here: the station stays a plain pool even for a job planned
- * with protected stacks.
+ * <p>The plain methods ({@link #counts()}, {@link #available}, {@link #extract}, {@link #insert},
+ * {@link #acceptable}) stay plain-only: one stack identity per {@link Item}, the one a freshly made stack
+ * of it has (see the provider's {@code canonical}), and {@link #insert} refuses anything else. A plain
+ * stack always passes {@code CraftExecutor.usableAsIngredient} (no damage, enchantment or name), so the
+ * planner's snapshot, the executor's draws and the client's mirror all agree on the same pool, keyed by
+ * item exactly like the player-inventory snapshot. The protected methods ({@link #protectedCounts()},
+ * {@link #protectedSamples()}, {@link #extractProtected}) serve only the player-confirmed protected tier
+ * (issue #40, widened to the station in #49): enchanted/renamed, never damaged, copies the station shows,
+ * counted per item and drawn identity-exact — never mixed into the plain pool, whose methods keep
+ * behaving as if they did not exist.
  *
  * <p>Implementations live in loader/mod compat code ({@code compat/ae2}, Forge only); shared code only
  * ever sees this interface.
@@ -62,4 +67,40 @@ public interface StationStorage {
      * to drop items at the player's feet.
      */
     long acceptable(ItemStack stack, long limit);
+
+    /**
+     * Protected-stack counts (issue #49): per {@link Item}, how many protected stacks
+     * ({@code CraftExecutor.isProtected}: enchanted and/or renamed, never damaged) the station holds,
+     * shows in its view filter and could extract right now — the confirmed tier's mirror of
+     * {@link #counts}. {@link Long#MAX_VALUE} means unbounded, by the same rule as {@link #counts()}
+     * (probe the exact identity, as in {@code unboundedIfProbed}). These counts never feed the plain
+     * pool: the planner merges them only into its protected pass. May be expensive (a full storage
+     * scan), so it is read once per plan, never per craft. Default: none (a station without a
+     * protected tier).
+     */
+    default Map<Item, Long> protectedCounts() {
+        return Collections.emptyMap();
+    }
+
+    /**
+     * One count-1 copy per item of {@link #protectedCounts()} (hover name and enchantments intact),
+     * for the confirmation warning lines (issue #49). Default: none.
+     */
+    default Map<Item, ItemStack> protectedSamples() {
+        return Collections.emptyMap();
+    }
+
+    /**
+     * Extracts exactly ONE protected stack (a count-1 copy) of {@code item} whose exact identity
+     * {@code accepts} tests true (issue #49) — identity-exact: an implementation must build its
+     * request from the stored entry's own copy with stack size 1, never from the canonical plain key
+     * (that would draw a plain stack instead; {@link #extract} stays plain-only). MODULATE, with
+     * power. Default: {@link ItemStack#EMPTY} (nothing to extract).
+     *
+     * @return the extracted stack, or {@link ItemStack#EMPTY} when the station holds no protected copy
+     *         of {@code item} that {@code accepts} accepts
+     */
+    default ItemStack extractProtected(Item item, Predicate<ItemStack> accepts) {
+        return ItemStack.EMPTY;
+    }
 }

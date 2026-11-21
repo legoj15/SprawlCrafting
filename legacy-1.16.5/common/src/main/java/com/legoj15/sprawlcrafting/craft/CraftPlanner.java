@@ -133,12 +133,24 @@ public final class CraftPlanner {
      */
     public static PlanOutcome plan(ServerPlayerEntity player, IRecipe<?> target, GridContext grid,
                                    Map<Item, Long> station, boolean includeProtected) {
+        return plan(player, target, grid, station, Collections.<Item, Long>emptyMap(), includeProtected);
+    }
+
+    /**
+     * {@link #plan(ServerPlayerEntity, IRecipe, GridContext, Map, boolean)} with the open station's
+     * protected counts ({@link StationStorage#protectedCounts()}) in the pool too (issue #49): the
+     * fourth and last source, after plain inventory, plain station and protected inventory. They are
+     * merged only when {@code includeProtected}, never into the plain pool.
+     */
+    public static PlanOutcome plan(ServerPlayerEntity player, IRecipe<?> target, GridContext grid,
+                                   Map<Item, Long> station, Map<Item, Long> stationProtected,
+                                   boolean includeProtected) {
         // Cheap reject before building the producer index, so spammed unplannable requests cost little.
         if (McRecipe.of(target) == null) {
             return PlanOutcome.of(PlanOutcome.Kind.UNSUPPORTED);
         }
         return session(player.getServer().getRecipeManager(), player.inventory, grid, station,
-                includeProtected).plan(target);
+                stationProtected, includeProtected).plan(target);
     }
 
     /**
@@ -168,8 +180,20 @@ public final class CraftPlanner {
      */
     public static Session session(RecipeManager recipes, PlayerInventory inventory, GridContext grid,
                                   Map<Item, Long> station, boolean includeProtected) {
+        return session(recipes, inventory, grid, station, Collections.<Item, Long>emptyMap(), includeProtected);
+    }
+
+    /**
+     * {@link #session(RecipeManager, PlayerInventory, GridContext, Map, boolean)} with the open
+     * station's protected counts ({@link StationStorage#protectedCounts()}) in the pool too
+     * (issue #49): the fourth source, after plain inventory, plain station and protected inventory,
+     * merged only when {@code includeProtected}.
+     */
+    public static Session session(RecipeManager recipes, PlayerInventory inventory, GridContext grid,
+                                  Map<Item, Long> station, Map<Item, Long> stationProtected,
+                                  boolean includeProtected) {
         return new Session(recipes, grid, ProducerIndex.forGrid(recipes, grid),
-                snapshotInventory(inventory, station, includeProtected));
+                snapshotInventory(inventory, station, stationProtected, includeProtected));
     }
 
     /**
@@ -354,12 +378,15 @@ public final class CraftPlanner {
      * the executor may pick for a job planned with it ({@link CraftExecutor#usableAsIngredient}).
      *
      * <p>{@code station} adds an open crafting station's plain-item counts (already usable, see
-     * {@link StationStorage}). Counts are {@code long} with a saturating add: an unbounded station
-     * count ({@link Long#MAX_VALUE}, an AE2 creative cell) stays unbounded, and a real count above
-     * {@link Integer#MAX_VALUE} (a network holding billions of one item) stays that finite count —
-     * the solver's long entry points read it exactly (issue #47).
+     * {@link StationStorage}), and {@code stationProtected} its protected-stack counts (issue #49) —
+     * merged only when {@code includeProtected}, never into a plain session, which would silently
+     * treat protected material as plain. Counts are {@code long} with a saturating add: an unbounded
+     * station count ({@link Long#MAX_VALUE}, an AE2 creative cell) stays unbounded, and a real count
+     * above {@link Integer#MAX_VALUE} (a network holding billions of one item) stays that finite
+     * count — the solver's long entry points read it exactly (issue #47).
      */
     private static Map<Item, Long> snapshotInventory(PlayerInventory inventory, Map<Item, Long> station,
+                                                     Map<Item, Long> stationProtected,
                                                      boolean includeProtected) {
         Map<Item, Long> counts = new HashMap<>();
         for (int i = 0; i < MAIN_SLOTS; i++) {
@@ -372,6 +399,14 @@ public final class CraftPlanner {
             long count = entry.getValue();
             if (count > 0) {
                 counts.merge(entry.getKey(), count, CraftPlanner::saturatingAdd);
+            }
+        }
+        if (includeProtected) {
+            for (Map.Entry<Item, Long> entry : stationProtected.entrySet()) {
+                long count = entry.getValue();
+                if (count > 0) {
+                    counts.merge(entry.getKey(), count, CraftPlanner::saturatingAdd);
+                }
             }
         }
         return counts;
@@ -406,12 +441,19 @@ public final class CraftPlanner {
      * copies available. {@code station} adds the plain counts of the other sources the plan used
      * (an open crafting station's storage; empty for none): the executor draws those before any
      * protected copy, so without them an item the station supplies anyway would be over-warned.
+     * {@code stationProtected}/{@code stationProtectedSamples} add the station's protected tier
+     * (issue #49): its samples join the representatives after the inventory's (an inventory copy wins
+     * for the same item), and its counts never join the plain map — they are protected material the
+     * plan may draw from the station, so an item is still warned exactly when the plan's net
+     * consumption exceeds plain inventory plus plain station.
      * Display-facing (the click preview and the JEI tooltip); the executor itself
      * re-decides per craft from the live pool.
      */
     public static List<ItemStack> protectedItemsUsed(CraftJob job, RecipeManager recipes,
                                                      PlayerInventory inventory,
-                                                     Map<Item, Long> station) {
+                                                     Map<Item, Long> station,
+                                                     Map<Item, Long> stationProtected,
+                                                     Map<Item, ItemStack> stationProtectedSamples) {
         Map<Item, Long> plain = new HashMap<>();
         Map<Item, ItemStack> protectedCopies = new LinkedHashMap<>();
         for (int i = 0; i < MAIN_SLOTS; i++) {
@@ -425,12 +467,15 @@ public final class CraftPlanner {
                 plain.merge(stack.getItem(), (long) stack.getCount(), Long::sum);
             }
         }
-        if (protectedCopies.isEmpty()) {
+        for (Map.Entry<Item, ItemStack> entry : stationProtectedSamples.entrySet()) {
+            protectedCopies.putIfAbsent(entry.getKey(), entry.getValue());
+        }
+        if (protectedCopies.isEmpty() && stationProtected.isEmpty()) {
             return ImmutableList.of();
         }
         for (Map.Entry<Item, Long> entry : station.entrySet()) {
             if (entry.getValue() > 0) {
-                plain.merge(entry.getKey(), entry.getValue(), Long::sum);
+                plain.merge(entry.getKey(), entry.getValue(), CraftPlanner::saturatingAdd);
             }
         }
         Map<Item, Long> net = new HashMap<>();

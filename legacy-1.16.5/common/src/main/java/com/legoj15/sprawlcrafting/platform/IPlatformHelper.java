@@ -75,6 +75,15 @@ public interface IPlatformHelper {
      */
     boolean serverSupportsStations();
 
+    /**
+     * Whether the connected server has the station-protected marker channel (issue #49), i.e. a
+     * SprawlCrafting build that also counts an open station's protected stacks (enchanted and/or
+     * renamed, never damaged) in a confirmed protected plan. Without it the client must not count
+     * them: the server would plan the protected start from the plain and inventory-protected pools
+     * only and refuse what the client offered.
+     */
+    boolean serverSupportsStationProtected();
+
     /** C2S: confirm a deferred craft of {@code recipeId}. No-op unless {@link #serverHasMod()}. */
     void sendStartCraft(net.minecraft.util.ResourceLocation recipeId);
 

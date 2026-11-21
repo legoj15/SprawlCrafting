@@ -59,10 +59,11 @@ public final class CraftRequests {
     /**
      * Start path keyed by a specific recipe (command / recipe-book click). {@code allowProtected}
      * is the protected tier (issue #40): the confirmed request from the protected channel, whose
-     * plan may also count the player's protected stacks (enchanted and/or renamed, never damaged)
-     * once the plain passes — the inventory and station chest, then an open terminal's network —
-     * have fallen short. A request that still fails keeps the plain passes' rejection: the message
-     * says what is missing, not which tier ran out.
+     * plan may also count the protected stacks (enchanted and/or renamed, never damaged) of the
+     * 36 main slots and of an open terminal's network (issue #49) once the plain passes — the
+     * inventory and station chest, then an open terminal's network — have fallen short. A request
+     * that still fails keeps the plain passes' rejection: the message says what is missing, not
+     * which tier ran out.
      */
     public static StartOutcome tryStart(EntityPlayerMP player, IRecipe recipe, boolean allowProtected) {
         if (CraftQueueManager.activeJob(player.getUniqueID()).isPresent()) {
@@ -80,12 +81,18 @@ public final class CraftRequests {
                 plannedOnNetwork = own instanceof PlanOutcome.Planned;
             }
             if (!(own instanceof PlanOutcome.Planned) && allowProtected
-                    && CraftPlanner.hasProtected(player.inventory)) {
-                // The confirmed fallback (#40): count the protected stacks of the 36 main slots too,
+                    && CraftPlanner.hasProtectedAnywhere(player, NetworkTerminals.usable(player))) {
+                // The confirmed fallback (#40, widened to the network's protected stacks by #49):
+                // count the protected stacks of the 36 main slots and an open terminal's network,
                 // in the same order as the plain passes — without the network first, so a job they
-                // cover never depends on it, then with an open terminal's counts, which makes the
-                // job network-dependent (it pauses, not cancels, when the terminal goes away).
-                PlanOutcome withProtected = CraftPlanner.sessionWithoutNetwork(player, grid, true).plan(recipe);
+                // cover never depends on it, then with the network's counts, which makes the job
+                // network-dependent (it pauses, not cancels, when the terminal goes away). The
+                // inventory-only pass is skipped when the inventory itself holds no protected
+                // stack: without the network it would repeat the plain pass above exactly.
+                PlanOutcome withProtected = own;
+                if (CraftPlanner.hasProtected(player.inventory)) {
+                    withProtected = CraftPlanner.sessionWithoutNetwork(player, grid, true).plan(recipe);
+                }
                 if (!(withProtected instanceof PlanOutcome.Planned) && NetworkTerminals.usable(player)) {
                     withProtected = CraftPlanner.plan(player, recipe, grid, true);
                     plannedOnNetwork = withProtected instanceof PlanOutcome.Planned;
@@ -118,9 +125,14 @@ public final class CraftRequests {
                 plannedOnNetwork = own instanceof PlanOutcome.Planned;
             }
             if (!(own instanceof PlanOutcome.Planned) && allowProtected
-                    && CraftPlanner.hasProtected(player.inventory)) {
-                PlanOutcome withProtected = CraftPlanner.sessionWithoutNetwork(player, grid, true)
-                        .planByResult(result);
+                    && CraftPlanner.hasProtectedAnywhere(player, NetworkTerminals.usable(player))) {
+                // As in tryStart (#40, widened to the network by #49); the inventory-only pass is
+                // skipped when the inventory itself holds no protected stack.
+                PlanOutcome withProtected = own;
+                if (CraftPlanner.hasProtected(player.inventory)) {
+                    withProtected = CraftPlanner.sessionWithoutNetwork(player, grid, true)
+                            .planByResult(result);
+                }
                 if (!(withProtected instanceof PlanOutcome.Planned) && NetworkTerminals.usable(player)) {
                     withProtected = CraftPlanner.planByResult(player, result, grid, true);
                     plannedOnNetwork = withProtected instanceof PlanOutcome.Planned;

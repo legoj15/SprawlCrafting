@@ -34,7 +34,9 @@ public final class CraftPreview {
     }
 
     public static List<Component> lines(CraftJob job, RecipeManager recipes, RegistryAccess registries,
-                                        Inventory inventory, Map<Item, Long> station) {
+                                        Inventory inventory, Map<Item, Long> station,
+                                        Map<Item, Long> stationProtected,
+                                        Map<Item, ItemStack> stationProtectedSamples) {
         List<Component> out = new ArrayList<>();
         out.add(Component.translatable("sprawlcrafting.preview.header",
                 job.targetResult().getHoverName()).withStyle(ChatFormatting.YELLOW));
@@ -56,7 +58,8 @@ public final class CraftPreview {
         }
         totals.forEach((item, count) -> out.add(Component.translatable("sprawlcrafting.preview.step",
                 CountFormat.format(count), names.get(item)).withStyle(ChatFormatting.GRAY)));
-        out.addAll(protectedWarningLines(job, recipes, registries, inventory, station));
+        out.addAll(protectedWarningLines(job, recipes, registries, inventory, station,
+                stationProtected, stationProtectedSamples));
         out.add(Component.translatable("sprawlcrafting.preview.confirm")
                 .withStyle(ChatFormatting.GREEN, ChatFormatting.ITALIC));
         return out;
@@ -68,16 +71,20 @@ public final class CraftPreview {
      * {@code usesProtected} job whose plain copies happened to cover everything, which can happen when
      * the inventory changed between the plan and this look. {@code station} is the plain counts of the
      * other sources the plan used (an open crafting station's storage; empty for none), which the
-     * executor draws before any protected copy and so count as plain here (see
+     * executor draws before any protected copy and so count as plain here;
+     * {@code stationProtected}/{@code stationProtectedSamples} are that station's protected stacks
+     * (issue #49), which the executor stages and consumes as further protected copies (see
      * {@link CraftPlanner#protectedItemsUsed}).
      */
     public static List<Component> protectedWarningLines(CraftJob job, RecipeManager recipes,
                                                         RegistryAccess registries, Inventory inventory,
-                                                        Map<Item, Long> station) {
+                                                        Map<Item, Long> station, Map<Item, Long> stationProtected,
+                                                        Map<Item, ItemStack> stationProtectedSamples) {
         if (!job.usesProtected()) {
             return Collections.emptyList();
         }
-        List<ItemStack> used = CraftPlanner.protectedItemsUsed(job, recipes, registries, inventory, station);
+        List<ItemStack> used = CraftPlanner.protectedItemsUsed(job, recipes, registries, inventory, station,
+                stationProtected, stationProtectedSamples);
         if (used.isEmpty()) {
             return Collections.emptyList();
         }

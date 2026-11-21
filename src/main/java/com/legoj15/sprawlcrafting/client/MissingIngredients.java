@@ -73,15 +73,17 @@ public final class MissingIngredients {
         if (mc.player == null || mc.level == null) {
             return ShortfallView.unavailable();
         }
-        // With a crafting station open (AE2 Crafting Terminal) its storage counts as already gathered.
-        // Protected stacks (enchanted/renamed, #40) count whenever the server can honour a protected
-        // start: a confirmed craft consumes them, so the list must not ask for what is held (#48).
+        // With a crafting station open (AE2 Crafting Terminal) its storage counts as already gathered,
+        // protected stacks included (the player's, #40, and the station's own, #49) whenever the
+        // server can honour a protected start: a confirmed craft consumes them, so the list must not
+        // ask for what is held (#48).
         boolean includeProtected = mc.getConnection() != null
                 && com.legoj15.sprawlcrafting.platform.Services.PLATFORM.canSendToServer(
                         mc.getConnection().getConnection(),
                         com.legoj15.sprawlcrafting.network.StartProtectedCraftPayload.ID);
         return CraftPlanner.session(mc.level.getRecipeManager(), mc.level.registryAccess(),
-                mc.player.getInventory(), grid, DeferredCraftableCache.stationCounts(), includeProtected)
+                mc.player.getInventory(), grid, DeferredCraftableCache.stationCounts(),
+                DeferredCraftableCache.stationProtectedCounts(), includeProtected)
                 .shortfall(holder);
     }
 

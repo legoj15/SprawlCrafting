@@ -152,7 +152,9 @@ public final class DeferredClickState {
         pendingInventoryGeneration = generation;
         previewLines = CraftPreview.lines(planned.job(),
                 minecraft.level.getRecipeManager(), minecraft.level.registryAccess(),
-                minecraft.player.getInventory(), DeferredCraftableCache.stationCounts());
+                minecraft.player.getInventory(), DeferredCraftableCache.stationCounts(),
+                DeferredCraftableCache.stationProtectedCounts(),
+                DeferredCraftableCache.stationProtectedSamples());
     }
 
     /**

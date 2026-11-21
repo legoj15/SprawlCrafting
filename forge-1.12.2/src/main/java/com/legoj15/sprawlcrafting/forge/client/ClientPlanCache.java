@@ -22,9 +22,11 @@ import net.minecraft.util.ResourceLocation;
  * (a Crafting Station's chest) changes, keyed by a cheap content signature. Client-only.
  *
  * <p>A second session — the same pool plus the player's protected stacks (enchanted and/or
- * renamed, never damaged; issue #40) — is kept alongside and consulted only when the server has the
- * protected capability ({@link ServerPresence#protectedCraft}) and the inventory holds a protected
- * stack. A recipe only that session can make classifies {@link CraftPlanner.Craftability#DEFERRED}
+ * renamed, never damaged; issue #40) and, while the server counts them (issue #49), an open
+ * terminal network's — is kept alongside and consulted only when the server has the
+ * protected capability ({@link ServerPresence#protectedCraft}) and either the inventory or such a
+ * network holds a protected stack. A recipe only that session can make classifies
+ * {@link CraftPlanner.Craftability#DEFERRED}
  * (never direct: vanilla's own placement refuses enchanted/renamed stacks) and is remembered in
  * {@link #isProtectedOnly}, so its confirm click sends the protected start instead of the plain one.
  */
@@ -35,13 +37,28 @@ public final class ClientPlanCache {
 
     private static CraftPlanner.Session session;
     /**
-     * The plain pool plus the player's protected stacks (issue #40); null unless the offer — the
-     * server's capability times an inventory that holds a protected stack — is on. Rebuilt in
-     * lockstep with the plain session, so the two never disagree about the pool they share.
+     * The plain pool plus the player's protected stacks (issue #40) and, with the
+     * network-protected capability, an open terminal network's (issue #49); null unless the
+     * offer — the server's capability times a source that holds a protected stack — is on.
+     * Rebuilt in lockstep with the plain session, so the two never disagree about the pool they
+     * share.
      */
     private static CraftPlanner.Session protectedSession;
     /** Whether {@link #protectedSession} was built with the offer on, so a flip rebuilds it. */
     private static boolean protectedBuilt;
+    /** Whether it was built with the network's protected tier (#49); a capability flip rebuilds it. */
+    private static boolean protectedNetworkBuilt;
+    /**
+     * The plain session the offer ({@link #protectedOfferOn}) was last computed against: the offer's
+     * pool inputs — the inventory's and network's protected stacks — are all part of that session's
+     * key, so between rebuilds they cannot change and the network scan runs once per session, not
+     * per query on the render path. The capabilities are cached alongside (a flip on reconnect,
+     * where the session itself may survive an identical signature, must still recompute).
+     */
+    private static CraftPlanner.Session offerSession;
+    private static boolean offerNetworkProtected;
+    private static boolean offerProtectedCraft;
+    private static boolean protectedOfferOn;
     private static int signature = Integer.MIN_VALUE;
     private static GridContext cachedGrid;
     /** Recipes we marked deferred only via the protected tier (issue #40); see {@link #classify}. */
@@ -57,6 +74,8 @@ public final class ClientPlanCache {
             // protected query rebuild them (the remembered distinctions die with them).
             protectedSession = null;
             protectedBuilt = false;
+            protectedNetworkBuilt = false;
+            offerSession = null;
             protectedOnly.clear();
         }
         return session;
@@ -64,16 +83,33 @@ public final class ClientPlanCache {
 
     /**
      * The plain session's protected twin (issue #40), or null when the offer is off — the server
-     * has not advertised the capability, or the 36 main slots hold no protected stack. Everything
+     * has not advertised the capability, or neither the 36 main slots nor — while the server
+     * counts them (issue #49) — an open terminal's network holds a protected stack. Everything
      * else keeps the plain answer, and any change that flips either (a rebuilt session, a
      * capability flip on reconnect) also invalidates this, so it cannot go stale.
      */
     public static CraftPlanner.Session protectedSession(EntityPlayer player, GridContext grid) {
-        get(player, grid); // keeps the twin in lockstep with the plain session's key
-        boolean offer = ServerPresence.protectedCraft() && CraftPlanner.hasProtected(player.inventory);
-        if (protectedSession == null || offer != protectedBuilt) {
-            protectedSession = offer ? CraftPlanner.session(player, grid, true) : null;
-            protectedBuilt = offer;
+        CraftPlanner.Session plain = get(player, grid); // keeps the twin in lockstep with the plain session's key
+        boolean networkProtected = ServerPresence.networkProtected();
+        // The offer spans both sources of the tier (issue #49): the 36 main slots' protected
+        // stacks, or the open terminal network's — the latter only while the server advertised it
+        // counts them, since a matching-but-older server would refuse the start. Computed once per
+        // session and capability flip — the network scan must not run per recipe query on the
+        // render path.
+        if (offerSession != plain || networkProtected != offerNetworkProtected
+                || offerProtectedCraft != ServerPresence.protectedCraft()) {
+            offerProtectedCraft = ServerPresence.protectedCraft();
+            protectedOfferOn = offerProtectedCraft
+                    && CraftPlanner.hasProtectedAnywhere(player, networkProtected);
+            offerSession = plain;
+            offerNetworkProtected = networkProtected;
+        }
+        if (protectedBuilt != protectedOfferOn || networkProtected != protectedNetworkBuilt
+                || (protectedOfferOn && protectedSession == null)) {
+            protectedSession = protectedOfferOn
+                    ? CraftPlanner.session(player, grid, true, networkProtected) : null;
+            protectedBuilt = protectedOfferOn;
+            protectedNetworkBuilt = networkProtected;
             protectedOnly.clear();
         }
         return protectedSession;
@@ -151,7 +187,9 @@ public final class ClientPlanCache {
         }
         // An open network crafting terminal (AE2): the network is material while it is open, so its
         // displayed contents are part of the key (0 when no terminal is open). The provider throttles
-        // this to a few ticks so a busy network does not rebuild the session every frame.
+        // this to a few ticks so a busy network does not rebuild the session every frame, and hashes
+        // each entry's NBT, so a protected stack (enchanted, renamed) arriving in or leaving the
+        // network moves the key — the protected twin rebuilds with it (issue #49).
         hash = 31 * hash + NetworkTerminals.clientSignature(player);
         return hash;
     }

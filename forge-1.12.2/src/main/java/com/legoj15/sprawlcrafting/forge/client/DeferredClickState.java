@@ -11,6 +11,7 @@ import com.legoj15.sprawlcrafting.forge.craft.CraftPlanner;
 import com.legoj15.sprawlcrafting.forge.craft.CraftStep;
 import com.legoj15.sprawlcrafting.forge.craft.GridContext;
 import com.legoj15.sprawlcrafting.forge.craft.ItemKey;
+import com.legoj15.sprawlcrafting.forge.craft.NetworkTerminals;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.resources.I18n;
@@ -56,10 +57,14 @@ public final class DeferredClickState {
      * The plain counts of the pool's sources beyond the 36 main slots ({@link CraftPlanner#plainExternalCounts}),
      * cached against the planning session they were counted over: the JEI tooltip recomputes its
      * warning per hover, and a terminal's network scan must not run per frame. One scan per session
-     * rebuild — the cadence at which the session itself already decided the pool changed.
+     * rebuild — the cadence at which the session itself already decided the pool changed. The
+     * network's protected identities ({@link NetworkTerminals#protectedSamples}, issue #49) ride
+     * the same cache and cadence, and stay empty while the server has not advertised it counts
+     * them.
      */
     private static CraftPlanner.Session countedSession;
     private static Map<ItemKey, Long> externalCounts;
+    private static List<ItemStack> networkProtectedSamples;
 
     private static boolean overlayHover;
 
@@ -75,6 +80,7 @@ public final class DeferredClickState {
         cachedLines = null;
         countedSession = null;
         externalCounts = null;
+        networkProtectedSamples = null;
     }
 
     /** The previewed recipe, or null when nothing is armed. */
@@ -170,12 +176,13 @@ public final class DeferredClickState {
 
     /**
      * The protected-stack warning (issue #40): a gold header plus one line per protected item the
-     * plan will consume, naming why it is special. Empty for a plan that uses none — including a
-     * {@code usesProtected} job whose plain copies happened to cover everything, which can happen
-     * when the inventory changed between the plan and this look. The plan's other sources (the open
-     * grid and station chest, an open terminal's network) are credited as plain material: the
-     * executor draws them before any protected copy, so without them an item those sources supply
-     * anyway would be over-warned. Shared with the JEI "+" tooltip
+     * plan will consume, naming why it is special — from the 36 main slots or, while the server
+     * counts it (issue #49), the open terminal's network. Empty for a plan that uses none —
+     * including a {@code usesProtected} job whose plain copies happened to cover everything, which
+     * can happen when the inventory changed between the plan and this look. The plan's other
+     * sources (the open grid and station chest, an open terminal's network) are credited as plain
+     * material: the executor draws them before any protected copy, so without them an item those
+     * sources supply anyway would be over-warned. Shared with the JEI "+" tooltip
      * ({@code DeferredCraftTransferHandler}), which recomputes these lines per hover.
      */
     public static List<String> protectedWarningLines(CraftJob plan, EntityPlayer player, GridContext grid) {
@@ -183,7 +190,7 @@ public final class DeferredClickState {
             return Collections.emptyList();
         }
         List<ItemStack> used = CraftPlanner.protectedItemsUsed(plan, player.inventory,
-                externalPlainCounts(player, grid));
+                externalPlainCounts(player, grid), externalProtectedSamples(player, grid));
         if (used.isEmpty()) {
             return Collections.emptyList();
         }
@@ -210,11 +217,34 @@ public final class DeferredClickState {
      * mirror that pool exactly: network included, empty when no terminal is open.
      */
     private static Map<ItemKey, Long> externalPlainCounts(EntityPlayer player, GridContext grid) {
-        CraftPlanner.Session session = ClientPlanCache.get(player, grid);
-        if (countedSession != session) {
-            externalCounts = CraftPlanner.plainExternalCounts(player, true);
-            countedSession = session;
-        }
+        recountExternal(player, grid);
         return externalCounts;
+    }
+
+    /**
+     * The cached network protected samples ({@link #networkProtectedSamples}, issue #49) over the
+     * same session-keyed refresh as the plain counts.
+     */
+    private static List<ItemStack> externalProtectedSamples(EntityPlayer player, GridContext grid) {
+        recountExternal(player, grid);
+        return networkProtectedSamples;
+    }
+
+    private static boolean countedNetworkProtected;
+
+    private static void recountExternal(EntityPlayer player, GridContext grid) {
+        CraftPlanner.Session session = ClientPlanCache.get(player, grid);
+        boolean networkProtected = ServerPresence.networkProtected();
+        // The capability can flip (reconnect to another server) while the session object survives.
+        if (countedSession != session || countedNetworkProtected != networkProtected) {
+            externalCounts = CraftPlanner.plainExternalCounts(player, true);
+            // The open terminal network's protected identities (#49): counted only while the
+            // server advertised it counts them — an older server would refuse the start, so its
+            // stacks must not reach the warning either.
+            networkProtectedSamples = networkProtected
+                    ? NetworkTerminals.protectedSamples(player) : Collections.<ItemStack>emptyList();
+            countedSession = session;
+            countedNetworkProtected = networkProtected;
+        }
     }
 }

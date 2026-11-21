@@ -86,25 +86,27 @@ public final class CraftPlanner {
      */
     public static PlanOutcome plan(ServerPlayer player, RecipeHolder<?> targetHolder, GridContext grid,
                                    Map<Item, Long> station) {
-        return plan(player, targetHolder, grid, station, false);
+        return plan(player, targetHolder, grid, station, Map.of(), false);
     }
 
     /**
      * {@link #plan(ServerPlayer, RecipeHolder, GridContext, Map)} with the 36 main slots' protected
      * stacks (enchanted and/or renamed, never damaged; {@link CraftExecutor#isProtected}) counted as
      * material too — the player-confirmed fallback (issue #40) for recipes the plain pool cannot make.
-     * The caller that planned this way marks the job {@code CraftJob#setUsesProtected}, which is what
-     * lets the executor pick those stacks.
+     * {@code stationProtected} adds the open station's protected stacks (#49) to that same tier, never
+     * to the plain pool. The caller that planned this way marks the job
+     * {@code CraftJob#setUsesProtected}, which is what lets the executor pick those stacks.
      */
     public static PlanOutcome plan(ServerPlayer player, RecipeHolder<?> targetHolder, GridContext grid,
-                                   Map<Item, Long> station, boolean includeProtected) {
+                                   Map<Item, Long> station, Map<Item, Long> stationProtected,
+                                   boolean includeProtected) {
         // Cheap reject before building the producer index, so spammed unplannable
         // requests (special/non-crafting/wrong-grid recipes) cost almost nothing.
         if (McRecipe.of(targetHolder, player.registryAccess()) == null) {
             return new PlanOutcome.Unsupported();
         }
         return session(player.level().getServer().getRecipeManager(), player.registryAccess(),
-                player.getInventory(), grid, station, includeProtected).plan(targetHolder);
+                player.getInventory(), grid, station, stationProtected, includeProtected).plan(targetHolder);
     }
 
     /**
@@ -113,9 +115,10 @@ public final class CraftPlanner {
      * {@link GridContext#CRAFTING_TABLE} to cost the full 3×3 chain regardless of which grid the
      * query came from. The open station's storage counts as material already gathered (issue #33),
      * as in {@link #plan(ServerPlayer, RecipeHolder, GridContext, Map)}. {@code includeProtected}
-     * counts the player's protected stacks too (#40), for a client that can confirm a protected craft,
-     * so the list never asks for what such a craft would consume (#48). Returns
-     * {@link ShortfallView#unavailable()} for unplannable recipes.
+     * counts the player's protected stacks too (#40), and the open station's protected stacks with
+     * them (#49), for a client that can confirm a protected craft, so the list never asks for what
+     * such a craft would consume (#48). Returns {@link ShortfallView#unavailable()} for unplannable
+     * recipes.
      */
     public static ShortfallView shortfall(ServerPlayer player, RecipeHolder<?> targetHolder, GridContext grid,
                                           boolean includeProtected) {
@@ -123,9 +126,13 @@ public final class CraftPlanner {
             return ShortfallView.unavailable();
         }
         StationStorage station = StationStorages.open(player);
+        // The station's protected tier (#49) is a second storage scan, so it is read only when the
+        // protected tier is asked for at all.
+        Map<Item, Long> stationProtected = includeProtected && station != null
+                ? station.protectedCounts() : Map.of();
         return session(player.level().getServer().getRecipeManager(), player.registryAccess(),
-                player.getInventory(), grid, station == null ? Map.of() : station.counts(), includeProtected)
-                .shortfall(targetHolder);
+                player.getInventory(), grid, station == null ? Map.of() : station.counts(),
+                stationProtected, includeProtected).shortfall(targetHolder);
     }
 
     /**
@@ -147,21 +154,22 @@ public final class CraftPlanner {
      */
     public static Session session(RecipeManager recipes, RegistryAccess registries,
                                   Inventory inventory, GridContext grid, Map<Item, Long> station) {
-        return session(recipes, registries, inventory, grid, station, false);
+        return session(recipes, registries, inventory, grid, station, Map.of(), false);
     }
 
     /**
      * {@link #session(RecipeManager, RegistryAccess, Inventory, GridContext, Map)} with the 36 main
-     * slots' protected stacks counted too ({@code includeProtected}, issue #40). A recipe such a
+     * slots' protected stacks counted too ({@code includeProtected}, issue #40), plus — into that
+     * same tier, never the plain pool — the open station's protected stacks (#49). A recipe such a
      * session plans is NOT plain-craftable: the caller must remember the distinction (the client
      * classifies it deferred, the confirming packet is the protected one) and mark the job it hands on.
      */
     public static Session session(RecipeManager recipes, RegistryAccess registries,
                                   Inventory inventory, GridContext grid, Map<Item, Long> station,
-                                  boolean includeProtected) {
+                                  Map<Item, Long> stationProtected, boolean includeProtected) {
         return new Session(recipes, registries, grid,
                 ProducerIndex.forGrid(recipes, registries, grid),
-                snapshotInventory(inventory, station, includeProtected));
+                snapshotInventory(inventory, station, stationProtected, includeProtected));
     }
 
     /**
@@ -333,12 +341,16 @@ public final class CraftPlanner {
      * with it ({@link CraftExecutor#usableAsIngredient(ItemStack, boolean)}).
      *
      * <p>{@code station} adds an open crafting station's plain-item counts (already usable, see
-     * {@link StationStorage}). Counts are {@code long} with a saturating add: an unbounded station
+     * {@link StationStorage}), and {@code stationProtected} its protected stacks — the station's side
+     * of the same confirmed tier (#49), merged only when {@code includeProtected} and never into the
+     * plain pool's meaning: the executor draws those copies (staged into the inventory) only after
+     * every plain source. Counts are {@code long} with a saturating add: an unbounded station
      * count ({@link Long#MAX_VALUE}, an AE2 creative cell) stays unbounded, and a real count above
      * {@link Integer#MAX_VALUE} (a network holding billions of one item) stays that finite count —
      * the solver's long entry points read it exactly (issue #47).
      */
     private static Map<Item, Long> snapshotInventory(Inventory inventory, Map<Item, Long> station,
+                                                     Map<Item, Long> stationProtected,
                                                      boolean includeProtected) {
         Map<Item, Long> counts = new HashMap<>();
         for (int i = 0; i < Inventory.INVENTORY_SIZE; i++) {
@@ -352,6 +364,13 @@ public final class CraftPlanner {
                 counts.merge(item, count, CraftPlanner::saturatingAdd);
             }
         });
+        if (includeProtected) {
+            stationProtected.forEach((item, count) -> {
+                if (count > 0) {
+                    counts.merge(item, count, CraftPlanner::saturatingAdd);
+                }
+            });
+        }
         return counts;
     }
 
@@ -384,12 +403,16 @@ public final class CraftPlanner {
      * copies available. {@code station} adds the plain counts of the other sources the plan used
      * (an open crafting station's storage; empty for none): the executor draws those before any
      * protected copy, so without them an item the station supplies anyway would be over-warned.
-     * Display-facing (the click preview and the JEI tooltip); the executor itself
-     * re-decides per craft from the live pool.
+     * {@code stationProtected}/{@code stationProtectedSamples} add the station's own protected
+     * stacks (issue #49) as further representatives — an inventory copy wins per item — whose
+     * counts never join the plain side: those copies are warned material exactly like the player's,
+     * drawn after every plain source. Display-facing (the click preview and the JEI tooltip); the
+     * executor itself re-decides per craft from the live pool.
      */
     public static List<ItemStack> protectedItemsUsed(CraftJob job, RecipeManager recipes,
                                                      RegistryAccess registries, Inventory inventory,
-                                                     Map<Item, Long> station) {
+                                                     Map<Item, Long> station, Map<Item, Long> stationProtected,
+                                                     Map<Item, ItemStack> stationProtectedSamples) {
         Map<Item, Long> plain = new HashMap<>();
         Map<Item, ItemStack> protectedCopies = new LinkedHashMap<>();
         for (int i = 0; i < Inventory.INVENTORY_SIZE; i++) {
@@ -403,6 +426,14 @@ public final class CraftPlanner {
                 plain.merge(stack.getItem(), (long) stack.getCount(), Long::sum);
             }
         }
+        // The station's samples (issue #49), an item the player's own copies already represent
+        // excluded; the counts gate guards a sample whose count cache has not caught up (the client
+        // caches the two scans together, but equality, not identity, keeps them).
+        stationProtectedSamples.forEach((item, sample) -> {
+            if (stationProtected.containsKey(item)) {
+                protectedCopies.putIfAbsent(item, sample);
+            }
+        });
         if (protectedCopies.isEmpty()) {
             return List.of();
         }
@@ -411,6 +442,8 @@ public final class CraftPlanner {
                 plain.merge(item, count, CraftPlanner::saturatingAdd);
             }
         });
+        // stationProtected never merges into plain: the executor stages and consumes those copies
+        // only after every plain source, so they count against net consumption, not cover it.
         Map<Item, Long> net = new HashMap<>();
         Set<Item> undetermined = new HashSet<>();
         for (CraftStep step : job.steps()) {

@@ -86,8 +86,11 @@ import net.minecraft.world.item.ItemStack;
  *       amount the server synced (already filtered by the menu's view).</li>
  * </ul>
  * Only plain {@link AEItemKey}s (the key of a fresh stack: no component patch, or on AE2 15 at most
- * the {@code Damage:0} a new damageable stack carries; see {@code canonical}) count, matching
- * {@link StationStorage}'s contract.
+ * the {@code Damage:0} a new damageable stack carries; see {@code canonical}) count for the plain
+ * pool, matching {@link StationStorage}'s contract — plus, since issue #49, the protected tier:
+ * non-plain keys whose stack is enchanted and/or renamed (never damaged) are counted, sampled and
+ * extracted one at a time for a job the player confirmed for protected material (#40), always
+ * through the stored entry's own key, never the canonical one.
  *
  * <p>"Usable" (the {@link StationStorages.Provider} contract) means the terminal is open and its link
  * is connected. Server side that is asked live; the client mirror can only see the synced copy. An
@@ -293,6 +296,61 @@ public final class Ae2Station implements StationStorages.Provider {
         return counts;
     }
 
+    /**
+     * Client side of the protected tier (issue #49): counts of the synced entries that are protected
+     * stacks — non-plain keys whose own stack passes {@code CraftExecutor.isProtected} — for a client
+     * that can plan a confirmed protected craft. Same shape as {@link #clientCounts}: no probe here
+     * (this side cannot simulate), so a stored amount at or above {@link Integer#MAX_VALUE} lists as
+     * unbounded; the sync already filtered by the menu's view, so no {@code isKeyVisible} either.
+     */
+    @Override
+    public Map<Item, Long> clientProtectedCounts(AbstractContainerMenu menu) {
+        if (!(menu instanceof CraftingTermMenu terminal) || !clientOnline(terminal)) {
+            return null;
+        }
+        Map<Item, Long> counts = new HashMap<>();
+        clientProtectedScan(terminal, counts, new HashMap<>());
+        return counts;
+    }
+
+    /** The count-1 samples behind {@link #clientProtectedCounts} (issue #49), for the warning lines. */
+    @Override
+    public Map<Item, ItemStack> clientProtectedSamples(AbstractContainerMenu menu) {
+        if (!(menu instanceof CraftingTermMenu terminal) || !clientOnline(terminal)) {
+            return null;
+        }
+        Map<Item, ItemStack> samples = new HashMap<>();
+        clientProtectedScan(terminal, new HashMap<>(), samples);
+        return samples;
+    }
+
+    /**
+     * One pass over the synced entries for both protected-tier views (issue #49): per item, the
+     * stored amounts and the first count-1 sample. The plain-pool rule turned around — every NON-plain
+     * key that is itself a protected stack counts here, so the two pools never overlap.
+     */
+    private static void clientProtectedScan(CraftingTermMenu terminal, Map<Item, Long> counts,
+                                            Map<Item, ItemStack> samples) {
+        IClientRepo repo = terminal.getClientRepo();
+        if (repo == null) {
+            return;
+        }
+        for (GridInventoryEntry entry : repo.getAllEntries()) {
+            //? if >=1.20.5 {
+            if (entry.getWhat() instanceof AEItemKey key && key.hasComponents() && entry.getStoredAmount() > 0
+                    && CraftExecutor.isProtected(key.toStack())) {
+            //?} else {
+            /*if (entry.getWhat() instanceof AEItemKey key && !plain(key) && entry.getStoredAmount() > 0
+                    && CraftExecutor.isProtected(key.toStack())) {*/
+            //?}
+                long stored = entry.getStoredAmount();
+                counts.merge(key.getItem(), stored >= Integer.MAX_VALUE ? Long.MAX_VALUE : stored,
+                        Ae2Station::saturatingAdd);
+                samples.putIfAbsent(key.getItem(), one(key.toStack()));
+            }
+        }
+    }
+
     @Override
     public List<StationStorages.StationMenu> menus() {
         return List.of(
@@ -381,6 +439,14 @@ public final class Ae2Station implements StationStorages.Provider {
         return sum < 0 ? Long.MAX_VALUE : sum;
     }
 
+    /** A count-1 copy of {@code stack} (hover name and enchantments intact): the protected tier's
+     *  representative form (issue #49). */
+    private static ItemStack one(ItemStack stack) {
+        ItemStack copy = stack.copy();
+        copy.setCount(1);
+        return copy;
+    }
+
     /** The ME network behind one open terminal, for the duration of one plan or craft. */
     private record NetworkStorage(CraftingTermMenu menu, MEStorage storage, IEnergySource energy,
                                   IActionSource source) implements StationStorage {
@@ -452,6 +518,95 @@ public final class Ae2Station implements StationStorages.Provider {
                 }
             }
             return counts;
+        }
+
+        /**
+         * The protected tier's view of a stored key (issue #49): the {@link AEItemKey} itself when it is
+         * a protected stack — a NON-plain key (never the canonical one, so this tier cannot overlap
+         * {@link #counts}), shown in this terminal, whose own stack passes
+         * {@code CraftExecutor.isProtected} (damaged copies refused there exactly as everywhere) —
+         * else null.
+         */
+        private AEItemKey protectedKey(AEKey key) {
+            //? if >=1.20.5 {
+            if (key instanceof AEItemKey itemKey && itemKey.hasComponents() && menu.isKeyVisible(itemKey)
+                    && CraftExecutor.isProtected(itemKey.toStack())) {
+                return itemKey;
+            }
+            return null;
+            //?} else {
+            /*if (key instanceof AEItemKey itemKey && !plain(itemKey) && menu.isKeyVisible(itemKey)
+                    && CraftExecutor.isProtected(itemKey.toStack())) {
+                return itemKey;
+            }
+            return null;*/
+            //?}
+        }
+
+        /**
+         * {@link StationStorage#protectedCounts()} (issue #49): the same energy-capped count
+         * ({@link #count}, probe included) the plain tier plans with, over the protected keys alone.
+         */
+        @Override
+        public Map<Item, Long> protectedCounts() {
+            Map<Item, Long> counts = new HashMap<>();
+            if (!usable(menu)) {
+                return counts;
+            }
+            for (Object2LongMap.Entry<AEKey> entry : storage.getAvailableStacks()) {
+                AEItemKey key = protectedKey(entry.getKey());
+                if (key != null && entry.getLongValue() > 0) {
+                    long count = count(key, entry.getLongValue());
+                    if (count > 0) {
+                        counts.merge(key.getItem(), count, Ae2Station::saturatingAdd);
+                    }
+                }
+            }
+            return counts;
+        }
+
+        /** {@link StationStorage#protectedSamples()} (issue #49): the first stored protected stack
+         *  per item, as a count-1 copy with its name and enchantments intact. */
+        @Override
+        public Map<Item, ItemStack> protectedSamples() {
+            Map<Item, ItemStack> samples = new HashMap<>();
+            if (!usable(menu)) {
+                return samples;
+            }
+            for (Object2LongMap.Entry<AEKey> entry : storage.getAvailableStacks()) {
+                AEItemKey key = protectedKey(entry.getKey());
+                if (key != null && entry.getLongValue() > 0) {
+                    samples.putIfAbsent(key.getItem(), one(key.toStack()));
+                }
+            }
+            return samples;
+        }
+
+        /**
+         * {@link StationStorage#extractProtected} (issue #49): one protected stack of {@code item} that
+         * {@code accepts} takes, extracted through THAT stored entry's own key — never the canonical
+         * one, which is the plain tier's — with power, MODULATE, exactly as {@link #extract} draws.
+         */
+        @Override
+        public ItemStack extractProtected(Item item, java.util.function.Predicate<ItemStack> accepts) {
+            if (item == null || !usable(menu)) {
+                return ItemStack.EMPTY;
+            }
+            for (Object2LongMap.Entry<AEKey> entry : storage.getAvailableStacks()) {
+                AEItemKey key = protectedKey(entry.getKey());
+                if (key == null || key.getItem() != item || entry.getLongValue() <= 0) {
+                    continue;
+                }
+                ItemStack stack = key.toStack();
+                if (!accepts.test(stack)) {
+                    continue;
+                }
+                long got = StorageHelper.poweredExtraction(energy, storage, key, 1, source, Actionable.MODULATE);
+                // 0 means the network cannot pay for the move; every other entry of this item would
+                // fail the same way, so stop rather than scan on.
+                return got >= 1 ? one(stack) : ItemStack.EMPTY;
+            }
+            return ItemStack.EMPTY;
         }
 
         @Override

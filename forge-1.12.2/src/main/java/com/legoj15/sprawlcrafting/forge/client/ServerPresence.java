@@ -16,6 +16,7 @@ public final class ServerPresence {
     private static volatile boolean networkTerminals;
     private static volatile boolean cancelCraft;
     private static volatile boolean protectedCraft;
+    private static volatile boolean networkProtected;
 
     /** True once the server has identified itself as running the mod (integrated server included). */
     public static boolean active() {
@@ -42,11 +43,22 @@ public final class ServerPresence {
         return present && protectedCraft;
     }
 
+    /**
+     * True when the server also counts an open terminal network's protected stacks in the
+     * protected tier (issue #49, see the hello's capability bit): without it the client must not
+     * count them either — it would offer protected crafts a matching-but-older server refuses to
+     * start, since that server's engine never plans or picks network protected stacks.
+     */
+    public static boolean networkProtected() {
+        return present && networkProtected;
+    }
+
     public static void markPresent(boolean countsNetworkTerminals, boolean acceptsCancel,
-                                   boolean acceptsProtected) {
+                                   boolean acceptsProtected, boolean countsNetworkProtected) {
         networkTerminals = countsNetworkTerminals;
         cancelCraft = acceptsCancel;
         protectedCraft = acceptsProtected;
+        networkProtected = countsNetworkProtected;
         present = true;
     }
 
@@ -56,6 +68,7 @@ public final class ServerPresence {
         networkTerminals = false;
         cancelCraft = false;
         protectedCraft = false;
+        networkProtected = false;
         // The HUD flyout mirrors a job on the server we just left; drop it with the connection.
         // Cleared via the main-thread queue, not directly: this event fires on the netty thread,
         // where a progress update delivered just before the disconnect may already sit scheduled —

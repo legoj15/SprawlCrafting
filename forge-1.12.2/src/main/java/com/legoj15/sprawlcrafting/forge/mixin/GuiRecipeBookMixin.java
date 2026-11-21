@@ -101,8 +101,10 @@ public class GuiRecipeBookMixin {
                 }
                 if (craftability == CraftPlanner.Craftability.UNSOLVABLE && SprawlConfig.needsSystem) {
                     DeferredClickState.disarm();
+                    // The network's protected stacks count only while the server says it counts
+                    // them (#49), so the list never credits stock this server would refuse.
                     ShortfallView shortfall = CraftPlanner.shortfall(player, recipe,
-                            ServerPresence.protectedCraft());
+                            ServerPresence.protectedCraft(), ServerPresence.networkProtected());
                     Minecraft mc = Minecraft.getMinecraft();
                     mc.displayGuiScreen(new GuiMissingResources(shortfall, mc.currentScreen));
                     return;

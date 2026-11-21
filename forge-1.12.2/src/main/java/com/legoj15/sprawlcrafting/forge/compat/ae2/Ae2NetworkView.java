@@ -126,6 +126,42 @@ final class Ae2NetworkView implements NetworkTerminals.View {
     }
 
     /**
+     * The protected tier's counts (issue #49), from the same live storage list and with the same
+     * probed long values as {@link #counts}: protected identities only ({@code CraftExecutor
+     * .isProtected} — undamaged, enchanted and/or renamed), each counted as the energy-capped
+     * delivery a protected plan may really draw, or unbounded when the probe proves the source
+     * behind it hands out any amount. {@link #protectedSamples} keeps the default: the listing
+     * this class already serves carries every stored identity.
+     */
+    @Override
+    public Map<ItemKey, Long> protectedCounts(Set<Item> items) {
+        Map<ItemKey, Long> counts = new HashMap<ItemKey, Long>();
+        IItemList<IAEItemStack> list = contents();
+        if (list == null) {
+            return counts;
+        }
+        for (IAEItemStack stored : list) {
+            if (stored == null || stored.getStackSize() <= 0) {
+                continue; // craftable-only entries carry a zero count
+            }
+            if (items != null && !items.contains(stored.getItem())) {
+                continue;
+            }
+            ItemStack stack = stored.createItemStack();
+            if (stack.isEmpty() || !CraftExecutor.isProtected(stack)) {
+                continue;
+            }
+            long count = count(stored);
+            if (count > 0) {
+                ItemKey key = ItemKey.of(stack);
+                Long current = counts.get(key);
+                counts.put(key, NetworkTerminals.saturatingAdd(current == null ? 0L : current.longValue(), count));
+            }
+        }
+        return counts;
+    }
+
+    /**
      * The count one stored stack plans as: the energy-capped simulated delivery as a finite long
      * (no int clamp — a real network can hold billions of one item, #47), or unbounded
      * ({@link Long#MAX_VALUE}) when a probe proves the source behind the stack hands out any

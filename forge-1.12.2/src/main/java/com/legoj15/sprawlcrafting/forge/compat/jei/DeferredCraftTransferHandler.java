@@ -271,7 +271,8 @@ public class DeferredCraftTransferHandler<C extends Container> implements IRecip
      * raw-materials list already tells that story. If every out-of-stock slot is individually
      * craftable yet the recipe still failed (chains competing for the same raws), fall back to
      * stock JEI's semantics — highlight everything out of stock — rather than highlighting nothing.
-     * {@code includeProtected} counts the 36 main slots' protected stacks (#40), as the planner's
+     * {@code includeProtected} counts the 36 main slots' protected stacks (#40) and — while the
+     * server also counts them (#49's capability) — an open terminal network's, as the planner's
      * protected pool does; pass it with that pool's session so slots and gather list agree (#48).
      */
     private List<Integer> missingSlots(IRecipeLayout recipeLayout, EntityPlayer player,
@@ -285,9 +286,13 @@ public class DeferredCraftTransferHandler<C extends Container> implements IRecip
         for (Slot slot : ExternalSlots.materialSlots(player)) {
             accumulate(pool, slot.getStack(), false);
         }
-        // An open AE2 Crafting Terminal's network is part of the solver's pool, so it is part of this one.
+        // An open AE2 Crafting Terminal's network is part of the solver's pool, so it is part of
+        // this one; its protected identities count only with the caller's protected pool AND the
+        // server's network-protected capability (issue #49), the same gate the planner's
+        // protected session uses.
+        boolean networkProtected = includeProtected && ServerPresence.networkProtected();
         for (ItemStack stack : NetworkTerminals.stacks(player)) {
-            accumulate(pool, stack, false);
+            accumulate(pool, stack, networkProtected);
         }
         List<Integer> outOfStock = new ArrayList<Integer>();
         List<Integer> unobtainable = new ArrayList<Integer>();

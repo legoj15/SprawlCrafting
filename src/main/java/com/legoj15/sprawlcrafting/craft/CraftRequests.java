@@ -66,20 +66,33 @@ public final class CraftRequests {
             }
         }
         if ((outcome instanceof PlanOutcome.Unsolvable || outcome instanceof PlanOutcome.TooComplex)
-                && allowProtected && CraftPlanner.hasProtected(player.getInventory())) {
+                && allowProtected) {
             // The confirmed fallback (#40): count the protected stacks of the 36 main slots too, in the
             // same order as the plain passes — the inventory alone first, so a job it covers never
             // depends on the station, then with an open station's counts, which makes the job
-            // station-dependent (it pauses, not cancels, when the station goes away).
-            PlanOutcome withProtected = CraftPlanner.plan(player, holder, grid, Map.<Item, Long>of(), true);
-            stationDependent = false;
-            if (!(withProtected instanceof PlanOutcome.Planned) && station != null) {
-                withProtected = CraftPlanner.plan(player, holder, grid, stationCounts, true);
-                stationDependent = withProtected instanceof PlanOutcome.Planned;
-            }
-            if (withProtected instanceof PlanOutcome.Planned planned) {
-                planned.job().setUsesProtected(true);
-                outcome = withProtected;
+            // station-dependent (it pauses, not cancels, when the station goes away). The station's own
+            // protected stacks (#49) join that second pass; like counts(), their scan is taken only
+            // when a pass actually needs it, and the tier is live at all only while some protected
+            // stack exists to count (the player's or the station's).
+            boolean inventoryProtected = CraftPlanner.hasProtected(player.getInventory());
+            Map<Item, Long> stationProtected = inventoryProtected
+                    ? Map.of() : (station == null ? Map.of() : station.protectedCounts());
+            if (inventoryProtected || !stationProtected.isEmpty()) {
+                PlanOutcome withProtected = inventoryProtected
+                        ? CraftPlanner.plan(player, holder, grid, Map.<Item, Long>of(), Map.of(), true)
+                        : null;
+                stationDependent = false;
+                if (!(withProtected instanceof PlanOutcome.Planned) && station != null) {
+                    if (stationProtected.isEmpty()) {
+                        stationProtected = station.protectedCounts();
+                    }
+                    withProtected = CraftPlanner.plan(player, holder, grid, stationCounts, stationProtected, true);
+                    stationDependent = withProtected instanceof PlanOutcome.Planned;
+                }
+                if (withProtected instanceof PlanOutcome.Planned planned) {
+                    planned.job().setUsesProtected(true);
+                    outcome = withProtected;
+                }
             }
         }
         if (outcome instanceof PlanOutcome.Planned planned) {

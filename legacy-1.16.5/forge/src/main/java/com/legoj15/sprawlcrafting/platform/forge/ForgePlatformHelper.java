@@ -80,6 +80,15 @@ public class ForgePlatformHelper implements IPlatformHelper {
         return connection != null && ForgeMod.PROGRESS_STATES_V2.isRemotePresent(connection.getConnection());
     }
 
+    // The station-protected marker's own presence check, like serverSupportsStations: a mod-1.0.x
+    // server has the station marker but no protected-station planning, so this channel is what says
+    // a protected start may count the station's protected stacks too (issue #49).
+    @Override
+    public boolean serverSupportsStationProtected() {
+        ClientPlayNetHandler connection = Minecraft.getInstance().getConnection();
+        return connection != null && ForgeMod.STATION_PROTECTED.isRemotePresent(connection.getConnection());
+    }
+
     @Override
     public double blockInteractionDistanceSqr(ServerPlayerEntity player) {
         // Mirrors ServerPlayNetHandler#handleUseItemOn: (REACH_DISTANCE + 3)^2.

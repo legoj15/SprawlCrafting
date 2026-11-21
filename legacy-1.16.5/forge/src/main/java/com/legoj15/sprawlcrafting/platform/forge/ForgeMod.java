@@ -17,6 +17,7 @@ import com.legoj15.sprawlcrafting.network.CraftingScreenStatePacket;
 import com.legoj15.sprawlcrafting.network.ProgressStatesV2;
 import com.legoj15.sprawlcrafting.network.StartDeferredCraftPacket;
 import com.legoj15.sprawlcrafting.network.StartProtectedCraftPacket;
+import com.legoj15.sprawlcrafting.network.StationProtected;
 
 import net.minecraft.entity.player.ServerPlayerEntity;
 import net.minecraft.server.MinecraftServer;
@@ -96,6 +97,18 @@ public class ForgeMod {
      */
     public static final SimpleChannel START_PROTECTED_CRAFT = NetworkRegistry.newSimpleChannel(
             StartProtectedCraftPacket.ID,
+            () -> PROTOCOL,
+            ForgeMod::acceptsVersion,
+            ForgeMod::acceptsVersion);
+
+    /**
+     * The station-protected marker (issue #49): a registered-never-sent capability channel exactly like
+     * {@link #PROGRESS_STATES_V2}. Its presence on the server tells the client this build also counts an
+     * open station's protected stacks in a confirmed protected plan — without it the client must not
+     * count them, or it would offer protected starts the server then refuses.
+     */
+    public static final SimpleChannel STATION_PROTECTED = NetworkRegistry.newSimpleChannel(
+            StationProtected.ID,
             () -> PROTOCOL,
             ForgeMod::acceptsVersion,
             ForgeMod::acceptsVersion);

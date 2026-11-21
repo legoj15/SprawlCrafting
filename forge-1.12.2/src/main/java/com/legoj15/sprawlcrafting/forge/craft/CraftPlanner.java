@@ -146,9 +146,15 @@ public final class CraftPlanner {
      * Informational, so it always costs the full 3x3 chain regardless of the request grid.
      * {@code includeProtected} counts the player's protected stacks (#40) when the server can honour
      * a protected start, so the list never asks for what a confirmed craft would consume (#48).
+     * {@code includeNetworkProtected} adds the network's protected tier (issue #49), as in
+     * {@link #session(EntityPlayer, GridContext, boolean, boolean)}: the client passes the
+     * server's network-protected capability, so the list never credits protected network stock a
+     * matching-but-older server would refuse to consume.
      */
-    public static ShortfallView shortfall(EntityPlayer player, IRecipe recipe, boolean includeProtected) {
-        return session(player, GridContext.CRAFTING_TABLE, includeProtected).shortfall(recipe);
+    public static ShortfallView shortfall(EntityPlayer player, IRecipe recipe, boolean includeProtected,
+                                          boolean includeNetworkProtected) {
+        return session(player, GridContext.CRAFTING_TABLE, includeProtected, includeNetworkProtected)
+                .shortfall(recipe);
     }
 
     public static Session session(EntityPlayer player, GridContext grid) {
@@ -162,7 +168,20 @@ public final class CraftPlanner {
      * the confirming packet is the protected one) and mark the job it hands on.
      */
     public static Session session(EntityPlayer player, GridContext grid, boolean includeProtected) {
-        return new Session(grid, snapshotMaterials(player, true, includeProtected));
+        return session(player, grid, includeProtected, true);
+    }
+
+    /**
+     * {@link #session(EntityPlayer, GridContext, boolean)} with the network's protected tier
+     * (issue #49) optionally held out: {@code includeNetworkProtected} false counts only the 36
+     * main slots' protected stacks, not an open terminal network's. The client builds its
+     * protected twin this way when the server has not advertised the network-protected
+     * capability, so it never classifies as makeable a craft a matching-but-older server would
+     * refuse to start.
+     */
+    public static Session session(EntityPlayer player, GridContext grid, boolean includeProtected,
+                                  boolean includeNetworkProtected) {
+        return new Session(grid, snapshotMaterials(player, true, includeProtected, includeNetworkProtected));
     }
 
     /**
@@ -196,12 +215,20 @@ public final class CraftPlanner {
      * probe) stays unbounded, and a real count above {@link Integer#MAX_VALUE} stays that finite
      * count — the solver's long entry points read it exactly (issue #47).
      *
-     * <p>{@code includeProtected} widens only the player's own snapshot: protected stacks are a
-     * player-confirmed tier (issue #40), so the external slots (a station's chest, the grid) and the
-     * network stay plain pools for every session.
+     * <p>{@code includeProtected} widens the player's own snapshot and — unless the
+     * {@code includeNetworkProtected} overload holds it out — the open terminal's network: the
+     * protected stacks (enchanted and/or renamed, never damaged) are a player-confirmed tier
+     * (issue #40) the network joins too (issue #49), so only the external slots (a station's
+     * chest, the grid) stay plain pools for every session.
      */
     private static Map<ItemKey, Long> snapshotMaterials(EntityPlayer player, boolean network,
                                                         boolean includeProtected) {
+        return snapshotMaterials(player, network, includeProtected, true);
+    }
+
+    private static Map<ItemKey, Long> snapshotMaterials(EntityPlayer player, boolean network,
+                                                        boolean includeProtected,
+                                                        boolean includeNetworkProtected) {
         Map<ItemKey, Long> counts = snapshotInventory(player.inventory, includeProtected);
         for (net.minecraft.inventory.Slot slot : ExternalSlots.materialSlots(player)) {
             addUsable(counts, slot.getStack());
@@ -210,6 +237,15 @@ public final class CraftPlanner {
             for (Map.Entry<ItemKey, Long> entry : NetworkTerminals.counts(player).entrySet()) {
                 if (entry.getValue() > 0) {
                     counts.merge(entry.getKey(), entry.getValue(), CraftPlanner::saturatingAdd);
+                }
+            }
+            if (includeProtected && includeNetworkProtected) {
+                // The tier's network half (issue #49): after the plain network counts, so a plain
+                // copy of an item always wins over a protected one wherever both are stored.
+                for (Map.Entry<ItemKey, Long> entry : NetworkTerminals.protectedCounts(player).entrySet()) {
+                    if (entry.getValue() > 0) {
+                        counts.merge(entry.getKey(), entry.getValue(), CraftPlanner::saturatingAdd);
+                    }
                 }
             }
         }
@@ -531,20 +567,43 @@ public final class CraftPlanner {
     }
 
     /**
+     * {@link #hasProtected} widened to the open terminal's network (issue #49): whether the 36
+     * main slots hold a protected stack OR — with {@code network}, the caller saying this side
+     * counts the network's protected tier (a usable terminal on the server, the server's
+     * capability on the client) — the network behind the player's open terminal holds one. The
+     * gate every protected planning pass uses, so the pass is skipped when neither source has
+     * anything for it to add.
+     */
+    public static boolean hasProtectedAnywhere(EntityPlayer player, boolean network) {
+        if (hasProtected(player.inventory)) {
+            return true;
+        }
+        return network && !NetworkTerminals.protectedCounts(player).isEmpty();
+    }
+
+    /**
      * One representative protected stack (count 1, name and enchantments intact) per identity the
-     * plan of {@code job} will consume protected copies of, in slot order: for each identity with
-     * protected copies among the 36 slots, the plan's net consumption — per step, its layouts'
+     * plan of {@code job} will consume protected copies of — the 36 slots' in slot order, then the
+     * network's stored identities (issue #49): for each identity with protected copies in the
+     * pool, the plan's net consumption — per step, its layouts'
      * occurrences (any protected alternative, when the step carries no layout: which of them the
      * executor picks is not decided yet) less what a step produces of it — counted above the plain
      * copies available. {@code external} adds the plain counts of the other sources the plan used
      * ({@link #plainExternalCounts}: the open grid and station chest, an open terminal's network;
      * empty for none): the executor draws those before any protected copy, so without them an item
-     * those sources supply anyway would be over-warned. Keyed by {@link ItemKey} (item + metadata),
-     * like every other planning identity on 1.12.2. Display-facing (the click preview and the JEI
-     * tooltip); the executor itself re-decides per craft from the live pool.
+     * those sources supply anyway would be over-warned. {@code networkProtectedSamples} adds the
+     * open terminal network's protected identities (issue #49), after the inventory's — one
+     * representative is enough to name an identity, and the inventory's wins when both hold one.
+     * The network's protected counts deliberately never enter {@code external}: they are
+     * protected-tier stock the executor draws only after every plain copy, so crediting them as
+     * plain would under-warn exactly the items the plan consumes protected copies of. Keyed by
+     * {@link ItemKey} (item + metadata), like every other planning identity on 1.12.2.
+     * Display-facing (the click preview and the JEI tooltip); the executor itself re-decides per
+     * craft from the live pool.
      */
     public static List<ItemStack> protectedItemsUsed(CraftJob job, InventoryPlayer inventory,
-                                                     Map<ItemKey, Long> external) {
+                                                     Map<ItemKey, Long> external,
+                                                     List<ItemStack> networkProtectedSamples) {
         Map<ItemKey, Long> plain = new HashMap<ItemKey, Long>();
         Map<ItemKey, ItemStack> protectedCopies = new LinkedHashMap<ItemKey, ItemStack>();
         for (int i = 0; i < MAIN_INVENTORY_SIZE; i++) {
@@ -563,6 +622,17 @@ public final class CraftPlanner {
                 ItemKey key = ItemKey.of(stack);
                 Long current = plain.get(key);
                 plain.put(key, (current == null ? 0L : current.longValue()) + stack.getCount());
+            }
+        }
+        // The network's protected identities (issue #49), after the inventory's: the executor's
+        // tier order draws the player's protected copies first, so the inventory's representative
+        // is the one to name when both sources hold the identity.
+        for (ItemStack sample : networkProtectedSamples) {
+            if (!sample.isEmpty()) {
+                ItemKey key = ItemKey.of(sample);
+                if (!protectedCopies.containsKey(key)) {
+                    protectedCopies.put(key, sample);
+                }
             }
         }
         if (protectedCopies.isEmpty()) {
