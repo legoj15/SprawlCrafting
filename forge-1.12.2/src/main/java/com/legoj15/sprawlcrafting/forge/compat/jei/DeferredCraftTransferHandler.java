@@ -283,8 +283,11 @@ public class DeferredCraftTransferHandler<C extends Container> implements IRecip
         for (int i = 0; i < 36; i++) {
             accumulate(pool, player.inventory.mainInventory.get(i), includeProtected);
         }
+        // The grid's protected stacks count as the planner's protected pool counts them (#50):
+        // only when the confirming clear would move the grid; a station's chest stays plain.
+        boolean gridProtected = includeProtected && CraftPlanner.gridWouldClear(player);
         for (Slot slot : ExternalSlots.materialSlots(player)) {
-            accumulate(pool, slot.getStack(), false);
+            accumulate(pool, slot.getStack(), gridProtected && ExternalSlots.isMatrix(slot));
         }
         // An open AE2 Crafting Terminal's network is part of the solver's pool, so it is part of
         // this one; its protected identities count only with the caller's protected pool AND the
@@ -533,8 +536,25 @@ public class DeferredCraftTransferHandler<C extends Container> implements IRecip
                 }
 
                 mc.playerController.windowClick(wid, inv, 0, ClickType.PICKUP, player);
-                if (player.inventory.getItemStack().isEmpty()) {
+                int held = player.inventory.getItemStack().getCount();
+                if (held == 0) {
                     continue;
+                }
+                // Vanilla's drag admits a slot only while the cursor holds more items than slots
+                // already admitted (issue #38), so a short cursor (1-count stacks) must be offered
+                // the emptiest cells first and no more cells than it can cover: otherwise the first
+                // cell keeps winning and the group piles into it.
+                if (maxTransfer) {
+                    java.util.Collections.sort(targets, new java.util.Comparator<Integer>() {
+                        @Override
+                        public int compare(Integer a, Integer b) {
+                            return container.getSlot(a.intValue()).getStack().getCount()
+                                    - container.getSlot(b.intValue()).getStack().getCount();
+                        }
+                    });
+                }
+                if (targets.size() > held) {
+                    targets = new ArrayList<Integer>(targets.subList(0, held));
                 }
 
                 mc.playerController.windowClick(wid, -999, dragStart, ClickType.QUICK_CRAFT, player);
@@ -549,6 +569,20 @@ public class DeferredCraftTransferHandler<C extends Container> implements IRecip
             }
         }
 
+        // Verify the fill (issue #38): every planned cell must hold its chosen identity. A cell the
+        // sweep could not clear, or a drag the server trimmed, would otherwise pass as placed and
+        // skip the engine fallback; on a mismatch, return the grid and let the caller hand off.
+        for (int c = 0; c < cellSlots.size(); c++) {
+            ItemStack inCell = container.getSlot(cellSlots.get(c).intValue()).getStack();
+            if (inCell.isEmpty() || !sameStackIdentity(inCell, identities.get(chosen.get(c).intValue()))) {
+                for (int gridSlot : gridSlotIndices) {
+                    if (container.getSlot(gridSlot).getHasStack()) {
+                        mc.playerController.windowClick(wid, gridSlot, 0, ClickType.QUICK_MOVE, player);
+                    }
+                }
+                return false;
+            }
+        }
         return true;
     }
 
