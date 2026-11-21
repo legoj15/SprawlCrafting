@@ -160,8 +160,9 @@ public final class CraftRequests {
             message = Component.translatable("sprawlcrafting.craft.unsupported", recipeName);
         } else if (outcome instanceof PlanOutcome.NeedsBiggerGrid) {
             message = Component.translatable("sprawlcrafting.craft.needs_table", recipeName);
-        } else if (outcome instanceof PlanOutcome.TooComplex) {
-            message = Component.translatable("sprawlcrafting.craft.too_complex", recipeName);
+        } else if (outcome instanceof PlanOutcome.TooComplex tooComplex) {
+            message = Component.translatable(tooComplex.tooLarge()
+                    ? "sprawlcrafting.craft.too_large" : "sprawlcrafting.craft.too_complex", recipeName);
         } else if (outcome instanceof PlanOutcome.Unsolvable unsolvable) {
             if (unsolvable.missing().isEmpty()) {
                 // No missing item: every pass was rejected on replay — the materials are there, but

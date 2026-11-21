@@ -217,7 +217,8 @@ public final class CraftRequests {
         } else if (outcome instanceof PlanOutcome.NeedsBiggerGrid) {
             body = new TextComponentTranslation("sprawlcrafting.craft.needs_table", targetName);
         } else if (outcome instanceof PlanOutcome.TooComplex) {
-            body = new TextComponentTranslation("sprawlcrafting.craft.too_complex", targetName);
+            body = new TextComponentTranslation(((PlanOutcome.TooComplex) outcome).tooLarge()
+                    ? "sprawlcrafting.craft.too_large" : "sprawlcrafting.craft.too_complex", targetName);
         } else if (outcome instanceof PlanOutcome.Unsolvable) {
             List<ItemKey> missing = ((PlanOutcome.Unsolvable) outcome).missing();
             // Nothing missing: every pass was rejected on replay — the materials are there, but no

@@ -1215,4 +1215,65 @@ class RecipeGraphSolverTest {
         assertEquals(inv("r", 1), r.demands());
         assertFalse(r.approximate(), "the depth hit was in an undone branch");
     }
+
+    /**
+     * A compression chain whose quantities, not its shape, are large (issue #43): c0 from three
+     * raws, each c(k) from six c(k-1) and three of raw b. Every level also has a decompress recipe
+     * listed FIRST, the dead-end candidate (ingot from block) a real recipe set puts in the way.
+     * Returns the target, c(levels); making one takes 6^levels leaf crafts.
+     */
+    private TestRecipe quantityChain(int levels) {
+        recipes.add(TestRecipe.of("leaf", "c0", 1, "a", "a", "a", "a", "b", "b", "b", "b", "d"));
+        TestRecipe top = null;
+        for (int k = 1; k <= levels; k++) {
+            String lower = "c" + (k - 1);
+            recipes.add(TestRecipe.of("unpack" + k, lower, 6, "c" + k));
+            top = TestRecipe.of("pack" + k, "c" + k, 1, lower, lower, lower, lower, lower, lower, "b", "b", "b");
+            recipes.add(top);
+        }
+        return top;
+    }
+
+    @Test
+    void largeStockThatRunsShortIsAShortfallNotABudgetFailure() {
+        // 6^10 = 60,466,176 leaf crafts need 241,864,704 of raw a; ten million are held. The answer is
+        // "missing a", however many visits the leftovers of a large stock would cost to chase.
+        TestRecipe target = quantityChain(10);
+        Result<String, String> result = solver().solve(target, inv("a", 10_000_000, "b", 10_000_000, "d", 10_000_000));
+        Result.Failure<String, String> failure = assertInstanceOf(Result.Failure.class, result);
+        assertFalse(failure.budgetExceeded(), "a real shortfall, not a tree too complex to plan");
+        assertTrue(failure.missing().contains("a"), "missing " + failure.missing());
+    }
+
+    @Test
+    void quantityAloneDoesNotExhaustTheAttemptBudget() {
+        // 6^17 leaf crafts is 7,882 int-sized batches of the leaf recipe alone, well past the 4,096
+        // attempts; the shape is 18 recipes. Unbounded raws, so it must plan, crafting exactly that.
+        TestRecipe target = quantityChain(17);
+        int unbounded = Integer.MAX_VALUE;
+        Result<String, String> result = solver().solve(target, inv("a", unbounded, "b", unbounded, "d", unbounded));
+        Result.Success<String, String> success = assertInstanceOf(Result.Success.class, result);
+        long leafCrafts = 0;
+        for (PlannedStep<String> step : success.steps()) {
+            if (step.recipeId().equals("leaf")) {
+                leafCrafts += step.crafts();
+            }
+        }
+        assertEquals(16_926_659_444_736L, leafCrafts);
+    }
+
+    @Test
+    void makeablePlanLongerThanTheStepCapIsReportedTooLarge() {
+        // The same makeable tree with room for 64 steps: refused, and said to be too large rather
+        // than short of anything. budgetExceeded stays set for callers that only read that.
+        TestRecipe target = quantityChain(17);
+        int unbounded = Integer.MAX_VALUE;
+        RecipeGraphSolver<String, String> small = new RecipeGraphSolver<>(
+                item -> recipes.stream().filter(r -> r.result().equals(item)).collect(Collectors.toList()),
+                remainders::get, 32, 4096, 64);
+        Result.Failure<String, String> failure = assertInstanceOf(Result.Failure.class,
+                small.solve(target, inv("a", unbounded, "b", unbounded, "d", unbounded)));
+        assertTrue(failure.tooLarge(), "makeable, but longer than the step cap");
+        assertTrue(failure.budgetExceeded());
+    }
 }

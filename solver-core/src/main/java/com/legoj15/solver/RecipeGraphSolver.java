@@ -199,8 +199,18 @@ public final class RecipeGraphSolver<R, K> {
         final class Failure<R, K> implements Result<R, K> {
             private final Set<K> missing;
             private final boolean budgetExceeded;
+            private final boolean tooLarge;
 
             public Failure(Set<K> missing, boolean budgetExceeded) {
+                this(missing, budgetExceeded, false);
+            }
+
+            /**
+             * @param tooLarge true if a plan exists but is longer than {@code maxSteps} int-sized
+             *                 batches (implies {@code budgetExceeded}, which older callers read)
+             */
+            public Failure(Set<K> missing, boolean budgetExceeded, boolean tooLarge) {
+                this.tooLarge = tooLarge;
                 this.missing = missing;
                 this.budgetExceeded = budgetExceeded;
             }
@@ -211,6 +221,11 @@ public final class RecipeGraphSolver<R, K> {
 
             public boolean budgetExceeded() {
                 return budgetExceeded;
+            }
+
+            /** The target is makeable from stock, but its plan would not fit in {@code maxSteps}. */
+            public boolean tooLarge() {
+                return tooLarge;
             }
         }
     }
@@ -307,16 +322,34 @@ public final class RecipeGraphSolver<R, K> {
                              UnaryOperator<K> remainder,
                              int maxDepth,
                              int maxAttempts) {
+        this(producers, remainder, maxDepth, maxAttempts, DEFAULT_MAX_STEPS);
+    }
+
+    /**
+     * @param maxSteps longest plan (in batches of at most {@link Integer#MAX_VALUE} crafts) a quantity-
+     *                 driven tree may be given; see {@link Result.Failure#tooLarge()}. It bounds the
+     *                 time and size of the guided pass, whose kept steps cost no attempts.
+     */
+    public RecipeGraphSolver(Function<K, List<? extends RecipeInfo<R, K>>> producers,
+                             UnaryOperator<K> remainder,
+                             int maxDepth,
+                             int maxAttempts,
+                             int maxSteps) {
+        this.maxSteps = maxSteps;
         this.producers = producers;
         this.remainder = remainder;
         this.maxDepth = maxDepth;
         this.maxAttempts = maxAttempts;
     }
 
+    /** Default {@code maxSteps}: about 3.5e13 crafts of one recipe. */
+    public static final int DEFAULT_MAX_STEPS = 16384;
+    private final int maxSteps;
+
     public Result<R, K> solve(RecipeInfo<R, K> target, Map<K, Integer> inventory) {
         Plan<R, K> plan = plan(target, toLong(inventory), true);
         if (plan.steps == null) {
-            return new Result.Failure<>(plan.missing, plan.budgetExceeded);
+            return new Result.Failure<>(plan.missing, plan.budgetExceeded, plan.tooLarge);
         }
         return mergeAdjacent(plan.steps);
     }
@@ -545,7 +578,42 @@ public final class RecipeGraphSolver<R, K> {
             noCleanFailure &= exact.budgetHit || exactRejected;
             anyBudget |= exact.budgetHit;
         }
+        if (noCleanFailure && anyBudget && capInt) {
+            return planByQuantity(target, held, missing);
+        }
         return new Plan<>(null, missing, noCleanFailure && anyBudget);
+    }
+
+    /**
+     * The answer for a tree the budgeted passes gave up on. Their visits grow with the quantities
+     * (one per int-sized batch, more when a large stock runs short part-way), so running out says
+     * nothing about the tree. A probe first decides it without that: the batched search with long
+     * batches, nothing recorded and no futile re-asks visits each recipe a handful of times
+     * whatever the counts. A clean probe failure is a real shortfall. A probe success names the
+     * recipes a plan uses, and the batched pass is run again over just those, so no dead-end
+     * candidate is retried per batch; its kept steps cost no attempts, and {@code maxSteps} bounds
+     * it instead.
+     *
+     * @param missing the budgeted passes' missing set, kept when the probe has nothing better
+     */
+    private Plan<R, K> planByQuantity(RecipeInfo<R, K> target, Map<K, Long> held, Set<K> missing) {
+        Solve probe = new Solve(true, true, false, false);
+        probe.quantityFree = true;
+        probe.used = new ArrayList<>();
+        if (probe.craft(target, 1, new UndoMap<>(held), null, new HashSet<K>(), 0) != 1) {
+            return probe.budgetHit
+                    ? new Plan<>(null, missing, true)
+                    : new Plan<>(null, new LinkedHashSet<>(probe.missing), false);
+        }
+        List<Step<R, K>> steps = new ArrayList<>();
+        Solve guided = new Solve(true, true, false, true);
+        guided.quantityFree = true;
+        guided.allowed = Collections.newSetFromMap(new IdentityHashMap<RecipeInfo<R, K>, Boolean>());
+        guided.allowed.addAll(probe.used);
+        if (guided.craft(target, 1, new UndoMap<>(held), steps, new HashSet<K>(), 0) == 1 && replays(steps, held)) {
+            return new Plan<>(steps, null, false);
+        }
+        return new Plan<>(null, missing, true, guided.tooLong);
     }
 
     /**
@@ -655,8 +723,14 @@ public final class RecipeGraphSolver<R, K> {
         final List<Step<R, K>> steps;
         final Set<K> missing;
         final boolean budgetExceeded;
+        final boolean tooLarge;
 
         Plan(List<Step<R, K>> steps, Set<K> missing, boolean budgetExceeded) {
+            this(steps, missing, budgetExceeded, false);
+        }
+
+        Plan(List<Step<R, K>> steps, Set<K> missing, boolean budgetExceeded, boolean tooLarge) {
+            this.tooLarge = tooLarge;
             this.steps = steps;
             this.missing = missing;
             this.budgetExceeded = budgetExceeded;
@@ -818,6 +892,20 @@ public final class RecipeGraphSolver<R, K> {
         /** Shortfall expansion (require) node visits left. */
         int expandLeft = maxAttempts;
         boolean budgetHit = false;
+        /**
+         * The quantity path's passes (see #planByQuantity): a kept step costs no attempt (a step
+         * discarded later is charged then), and a batch that shrank on a shortage without freeing
+         * a remainder is not asked for again.
+         */
+        boolean quantityFree = false;
+        /** The recipes this pass may craft (identity), or null for every producer. */
+        Set<RecipeInfo<R, K>> allowed;
+        /** Every recipe whose batch is in the current result, in order (probe only; else null). */
+        List<RecipeInfo<R, K>> used;
+        /** Set when the recorded plan reached {@code maxSteps}. */
+        boolean tooLong = false;
+        /** The batch {@link #craft} last returned shrank on a shortage and freed no remainder. */
+        private boolean exhausted = false;
         final Set<K> missing = new LinkedHashSet<>();
         /**
          * Set by the shortfall walk when the depth/expansion budget forced an early leaf in a branch
@@ -837,6 +925,19 @@ public final class RecipeGraphSolver<R, K> {
             this.creditRemainders = creditRemainders;
             this.exact = exact;
             this.capInt = capInt;
+        }
+
+        /** Undoes the steps (and probe trace) recorded since the marks; see {@link #quantityFree}. */
+        private void discard(List<Step<R, K>> steps, int stepMark, int usedMark) {
+            if (steps != null) {
+                if (quantityFree) {
+                    attemptsLeft -= steps.size() - stepMark;
+                }
+                steps.subList(stepMark, steps.size()).clear();
+            }
+            if (used != null) {
+                used.subList(usedMark, used.size()).clear();
+            }
         }
 
         private boolean visit() {
@@ -921,12 +1022,14 @@ public final class RecipeGraphSolver<R, K> {
             List<Group<K>> groups = groups(recipe);
             boolean contended = false;
             boolean triedSingle = false;
+            boolean shrunk = false;
             while (true) {
                 if (depth > maxDepth || !visit()) {
                     return 0;
                 }
                 int invMark = inv.mark();
                 int stepMark = steps == null ? 0 : steps.size();
+                int usedMark = used == null ? 0 : used.size();
                 Map<K, Long> consumed = new LinkedHashMap<>();
                 // What each group took, per item: the batched/unitwise pass's own per-slot choice,
                 // recorded per craft as the step's layout (merged {@code consumed} still drives
@@ -958,32 +1061,47 @@ public final class RecipeGraphSolver<R, K> {
                         break;
                     }
                 }
+                if (shortGroup < 0 && quantityFree && steps != null && steps.size() >= maxSteps) {
+                    tooLong = true;
+                    budgetHit = true;
+                    inv.rollback(invMark);
+                    discard(steps, stepMark, usedMark);
+                    return 0;
+                }
                 if (shortGroup < 0) {
                     if (steps != null) {
                         steps.add(new Step<>(recipe, size, layoutRuns(size, groups, groupUse)));
+                        if (quantityFree) {
+                            attemptsLeft++;
+                        }
+                    }
+                    if (used != null) {
+                        used.add(recipe);
                     }
                     addTo(inv, recipe.result(), satMul(size, recipe.resultCount()));
                     // Remainders of consumed items physically reappear when this step executes.
+                    boolean freed = false;
                     if (creditRemainders) {
                         for (Map.Entry<K, Long> entry : consumed.entrySet()) {
                             K leftBehind = remainder.apply(entry.getKey());
                             if (leftBehind != null) {
                                 addTo(inv, leftBehind, entry.getValue());
+                                freed = true;
                             }
                         }
                     }
+                    exhausted = shrunk && !freed;
                     return size;
                 }
                 inv.rollback(invMark);
-                if (steps != null) {
-                    steps.subList(stepMark, steps.size()).clear();
-                }
+                discard(steps, stepMark, usedMark);
                 if (shortGroup > 0) {
                     contended = true;
                 }
                 if (budgetHit) {
                     return 0;
                 }
+                shrunk = true;
                 if (supplied > 0) {
                     size = supplied; // strictly smaller: got < need
                 } else if (contended && size > 1 && !triedSingle) {
@@ -1198,26 +1316,33 @@ public final class RecipeGraphSolver<R, K> {
             try {
                 for (RecipeInfo<R, K> candidate : producers.apply(item)) {
                     int yield = candidate.resultCount();
-                    if (yield <= 0 || !Objects.equals(candidate.result(), item)) {
+                    if (yield <= 0 || !Objects.equals(candidate.result(), item)
+                            || (allowed != null && !allowed.contains(candidate))) {
                         continue;
                     }
                     while (produced < units && !budgetHit) {
                         int invMark = inv.mark();
                         int stepMark = steps == null ? 0 : steps.size();
+                        int usedMark = used == null ? 0 : used.size();
                         long done = craft(candidate, ceilDiv(units - produced, yield), inv, steps,
                                 crafting, depth);
                         if (done <= 0) {
                             break;
                         }
+                        // Read now: a later craft overwrites it. Only the probe stops on it; the
+                        // leftovers a re-ask would scrape together never complete a batch that is
+                        // short, and chasing them at every level is what exhausts the budget.
+                        boolean spent = quantityFree && steps == null && exhausted;
                         long net = count(inv, item) - start;
                         if (net <= produced) {
                             inv.rollback(invMark);
-                            if (steps != null) {
-                                steps.subList(stepMark, steps.size()).clear();
-                            }
+                            discard(steps, stepMark, usedMark);
                             break;
                         }
                         produced = net;
+                        if (spent) {
+                            break;
+                        }
                     }
                     if (produced >= units || budgetHit) {
                         break;

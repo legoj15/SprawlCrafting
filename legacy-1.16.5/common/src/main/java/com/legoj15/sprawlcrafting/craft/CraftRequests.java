@@ -125,7 +125,8 @@ public final class CraftRequests {
                 text = new TranslationTextComponent("sprawlcrafting.craft.needs_table", recipeName);
                 break;
             case TOO_COMPLEX:
-                text = new TranslationTextComponent("sprawlcrafting.craft.too_complex", recipeName);
+                text = new TranslationTextComponent(outcome.tooLarge()
+                        ? "sprawlcrafting.craft.too_large" : "sprawlcrafting.craft.too_complex", recipeName);
                 break;
             case UNSOLVABLE: {
                 List<String> names = new ArrayList<>();

@@ -612,6 +612,19 @@ compression mods saturate at `Long.MAX_VALUE`. Counts are therefore `long` from 
   16-color bed cycle with all dyes stocked but no wool/planks, or hostile datapacks) abort
   with a "too complex" message, or an "approximate" gather list, when the budget runs out
   rather than hanging the server thread.
+- **Quantity is not complexity (#43).** A step holds at most `Integer.MAX_VALUE` crafts, so a
+  deep compression chain needs one visit per int-sized batch, and a large stock that runs short
+  costs more still (each level chases the leftovers). Both used to end in "too complex". When the
+  budgeted passes give up, `planByQuantity` now runs a probe: the batched search with `long`
+  batches, nothing recorded, and no re-ask after a batch that shrank on a shortage without
+  freeing a remainder. It needs a few hundred visits whatever the counts (measured: 667 for a
+  1e15-craft tree). A clean probe failure is a shortfall (Unsolvable, naming what is missing). A
+  probe success names the recipes a plan uses, and a guided batched pass plans over only those
+  (no dead-end candidate such as ingot-from-block retried per batch); its kept steps cost no
+  attempts and `maxSteps` (default 16,384, about 3.5e13 crafts of one recipe) bounds it. Past
+  that the answer is `tooLarge` ("needs more crafts than one job can hold"), which is a limit of
+  the plan format, not of the search. Lifting it means steps that hold `long` counts and an
+  executor that interleaves them (#44).
 - **Planned by item identity.** Components / NBT are ignored at plan time; execution
   re-checks with `Ingredient.test` and cancels gracefully on divergence. Damaged, enchanted,
   and renamed stacks are excluded from both planning and consumption (recipe-book parity),

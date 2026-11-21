@@ -95,8 +95,17 @@ public final class CraftPlanner {
             }
         }
 
-        /** The recipe graph was too branchy to resolve within the search budget. */
+        /** The search budget ran out; {@code tooLarge}: makeable, but the plan is longer than one job may be. */
         public static final class TooComplex extends PlanOutcome {
+            private final boolean tooLarge;
+
+            public TooComplex(boolean tooLarge) {
+                this.tooLarge = tooLarge;
+            }
+
+            public boolean tooLarge() {
+                return tooLarge;
+            }
         }
     }
 
@@ -445,7 +454,7 @@ public final class CraftPlanner {
             Result.Failure<ResourceLocation, ItemKey> failure =
                     (Result.Failure<ResourceLocation, ItemKey>) result;
             if (failure.budgetExceeded()) {
-                return new PlanOutcome.TooComplex();
+                return new PlanOutcome.TooComplex(failure.tooLarge());
             }
             return new PlanOutcome.Unsolvable(new ArrayList<ItemKey>(failure.missing()));
         }

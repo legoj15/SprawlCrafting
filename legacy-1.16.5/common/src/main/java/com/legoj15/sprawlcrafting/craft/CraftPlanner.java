@@ -67,6 +67,7 @@ public final class CraftPlanner {
         private final Kind kind;
         private final CraftJob job;
         private final List<Item> missing;
+        private boolean tooLarge;
 
         private PlanOutcome(Kind kind, CraftJob job, List<Item> missing) {
             this.kind = kind;
@@ -97,6 +98,11 @@ public final class CraftPlanner {
         /** The job, only for {@link Kind#PLANNED}. */
         public CraftJob job() {
             return job;
+        }
+
+        /** For {@link Kind#TOO_COMPLEX}: makeable, but the plan is longer than one job may be. */
+        public boolean tooLarge() {
+            return tooLarge;
         }
 
         /** Representative shortfall items, only for {@link Kind#UNSOLVABLE}. */
@@ -288,7 +294,9 @@ public final class CraftPlanner {
             RecipeGraphSolver.Result.Failure<ResourceLocation, Item> failure =
                     (RecipeGraphSolver.Result.Failure<ResourceLocation, Item>) result;
             if (failure.budgetExceeded()) {
-                return PlanOutcome.of(PlanOutcome.Kind.TOO_COMPLEX);
+                PlanOutcome outcome = PlanOutcome.of(PlanOutcome.Kind.TOO_COMPLEX);
+                outcome.tooLarge = failure.tooLarge();
+                return outcome;
             }
             return PlanOutcome.unsolvable(new ArrayList<>(failure.missing()));
         }

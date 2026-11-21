@@ -72,8 +72,8 @@ public final class CraftPlanner {
         /** Raw resources insufficient; {@code missing} holds representative shortfall items. */
         record Unsolvable(List<Item> missing) implements PlanOutcome {}
 
-        /** The recipe graph was too branchy to resolve within the search budget. */
-        record TooComplex() implements PlanOutcome {}
+        /** The search budget ran out; {@code tooLarge}: makeable, but the plan is longer than one job may be. */
+        record TooComplex(boolean tooLarge) implements PlanOutcome {}
     }
 
     public static PlanOutcome plan(ServerPlayer player, RecipeHolder<?> targetHolder, GridContext grid) {
@@ -263,7 +263,7 @@ public final class CraftPlanner {
             }
             Result.Failure<ResourceLocation, Item> failure = (Result.Failure<ResourceLocation, Item>) result;
             if (failure.budgetExceeded()) {
-                return new PlanOutcome.TooComplex();
+                return new PlanOutcome.TooComplex(failure.tooLarge());
             }
             return new PlanOutcome.Unsolvable(failure.missing().stream().toList());
         }

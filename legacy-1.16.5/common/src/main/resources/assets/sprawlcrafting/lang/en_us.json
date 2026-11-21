@@ -11,6 +11,7 @@
   "sprawlcrafting.craft.unsolvable": "Not enough raw resources for %s (missing: %s)",
   "sprawlcrafting.craft.unsolvable_order": "Can't plan %s: you have the materials, but every craft order tried uses up an item a later step needs",
   "sprawlcrafting.craft.too_complex": "The recipe tree for %s is too complex to plan",
+  "sprawlcrafting.craft.too_large": "%s needs more crafts than one job can hold. Craft its parts first.",
   "sprawlcrafting.craft.needs_table": "%s needs a crafting table.",
   "sprawlcrafting.toast.crafting": "Crafting %s",
   "sprawlcrafting.toast.step": "%s/%s",
