@@ -475,7 +475,7 @@ public final class CraftPlanner {
         }
         for (Map.Entry<Item, Long> entry : station.entrySet()) {
             if (entry.getValue() > 0) {
-                plain.merge(entry.getKey(), entry.getValue(), Long::sum);
+                plain.merge(entry.getKey(), entry.getValue(), CraftPlanner::saturatingAdd);
             }
         }
         Map<Item, Long> net = new HashMap<>();
