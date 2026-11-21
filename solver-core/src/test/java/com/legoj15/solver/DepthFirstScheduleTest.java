@@ -367,6 +367,25 @@ class DepthFirstScheduleTest {
         }
     }
 
+    /**
+     * The target's own craft refused room with every input held: no branch can free space for it, so
+     * {@code noRoom()} must report full within the halving bound (not loop on the same refused craft),
+     * and the schedule must still name the refused step for the caller's log line.
+     */
+    @Test
+    void aRefusedTargetCraftReportsFullAndKeepsItsStep() {
+        Plan chain = chain(1L);
+        chain.held.put("i5", 9L); // the target's nine inputs are held
+        DepthFirstSchedule<String> schedule = new DepthFirstSchedule<>(
+                chain.crafts, chain.layouts, chain.results, chain.resultCounts, chain.held);
+        assertEquals(CHAIN_LEVELS - 1, schedule.current());
+        int calls = 0;
+        while (schedule.noRoom()) {
+            assertTrue(++calls < 64, "noRoom kept reporting room for a craft nothing can place");
+        }
+        assertEquals(CHAIN_LEVELS - 1, schedule.current(), "the refused step stays current");
+    }
+
     private static List<SlotLayout<String>> runs(SlotLayout<String>... runList) {
         return new ArrayList<>(Arrays.asList(runList));
     }

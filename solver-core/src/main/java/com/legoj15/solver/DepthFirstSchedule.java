@@ -235,8 +235,12 @@ public final class DepthFirstSchedule<K> {
      * The current batch's output had nowhere to go: halve {@code cap} (never below 1) so the next
      * batch is smaller, and drop the cached batch so the next pick re-derives from the model.
      *
-     * @return false when nothing can shrink — the batch is a single craft and {@code cap} is already
-     *         at or below that step's per-craft volume, so the storage is genuinely full
+     * <p>At a single craft with {@code cap} at or below the step's per-craft volume nothing can
+     * shrink: the step is blocked and the target's demand re-chosen around it, so another branch
+     * (one that consumes held stock) can run and free room.
+     *
+     * @return false when no branch the target needs can run — the storage is genuinely full. The
+     *         refused step is current again then, for the caller's report.
      */
     public boolean noRoom() {
         int step = current();
@@ -249,7 +253,13 @@ public final class DepthFirstSchedule<K> {
             // full, since one that consumes held stock frees the room this step needs.
             blocked.add(step);
             haveBatch = false;
-            return current() >= 0;
+            if (current() >= 0) {
+                return true;
+            }
+            blocked.clear(); // nothing can run: restore the refused step as current
+            haveBatch = false;
+            current();
+            return false;
         }
         cap = Math.max(1L, Math.min(cap, saturate(currentBatch, volume)) / 2);
         haveBatch = false;
@@ -330,6 +340,9 @@ public final class DepthFirstSchedule<K> {
      *             the depth by the step count and breaks self-feeding cycles
      */
     private Choice demand(int i, long want, Set<Integer> path) {
+        if (blocked.contains(i)) {
+            return null; // refused a single craft for room since the last success
+        }
         boolean starved = false; // an input's producers are all blocked
         long b = want;
         b = Math.min(b, crafts[i] - done[i]);

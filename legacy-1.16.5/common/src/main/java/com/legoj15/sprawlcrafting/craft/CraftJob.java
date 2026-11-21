@@ -187,6 +187,8 @@ public final class CraftJob {
         if (!interleaved) {
             return " (sequential)";
         }
+        // Choose first: choosing can skip surplus steps, and the lines below should show that.
+        int current = schedule.current();
         StringBuilder text = new StringBuilder();
         for (int i = 0; i < steps.size(); i++) {
             CraftStep step = steps.get(i);
@@ -195,7 +197,6 @@ public final class CraftJob {
                     .append(step.resultCount()).append("x ").append(step.result())
                     .append(", model stock ").append(step.result() == null ? -1 : schedule.stock(step.result()));
         }
-        int current = schedule.current();
         text.append("\n  current step ").append(current).append(", batch ")
                 .append(current < 0 ? 0 : schedule.batch()).append(", cap ").append(schedule.cap());
         return text.toString();
