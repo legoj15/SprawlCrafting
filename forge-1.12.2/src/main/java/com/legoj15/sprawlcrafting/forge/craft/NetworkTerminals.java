@@ -1,7 +1,9 @@
 package com.legoj15.sprawlcrafting.forge.craft;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -102,6 +104,48 @@ public final class NetworkTerminals {
         }
 
         /**
+         * The protected tier's counts per {@link ItemKey} (issue #49): {@link #counts} mirrored,
+         * but selecting {@link CraftExecutor#isProtected} stacks (undamaged, enchanted and/or
+         * renamed) instead of usable ones, with the same {@link Long#MAX_VALUE}-means-unbounded
+         * rule. The planner's protected pass merges these after every plain count, exactly where
+         * the executor's tier order draws them; damaged stacks appear in neither map. The default
+         * derives from {@link #stacks} like {@link #counts} does; the live view overrides it with
+         * its probed long counts.
+         */
+        default Map<ItemKey, Long> protectedCounts(Set<Item> items) {
+            Map<ItemKey, Long> counts = new HashMap<ItemKey, Long>();
+            for (ItemStack stack : stacks(items)) {
+                if (!stack.isEmpty() && CraftExecutor.isProtected(stack)) {
+                    long count = stack.getCount();
+                    counts.merge(ItemKey.of(stack), count >= Integer.MAX_VALUE ? Long.MAX_VALUE : count,
+                            NetworkTerminals::saturatingAdd);
+                }
+            }
+            return counts;
+        }
+
+        /**
+         * One count-1 copy per protected {@link ItemKey} (issue #49) the network stores — the first
+         * stored identity of each, name and enchantments intact — for the protected warning lines.
+         * The default derives from {@link #stacks}, which lists every stored identity, protected
+         * ones included; duplicates under one {@link ItemKey} (same item and metadata, different
+         * NBT) collapse to the first.
+         */
+        default List<ItemStack> protectedSamples(Set<Item> items) {
+            List<ItemStack> samples = new ArrayList<ItemStack>();
+            Set<ItemKey> seen = new HashSet<ItemKey>();
+            for (ItemStack stack : stacks(items)) {
+                if (stack.isEmpty() || !CraftExecutor.isProtected(stack) || !seen.add(ItemKey.of(stack))) {
+                    continue;
+                }
+                ItemStack copy = stack.copy();
+                copy.setCount(1);
+                samples.add(copy);
+            }
+            return samples;
+        }
+
+        /**
          * Server only. Extracts up to {@code count} items exactly like {@code like} (item, metadata
          * and NBT), returning how many were (or, simulating, would be) extracted: 0..count. The
          * network charges its own power for the transfer.
@@ -178,6 +222,24 @@ public final class NetworkTerminals {
     public static Map<ItemKey, Long> counts(EntityPlayer player) {
         View view = view(player);
         return view == null ? Collections.<ItemKey, Long>emptyMap() : view.counts(null);
+    }
+
+    /**
+     * The open terminal's network as protected-tier planner counts (empty when none); see
+     * {@link View#protectedCounts} (issue #49).
+     */
+    public static Map<ItemKey, Long> protectedCounts(EntityPlayer player) {
+        View view = view(player);
+        return view == null ? Collections.<ItemKey, Long>emptyMap() : view.protectedCounts(null);
+    }
+
+    /**
+     * One count-1 copy per protected identity the open terminal's network stores (empty when
+     * none); see {@link View#protectedSamples} (issue #49).
+     */
+    public static List<ItemStack> protectedSamples(EntityPlayer player) {
+        View view = view(player);
+        return view == null ? Collections.<ItemStack>emptyList() : view.protectedSamples(null);
     }
 
     /** Client only: see {@link Provider#clientSignature}. */

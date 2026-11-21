@@ -135,7 +135,8 @@ public final class CraftJob {
      * Whether this job's plan counted the player's protected stacks (enchanted and/or renamed,
      * never damaged; {@code CraftExecutor#isProtected}) as material — set by the caller that
      * planned it that way (issue #40), after the plain pool fell short and the player confirmed.
-     * Such a job may pick protected stacks from the 36 main slots, always after every plain stack
+     * Such a job may pick protected stacks from the 36 main slots and, while a network crafting
+     * terminal is open, from the network behind it (issue #49), always after every plain stack
      * in the pool; every other job keeps the plain rule exactly. Damaged stacks are never
      * protected material, on any job.
      */

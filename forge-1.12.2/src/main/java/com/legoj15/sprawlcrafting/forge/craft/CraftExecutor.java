@@ -57,8 +57,9 @@ import net.minecraftforge.common.crafting.IShapedRecipe;
  *       says it produced itself (some mods enchant an item on its first inventory tick, after
  *       the job inserted it), and — only for a job planned with them after the player confirmed
  *       (issue #40) — the protected stacks {@link #isProtected} describes: undamaged but
- *       enchanted and/or renamed, picked only from the 36 main slots, always after every plain
- *       copy of the same item (see {@link #findMatchingSource}'s tier order).</li>
+ *       enchanted and/or renamed, picked only from the 36 main slots and, while a network
+ *       crafting terminal is open, the network's stored identities (issue #49), always after
+ *       every plain copy of the same item (see {@link #findMatchingSource}'s tier order).</li>
  * </ul>
  *
  * <p>The final craft of a job is normally handed off into an open crafting grid by
@@ -128,10 +129,11 @@ public final class CraftExecutor {
      * One craft of {@code recipeId}. {@code layout} is the plan's per-slot item choice for this craft
      * ({@link CraftJob#currentCraftLayout()}); null or a layout the live pool can no longer honor
      * falls back to {@link SlotAssignment}. {@code allowProtected} is the job's
-     * {@link CraftJob#usesProtected()} flag (issue #40): a job planned with the player's protected
-     * stacks may also pick those — per cell, after the plan's item as a plain copy from any source
-     * but before any alternative item (see {@link #findMatchingSource}) — while every other job
-     * keeps the plain rule exactly.
+     * {@link CraftJob#usesProtected()} flag (issue #40): a job planned with the protected tier
+     * (the 36 main slots' protected stacks, and an open terminal network's, issue #49) may also
+     * pick those — per cell, after the plan's item as a plain copy from any source but before any
+     * alternative item (see {@link #findMatchingSource}) — while every other job keeps the plain
+     * rule exactly.
      */
     public static CraftResult craftOnce(EntityPlayerMP player, ResourceLocation recipeId,
                                         ProducedLedger<ItemKey, LedgerVariant> ledger, List<ItemKey> layout,
@@ -379,7 +381,10 @@ public final class CraftExecutor {
      * makes execution match planning even when that sweep was a no-op (inventory full), rather than
      * stalling on a recipe the highlight showed as craftable. The network comes last so the player's
      * own items are always used first, and only the identities the recipe can use are listed (a
-     * network can hold thousands, and this runs once per craft of a burst).
+     * network can hold thousands, and this runs once per craft of a burst). The listing carries
+     * every stored identity, protected ones included (issue #49); the plain passes refuse those
+     * through {@code usableAsIngredient}, so only a job whose {@code allowProtected} tier reaches
+     * {@link #findProtectedSource} can ever pick one.
      */
     private static List<Source> buildSources(EntityPlayer player, InventoryPlayer inventory, Set<Item> networkItems) {
         List<Source> sources = new ArrayList<Source>();
@@ -716,8 +721,9 @@ public final class CraftExecutor {
      * join that stock too ({@link #countAdmitted}), since the plan counted them as well, and with
      * {@code allowProtected} so do the protected stacks of a job planned with them (issue #40):
      * the plan's counts included them, and a layout chosen or honoured over less would not fit.
-     * Protected stacks count only in a player main-slot source — the one pool position they can
-     * ever be picked from; the station chest and the network stay plain pools either way.
+     * Protected stacks count in a player main-slot source and — with a terminal open — a network
+     * source (issue #49), exactly the two pool positions {@link #findProtectedSource} scans; the
+     * station chest and the grid stay plain pools either way.
      */
     private static ItemKey[] preferredKeys(List<Source> sources, List<Ingredient> ingredients,
                                            List<ItemKey> layout, LedgerTally<ItemKey, LedgerVariant> admitting,
@@ -725,7 +731,9 @@ public final class CraftExecutor {
         Map<ItemKey, Integer> stock = new HashMap<ItemKey, Integer>();
         for (Source source : sources) {
             ItemStack stack = source.peek();
-            if (!stack.isEmpty() && usableAsIngredient(stack, allowProtected && source instanceof PlayerSource)) {
+            boolean protectedMaterial = allowProtected
+                    && (source instanceof PlayerSource || source instanceof NetworkSource);
+            if (!stack.isEmpty() && usableAsIngredient(stack, protectedMaterial)) {
                 ItemKey key = ItemKey.of(stack);
                 Integer have = stock.get(key);
                 stock.put(key, NetworkTerminals.saturatedAdd(have == null ? 0 : have, stack.getCount()));
@@ -839,7 +847,8 @@ public final class CraftExecutor {
     /**
      * A plain stack of {@code preferred} ({@link #preferredKeys}) when one matches, then (with a
      * tally, #26 pass only) a refused copy of it the tally admits, then — a protected-planned job
-     * only, from the player's main slots — a protected copy of it (#40), all before any alternative
+     * only, from the player's main slots or the network's stored identities (#40, #49) — a
+     * protected copy of it, all before any alternative
      * identity, which a later cell may need alone; otherwise the first plain match in pool order,
      * then (a protected-planned job only) any protected stack the ingredient accepts, and last
      * (with a ledger) any refused stack the tally admits. That is the #40 pick order: a plain copy
@@ -918,15 +927,29 @@ public final class CraftExecutor {
 
     /**
      * The first unreserved protected stack ({@link #isProtected}) the ingredient accepts — of
-     * {@code preferred} when non-null, else of any identity — or -1. Only player main-slot sources
-     * are scanned: the #40 tier is the player's own special copies, reached only by a job planned
-     * with protected stacks and only after every plain stack and the station's or network's stock
-     * fell short, so a plain copy of the needed item always wins.
+     * {@code preferred} when non-null, else of any identity — or -1. The player's main-slot sources
+     * are scanned first, then — with a network crafting terminal open — the network's stored
+     * identities, one source each (issue #49): the #40 tier is the player's confirmed special
+     * copies, extended to the ones the open terminal displays, reached only by a job planned with
+     * protected stacks and only after every plain stack and the station's stock fell short, so a
+     * plain copy of the needed item always wins.
      */
     private static int findProtectedSource(List<Source> sources, Ingredient ingredient, ItemKey preferred,
                                            int[] reserved) {
         for (int i = 0; i < sources.size(); i++) {
             if (!(sources.get(i) instanceof PlayerSource)) {
+                continue;
+            }
+            ItemStack stack = sources.get(i).peek();
+            if (!stack.isEmpty() && stack.getCount() - reserved[i] > 0 && isProtected(stack)
+                    && (preferred == null || preferred.equals(ItemKey.of(stack))) && ingredient.apply(stack)) {
+                return i;
+            }
+        }
+        // The network's protected identities come last (#49): buildSources lists them after every
+        // player and external source, so this second scan is the tier's final fallback.
+        for (int i = 0; i < sources.size(); i++) {
+            if (!(sources.get(i) instanceof NetworkSource)) {
                 continue;
             }
             ItemStack stack = sources.get(i).peek();
