@@ -191,45 +191,6 @@ public final class RecipeGraphSolver<R, K> {
             public List<List<SlotLayout<K>>> layouts() {
                 return layouts;
             }
-
-            /**
-             * This plan with every step cut into consecutive steps of at most {@link Integer#MAX_VALUE}
-             * crafts (layout runs cut at the same boundaries), for an executor that counts crafts in an
-             * int. Returns null when that takes more than {@code maxSteps} steps.
-             */
-            public Success<R, K> intSized(int maxSteps) {
-                List<PlannedStep<R>> outSteps = new ArrayList<>();
-                List<List<SlotLayout<K>>> outLayouts = new ArrayList<>();
-                for (int i = 0; i < steps.size(); i++) {
-                    PlannedStep<R> step = steps.get(i);
-                    List<SlotLayout<K>> runs = layouts.get(i);
-                    long left = step.crafts();
-                    int run = 0;
-                    long runLeft = runs.isEmpty() ? 0 : runs.get(0).crafts();
-                    while (left > 0) {
-                        if (outSteps.size() >= maxSteps) {
-                            return null;
-                        }
-                        long chunk = Math.min(left, Integer.MAX_VALUE);
-                        List<SlotLayout<K>> chunkRuns = new ArrayList<>();
-                        long need = runs.isEmpty() ? 0 : chunk;
-                        while (need > 0) {
-                            long take = Math.min(need, runLeft);
-                            chunkRuns.add(new SlotLayout<>(take, runs.get(run).items()));
-                            need -= take;
-                            runLeft -= take;
-                            if (runLeft == 0 && run + 1 < runs.size()) {
-                                run++;
-                                runLeft = runs.get(run).crafts();
-                            }
-                        }
-                        outSteps.add(new PlannedStep<>(step.recipeId(), chunk));
-                        outLayouts.add(chunkRuns);
-                        left -= chunk;
-                    }
-                }
-                return new Success<>(outSteps, outLayouts);
-            }
         }
 
         /**
@@ -387,12 +348,32 @@ public final class RecipeGraphSolver<R, K> {
     public static final int DEFAULT_MAX_STEPS = 16384;
     private final int maxSteps;
 
+    /**
+     * A plan whose steps may hold more than {@link Integer#MAX_VALUE} crafts: a tree driven by quantity
+     * is planned in about one step per recipe, whatever its counts. Executing it in plan order would
+     * make each intermediate in full before anything consumes it, so an executor of such a plan must
+     * interleave the steps itself.
+     */
     public Result<R, K> solve(RecipeInfo<R, K> target, Map<K, Integer> inventory) {
-        Plan<R, K> plan = plan(target, toLong(inventory), true);
+        return solve(target, inventory, true);
+    }
+
+    /**
+     * A plan of int-sized steps, recorded depth first: a quantity-driven tree becomes batches of at most
+     * {@link Integer#MAX_VALUE} crafts, each followed by the steps that consume it, so plan order already
+     * holds no more than about one batch of any intermediate. At most {@code maxSteps} steps; past that
+     * the answer is {@link Result.Failure#tooLarge()}.
+     */
+    public Result<R, K> solveIntSized(RecipeInfo<R, K> target, Map<K, Integer> inventory) {
+        return solve(target, inventory, false);
+    }
+
+    private Result<R, K> solve(RecipeInfo<R, K> target, Map<K, Integer> inventory, boolean longSteps) {
+        Plan<R, K> plan = plan(target, toLong(inventory), true, longSteps);
         if (plan.steps == null) {
             return new Result.Failure<>(plan.missing, plan.budgetExceeded, plan.tooLarge);
         }
-        return mergeAdjacent(plan.steps);
+        return mergeAdjacent(plan.steps, longSteps ? Long.MAX_VALUE : Integer.MAX_VALUE);
     }
 
     /**
@@ -401,15 +382,15 @@ public final class RecipeGraphSolver<R, K> {
      * boundary pair that lists equal items is one run, or {@link Result.Success} would reject the
      * merge.
      */
-    private static <R, K> Result<R, K> mergeAdjacent(List<Step<R, K>> plan) {
+    private static <R, K> Result<R, K> mergeAdjacent(List<Step<R, K>> plan, long cap) {
         List<PlannedStep<R>> steps = new ArrayList<>(plan.size());
         List<List<SlotLayout<K>>> layouts = new ArrayList<>(plan.size());
         for (Step<R, K> step : plan) {
             int last = steps.size() - 1;
             if (last >= 0 && steps.get(last).recipeId().equals(step.recipe.id())
-                    && steps.get(last).crafts() <= Long.MAX_VALUE - step.crafts) {
+                    && steps.get(last).crafts() <= cap - step.crafts) {
                 steps.set(last, steps.get(last).withCrafts(steps.get(last).crafts() + step.crafts));
-                layouts.set(last, concatRuns(layouts.get(last), step.runs));
+                layouts.set(last, concatRuns(layouts.get(last), step.runs, cap));
             } else {
                 steps.add(new PlannedStep<>(step.recipe.id(), step.crafts));
                 layouts.add(step.runs);
@@ -419,7 +400,8 @@ public final class RecipeGraphSolver<R, K> {
     }
 
     /** Two steps' runs concatenated, merging a boundary pair that lists equal items. */
-    private static <K> List<SlotLayout<K>> concatRuns(List<SlotLayout<K>> first, List<SlotLayout<K>> second) {
+    private static <K> List<SlotLayout<K>> concatRuns(List<SlotLayout<K>> first, List<SlotLayout<K>> second,
+                                                      long cap) {
         if (first.isEmpty()) {
             return second;
         }
@@ -430,7 +412,7 @@ public final class RecipeGraphSolver<R, K> {
         out.addAll(first);
         SlotLayout<K> boundary = second.get(0);
         SlotLayout<K> tail = out.get(out.size() - 1);
-        if (tail.items().equals(boundary.items()) && tail.crafts() <= Long.MAX_VALUE - boundary.crafts()) {
+        if (tail.items().equals(boundary.items()) && tail.crafts() <= cap - boundary.crafts()) {
             out.set(out.size() - 1, new SlotLayout<>(tail.crafts() + boundary.crafts(), boundary.items()));
             out.addAll(second.subList(1, second.size()));
         } else {
@@ -575,7 +557,7 @@ public final class RecipeGraphSolver<R, K> {
      *               routes an int-scale tree to the quantity path (see {@code planByQuantity});
      *               the quantity path's own passes record their batches uncapped
      */
-    private Plan<R, K> plan(RecipeInfo<R, K> target, Map<K, Long> held, boolean capInt) {
+    private Plan<R, K> plan(RecipeInfo<R, K> target, Map<K, Long> held, boolean capInt, boolean longSteps) {
         List<Step<R, K>> steps = new ArrayList<>();
         Solve batched = new Solve(true, true, false, capInt);
         boolean batchedRejected = false;
@@ -619,7 +601,7 @@ public final class RecipeGraphSolver<R, K> {
         }
         boolean budgetExceeded = noCleanFailure && anyBudget;
         if (capInt && (budgetExceeded || clipped)) {
-            return planByQuantity(target, held, missing);
+            return planByQuantity(target, held, missing, longSteps);
         }
         return new Plan<>(null, missing, budgetExceeded);
     }
@@ -642,7 +624,8 @@ public final class RecipeGraphSolver<R, K> {
      *
      * @param missing the budgeted passes' missing set, kept when the probe has nothing better
      */
-    private Plan<R, K> planByQuantity(RecipeInfo<R, K> target, Map<K, Long> held, Set<K> missing) {
+    private Plan<R, K> planByQuantity(RecipeInfo<R, K> target, Map<K, Long> held, Set<K> missing,
+                                      boolean longSteps) {
         Solve probe = new Solve(true, true, false, false);
         probe.quantityFree = true;
         probe.used = new ArrayList<>();
@@ -656,7 +639,7 @@ public final class RecipeGraphSolver<R, K> {
                     : new Plan<>(null, new LinkedHashSet<>(probe.missing), false);
         }
         List<Step<R, K>> steps = new ArrayList<>();
-        Solve guided = new Solve(true, true, false, false);
+        Solve guided = new Solve(true, true, false, !longSteps);
         guided.quantityFree = true;
         guided.allowed = Collections.newSetFromMap(new IdentityHashMap<RecipeInfo<R, K>, Boolean>());
         guided.allowed.addAll(probe.used);
@@ -880,11 +863,11 @@ public final class RecipeGraphSolver<R, K> {
 
     /**
      * Whether {@link #solve} would succeed holding {@code held} (long counts): the same validated
-     * {@code plan} path, with the same {@link Integer#MAX_VALUE} per-step batch cap, so a gather list is
-     * never verified by a plan {@link #solve} could not emit.
+     * {@code plan} path with long steps, so a gather list is never verified by a plan {@link #solve}
+     * could not emit.
      */
     private boolean feasible(RecipeInfo<R, K> target, Map<K, Long> held) {
-        return plan(target, held, true).steps != null;
+        return plan(target, held, true, true).steps != null;
     }
 
     private static final class Walk<T> {

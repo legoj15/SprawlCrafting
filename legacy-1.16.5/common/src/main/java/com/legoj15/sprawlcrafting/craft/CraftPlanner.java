@@ -278,7 +278,7 @@ public final class CraftPlanner {
             if (!target.fits(grid)) {
                 return PlanOutcome.of(PlanOutcome.Kind.NEEDS_BIGGER_GRID);
             }
-            RecipeGraphSolver.Result<ResourceLocation, Item> result = solver.solve(target, inventory);
+            RecipeGraphSolver.Result<ResourceLocation, Item> result = solver.solveIntSized(target, inventory);
             if (result instanceof RecipeGraphSolver.Result.Success) {
                 RecipeGraphSolver.Result.Success<ResourceLocation, Item> success =
                         (RecipeGraphSolver.Result.Success<ResourceLocation, Item>) result;

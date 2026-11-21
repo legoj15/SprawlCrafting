@@ -250,20 +250,14 @@ public final class CraftPlanner {
                 return new PlanOutcome.NeedsBiggerGrid();
             }
 
-            Result<ResourceLocation, Item> result = solver.solve(target, inventory);
+            Result<ResourceLocation, Item> result = solver.solveIntSized(target, inventory);
             if (result instanceof Result.Success<ResourceLocation, Item> success) {
-                // A CraftStep counts crafts in an int: long steps from the solver's quantity path are cut into
-                // int-sized ones, and a plan that would need more than the solver's step cap is "too large".
-                Result.Success<ResourceLocation, Item> intPlan = success.intSized(RecipeGraphSolver.DEFAULT_MAX_STEPS);
-                if (intPlan == null) {
-                    return new PlanOutcome.TooComplex(true);
-                }
-                List<PlannedStep<ResourceLocation>> planned = intPlan.steps();
+                List<PlannedStep<ResourceLocation>> planned = success.steps();
                 List<CraftStep> steps = new ArrayList<>(planned.size());
                 for (int i = 0; i < planned.size(); i++) {
                     PlannedStep<ResourceLocation> step = planned.get(i);
                     steps.add(new CraftStep(step.recipeId(), (int) step.crafts(),
-                            !fits2x2(step.recipeId(), target), intPlan.layouts().get(i)));
+                            !fits2x2(step.recipeId(), target), success.layouts().get(i)));
                 }
                 return new PlanOutcome.Planned(new CraftJob(RecipeIds.id(targetHolder), target.resultStack(), steps));
             }
