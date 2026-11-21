@@ -28,6 +28,7 @@ import net.minecraft.item.crafting.ShapedRecipe;
 import net.minecraft.util.ResourceLocation;
 import net.minecraft.util.text.ITextComponent;
 import net.minecraft.util.text.StringTextComponent;
+import net.minecraft.util.text.TranslationTextComponent;
 
 /**
  * Performs a single craft of a recipe directly against a player's live inventory: consumes one item per
@@ -176,7 +177,7 @@ public final class CraftExecutor {
         // Phase 0 (issue #49): a protected-planned job whose plan counted the station's protected
         // stacks can assign them only once they sit in the main inventory, so stage them first — a
         // mutation, deliberately outside phase 1's mutation-free prepare.
-        boolean roomBlocked = stageStationProtected(player, recipeId, ledger, layout, allowProtected);
+        stageStationProtected(player, recipeId, ledger, layout, allowProtected);
         // Phase 1: look the recipe up and match every ingredient slot to an inventory slot (or a
         // crafting station's storage) without mutating, so a shortfall discovered at slot N leaves
         // slots 1..N-1 untouched.
@@ -184,8 +185,8 @@ public final class CraftExecutor {
         if (plan == null) {
             return CraftResult.recipeGone();
         }
-        if (roomBlocked && plan.assignment.missing != null) {
-            return CraftResult.noRoom(describe(plan.assignment.missing));
+        if (plan.assignment.missing != null) {
+            return CraftResult.missing(describeMissing(player, plan));
         }
         return applyOnce(player, plan, refuseSpill);
     }
@@ -350,30 +351,24 @@ public final class CraftExecutor {
      * be executed only after this move, whereupon the existing protected-inventory tier consumes the
      * staged copies exactly as planned. No-op unless {@code allowProtected} with a usable station open
      * that holds protected stacks; every other job pays one boolean check.
-     *
-     * @return true when a copy the station holds could not be staged for want of an empty main slot:
-     *         the caller then reports the craft as NO_ROOM, not as a missing item the player can see
-     *         sitting in the open terminal
      */
-    private static boolean stageStationProtected(ServerPlayerEntity player, ResourceLocation recipeId,
+    private static void stageStationProtected(ServerPlayerEntity player, ResourceLocation recipeId,
                                               ProducedLedger<Item, LedgerVariant> ledger,
                                               List<Item> layout, boolean allowProtected) {
         if (!allowProtected) {
-            return false;
+            return;
         }
         StationStorage station = StationStorages.open(player);
         if (station == null) {
-            return false;
+            return;
         }
         // No up-front protectedCounts() scan: it walks the whole storage and this runs before every
         // craft of a protected job. Only a cell that is actually short asks the station.
         IRecipe<?> recipe = RecipeIds.byId(player.getServer().getRecipeManager(), recipeId).orElse(null);
         if (!(recipe instanceof ICraftingRecipe)) {
-            return false; // the craft reports RECIPE_GONE on its own
+            return; // the craft reports RECIPE_GONE on its own
         }
-        boolean[] roomBlocked = new boolean[1];
-        stageProtectedFromStation(player, station, recipe.getIngredients(), layout, ledger, roomBlocked);
-        return roomBlocked[0];
+        stageProtectedFromStation(player, station, recipe.getIngredients(), layout, ledger);
     }
 
     /**
@@ -389,8 +384,7 @@ public final class CraftExecutor {
      */
     private static void stageProtectedFromStation(ServerPlayerEntity player, StationStorage station,
                                                   List<Ingredient> ingredients, List<Item> layout,
-                                                  ProducedLedger<Item, LedgerVariant> ledger,
-                                                  boolean[] roomBlocked) {
+                                                  ProducedLedger<Item, LedgerVariant> ledger) {
         PlayerInventory inventory = player.inventory;
         // Items the station provably cannot stage this craft, so it is asked once per item at most.
         Set<Item> noneLeft = new HashSet<>();
@@ -419,7 +413,7 @@ public final class CraftExecutor {
                 }
                 if (!covered) {
                     anyShort = true;
-                    stageOne(player, station, noneLeft, preferred, ingredient, roomBlocked);
+                    stageOne(player, station, noneLeft, preferred, ingredient);
                 }
                 if (preferred != null) {
                     claimed.merge(preferred, 1L, Long::sum);
@@ -436,7 +430,7 @@ public final class CraftExecutor {
             }
             boolean staged = false;
             for (Item alternative : CraftPlanner.slotAlternatives(assignment.missing)) {
-                if (stageOne(player, station, noneLeft, alternative, assignment.missing, roomBlocked)) {
+                if (stageOne(player, station, noneLeft, alternative, assignment.missing)) {
                     staged = true;
                     break;
                 }
@@ -457,20 +451,8 @@ public final class CraftExecutor {
      * non-plain stacks); a copy the craft ends up not using stays with the player, lost to no one.
      */
     private static boolean stageOne(ServerPlayerEntity player, StationStorage station,
-                                    Set<Item> noneLeft, Item item, Ingredient ingredient,
-                                    boolean[] roomBlocked) {
-        if (item == null || noneLeft.contains(item)) {
-            return false;
-        }
-        if (!hasEmptyMainSlot(player.inventory)) {
-            // Rare path, so the full scan is fine here: flag it only when the station really holds one.
-            if (!roomBlocked[0]) {
-                try {
-                    roomBlocked[0] = station.protectedCounts().getOrDefault(item, 0L) > 0;
-                } catch (RuntimeException | LinkageError e) {
-                    Constants.LOG.warn("SprawlCrafting: crafting station protected-count read failed", e);
-                }
-            }
+                                    Set<Item> noneLeft, Item item, Ingredient ingredient) {
+        if (item == null || noneLeft.contains(item) || !hasEmptyMainSlot(player.inventory)) {
             return false;
         }
         ItemStack staged;
@@ -582,16 +564,13 @@ public final class CraftExecutor {
         // Phase 0 as in craftOnce (issue #49), one craft's worth: the batch's k is derived from the
         // stock the staging raised, and the guard that refuses batching when a non-plain stack is
         // involved then decides single vs batch on that live pool as always.
-        boolean roomBlocked = stageStationProtected(player, recipeId, ledger, layout, allowProtected);
+        stageStationProtected(player, recipeId, ledger, layout, allowProtected);
         Plan plan = prepare(player, recipeId, ledger, stationPlanned, layout, allowProtected);
         if (plan == null) {
             return CraftResult.recipeGone();
         }
-        if (roomBlocked && plan.assignment.missing != null) {
-            return CraftResult.noRoom(describe(plan.assignment.missing));
-        }
         if (plan.assignment.missing != null) {
-            return CraftResult.missing(describe(plan.assignment.missing));
+            return CraftResult.missing(describeMissing(player, plan));
         }
         Batch batch = batchPlan(player, plan, maxCrafts);
         if (batch == null) {
@@ -2157,6 +2136,30 @@ public final class CraftExecutor {
         ITextComponent name = firstDrop.getHoverName();
         firstDrop = ItemStack.EMPTY;
         return name;
+    }
+
+    /**
+     * {@link #describe} for a failed assignment, plus a hint when the reason is room (issue #49): a
+     * protected job whose open station holds a protected copy the missing cell accepts, but whose
+     * main inventory has no empty slot to stage it into. Runs only after the craft already failed,
+     * so its full storage scan never touches a craft that succeeds.
+     */
+    private static ITextComponent describeMissing(ServerPlayerEntity player, Plan plan) {
+        ITextComponent what = describe(plan.assignment.missing);
+        if (!plan.allowProtected || plan.station == null || hasEmptyMainSlot(player.inventory)) {
+            return what;
+        }
+        try {
+            Map<Item, Long> held = plan.station.protectedCounts();
+            for (Item item : CraftPlanner.slotAlternatives(plan.assignment.missing)) {
+                if (held.getOrDefault(item, 0L) > 0) {
+                    return new TranslationTextComponent("sprawlcrafting.craft.missing.no_slot", what);
+                }
+            }
+        } catch (RuntimeException | LinkageError e) {
+            Constants.LOG.warn("SprawlCrafting: crafting station protected-count read failed", e);
+        }
+        return what;
     }
 
     private static ITextComponent describe(Ingredient ingredient) {
