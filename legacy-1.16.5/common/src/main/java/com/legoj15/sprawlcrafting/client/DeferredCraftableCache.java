@@ -6,6 +6,7 @@ import java.util.Map;
 import java.util.Set;
 
 import com.legoj15.sprawlcrafting.craft.CraftPlanner;
+import com.legoj15.sprawlcrafting.craft.CraftingGrids;
 import com.legoj15.sprawlcrafting.craft.GridContext;
 import com.legoj15.sprawlcrafting.craft.StationStorages;
 import com.legoj15.sprawlcrafting.platform.Services;
@@ -13,6 +14,7 @@ import com.legoj15.sprawlcrafting.platform.Services;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.entity.player.ClientPlayerEntity;
 import net.minecraft.inventory.container.Container;
+import net.minecraft.inventory.container.Slot;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.crafting.IRecipe;
@@ -46,6 +48,8 @@ public final class DeferredCraftableCache {
     private static Map<Item, Long> sessionStation;
     /** The {@link #stationProtectedCounts()} instance the sessions were built with (issue #49). */
     private static Map<Item, Long> sessionStationProtected;
+    /** The open grid's contents the sessions were built with, hashed (issue #50). */
+    private static int sessionGridHash;
     /** Recipes we marked craftable that vanilla did NOT — these get the yellow outline. */
     private static final Set<ResourceLocation> deferredOnly = new HashSet<>();
     /** Of those, the recipes only a protected-including plan can make (issue #40). */
@@ -243,6 +247,7 @@ public final class DeferredCraftableCache {
         protectedSession = null;
         sessionStation = null;
         sessionStationProtected = null;
+        sessionGridHash = 0;
         stationMenu = null;
         stationTick = Long.MIN_VALUE;
         stationCounts = Collections.emptyMap();
@@ -253,6 +258,32 @@ public final class DeferredCraftableCache {
         stationProtectedSamples = Collections.emptyMap();
         deferredOnly.clear();
         protectedOnly.clear();
+    }
+
+    /**
+     * A cheap content hash of the open crafting grid (issue #50): the sessions count its stacks — a
+     * confirmed craft clears them into the main slots — but a move between the main slots and the grid
+     * need not touch the inventory's change counter, so without a key of their own the sessions would
+     * keep answering from the pool as it was when the grid was last empty. Every cell folds in its
+     * item, count and the damaged/enchanted/renamed flags the planner's usability filter reads. This
+     * hashes the raw grid, fit or not, so it can rebuild a little early but never late, and a rebuild
+     * is idempotent anyway.
+     */
+    private static int openGridHash(Container menu) {
+        CraftingGrids.Grid grid = CraftingGrids.find(menu);
+        if (grid == null) {
+            return 0;
+        }
+        int hash = 1;
+        for (Slot slot : grid.inputs()) {
+            ItemStack stack = slot.getItem();
+            int flags = (stack.isDamaged() ? 1 : 0) | (stack.isEnchanted() ? 2 : 0)
+                    | (stack.hasCustomHoverName() ? 4 : 0);
+            hash = hash * 31 + System.identityHashCode(stack.getItem());
+            hash = hash * 31 + stack.getCount();
+            hash = hash * 31 + flags;
+        }
+        return hash;
     }
 
     private static CraftPlanner.Session currentSession(GridContext requestGrid) {
@@ -267,9 +298,12 @@ public final class DeferredCraftableCache {
         // An open crafting station's storage (AE2 Crafting Terminal) joins the pool, as on the server.
         Map<Item, Long> station = stationCounts();
         Map<Item, Long> stationProtected = stationProtectedCounts();
+        // The open grid's contents joined the pool without the inventory's change counter noticing
+        // (issue #50), so they carry a rebuild key of their own.
+        int gridContents = openGridHash(player.containerMenu);
         if (session == null || generation != inventoryGeneration
                 || requestGrid != grid || recipes != recipeManager || station != sessionStation
-                || stationProtected != sessionStationProtected) {
+                || stationProtected != sessionStationProtected || gridContents != sessionGridHash) {
             session = CraftPlanner.session(recipes, player.inventory, requestGrid, station);
             // The second pass over the same pool plus the protected stacks (issue #40) — inventory
             // ones, and the station's too (issue #49) — built only when the server can honour a
@@ -285,6 +319,7 @@ public final class DeferredCraftableCache {
             recipeManager = recipes;
             sessionStation = station;
             sessionStationProtected = stationProtected;
+            sessionGridHash = gridContents;
             deferredOnly.clear();
             protectedOnly.clear();
         }

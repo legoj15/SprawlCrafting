@@ -26,11 +26,12 @@ public final class DeferredCraftSync {
     }
 
     /**
-     * Debounce key per player: a hash of (open-menu identity, grid, main-inventory contents,
-     * open-station storage counts, RecipeManager identity). Recompute only when one of those
-     * changes — opening/closing a grid, gaining/losing/moving an item, or a datapack reload (which
-     * swaps the server's RecipeManager and reassigns every RecipeDisplayId, so the client's synced
-     * set must be replaced) — not every tick. The inventory is hashed by contents, not via
+     * Debounce key per player: a hash of (open-menu identity, grid, main-inventory contents, the
+     * open grid's contents (issue #50), open-station storage counts, RecipeManager identity).
+     * Recompute only when one of those changes — opening/closing a grid, gaining/losing/moving
+     * an item, or a datapack reload (which swaps the server's RecipeManager and reassigns every
+     * RecipeDisplayId, so the client's synced set must be replaced) — not every tick. The
+     * inventory is hashed by contents, not via
      * {@code getTimesChanged()}: that counter is not bumped by item pickup / {@code /give}
      * on the server (see {@link #maybeSync}), so keying on it would miss gathered materials.
      */
@@ -111,11 +112,16 @@ public final class DeferredCraftSync {
         key = (key ^ grid.ordinal()) * 1099511628211L;
         key = (key ^ System.identityHashCode(recipes)) * 1099511628211L;
         key = (key ^ inventorySignature(player.getInventory())) * 1099511628211L;
+        // The open grid's own contents (issue #50) are a classification input now — the planner
+        // counts what clearOpenCraftingGrid would return to the main slots — and they change while
+        // neither the menu nor the main inventory does (items moved into the grid), so they fold
+        // into the key the same way.
+        key = (key ^ gridSignature(openGrid)) * 1099511628211L;
         key = (key ^ stationCounts.hashCode()) * 1099511628211L;
         key = (key ^ stationProtected.hashCode()) * 1099511628211L;
         Long prev = LAST_SYNC.get(player.getUUID());
         if (prev != null && prev == key) {
-            return; // (menu, grid, inventory contents, station storage, recipes) unchanged since the last push
+            return; // (menu, grid, inventory + open-grid contents, station storage, recipes) unchanged since the last push
         }
         // Coalesce bursts (see SYNC_THROTTLE_TICKS). The key still differs from prev, so a change
         // deferred here re-fires on a later tick once the window passes — never dropped.
@@ -202,6 +208,24 @@ public final class DeferredCraftSync {
             sig = (sig ^ count) * 1099511628211L;
             sig = (sig ^ (com.legoj15.sprawlcrafting.craft.CraftExecutor.isProtected(stack) ? 1 : 0))
                     * 1099511628211L;
+        }
+        return sig;
+    }
+
+    // The open grid's input cells (issue #50), the same per-stack fold as inventorySignature: their
+    // contents are a classification input now (the planner counts what clearOpenCraftingGrid would
+    // return to the main slots), and they change while neither the menu nor the main inventory does.
+    // As there, the protected state folds in — a grid stack flipping protected changes neither its
+    // item nor its count, yet flips the protected-only pass.
+    private static long gridSignature(CraftingGrids.Grid grid) {
+        long sig = 1469598103934665603L;
+        for (net.minecraft.world.inventory.Slot slot : grid.inputs()) {
+            net.minecraft.world.item.ItemStack stack = slot.getItem();
+            int item = stack.isEmpty() ? 0 : System.identityHashCode(stack.getItem());
+            int count = stack.isEmpty() ? 0 : stack.getCount();
+            sig = (sig ^ item) * 1099511628211L;
+            sig = (sig ^ count) * 1099511628211L;
+            sig = (sig ^ (CraftExecutor.isProtected(stack) ? 1 : 0)) * 1099511628211L;
         }
         return sig;
     }*/

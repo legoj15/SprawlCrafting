@@ -1354,8 +1354,10 @@ public final class CraftExecutor {
     /**
      * Returns the player's open crafting grid contents to the main inventory, matching vanilla's recipe
      * book (clicking a recipe clears the grid, or no-ops if it wouldn't all fit). Also a correctness fix:
-     * the planner/executor only read the 36 main slots, so items sitting in the grid would be invisible.
-     * Covers any grid {@link CraftingGrids} knows, a usable AE2 Crafting Terminal's included.
+     * the executor consumes from the 36 main slots only, so items sitting in the grid would be invisible
+     * to it — the planner counts them as material ({@link #clearableGridStacks}, issue #50), and this
+     * clear is what moves them to where the craft will actually draw them. Covers any grid
+     * {@link CraftingGrids} knows, a usable AE2 Crafting Terminal's included.
      */
     public static void clearOpenCraftingGrid(ServerPlayerEntity player) {
         if (player.isSpectator()) {
@@ -1366,6 +1368,35 @@ public final class CraftExecutor {
         if (grid != null) {
             returnGridToInventory(player, menu, grid);
         }
+    }
+
+    /**
+     * The stacks {@link #clearOpenCraftingGrid} would move into the main slots right now, or an empty
+     * list when it would move nothing: no grid, an empty one, a spectator's, or one whose contents would
+     * not all fit — the all-or-nothing rule {@link #returnGridToInventory} applies. The planner's
+     * inventory snapshot (issue #50) counts exactly these stacks, so its pool promises no material the
+     * confirming clear fails to deliver, and skips none it does. Read-only: nothing moves, and the fit
+     * check copies what it reads, so the grid's own stacks can be handed out as they are. Works from a
+     * {@link PlayerInventory} alone ({@code inventory.player}, as {@link #countRefused}), so the client
+     * snapshot shares the server clear's exact rule.
+     */
+    static List<ItemStack> clearableGridStacks(PlayerInventory inventory) {
+        if (inventory.player.isSpectator()) {
+            return Collections.<ItemStack>emptyList();
+        }
+        CraftingGrids.Grid grid = CraftingGrids.find(inventory.player.containerMenu);
+        if (grid == null) {
+            return Collections.<ItemStack>emptyList();
+        }
+        List<ItemStack> contents = new ArrayList<>();
+        for (Slot slot : grid.inputs()) {
+            ItemStack stack = slot.getItem();
+            if (!stack.isEmpty()) {
+                contents.add(stack);
+            }
+        }
+        return contents.isEmpty() || !fitsInMainInventory(inventory, contents)
+                ? Collections.<ItemStack>emptyList() : contents;
     }
 
     /**

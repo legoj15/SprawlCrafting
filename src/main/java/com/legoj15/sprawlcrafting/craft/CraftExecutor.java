@@ -1420,8 +1420,13 @@ public final class CraftExecutor {
         return cells;
     }
 
-    /** Non-mutating check that every stack would fit into the 36 main inventory slots together. */
-    private static boolean fitsInMainInventory(Inventory inventory, List<ItemStack> stacks) {
+    /**
+     * Non-mutating check that every stack would fit into the 36 main inventory slots together. The
+     * all-or-nothing rule of {@link #returnGridToInventory} — and, shared with {@code CraftPlanner}
+     * (issue #50), of counting the open grid's stacks as planning material: what a grid clear
+     * would not move must not be counted either.
+     */
+    static boolean fitsInMainInventory(Inventory inventory, List<ItemStack> stacks) {
         ItemStack[] snapshot = new ItemStack[Inventory.INVENTORY_SIZE];
         for (int i = 0; i < Inventory.INVENTORY_SIZE; i++) {
             snapshot[i] = inventory.getItem(i).copy();

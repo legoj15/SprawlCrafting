@@ -230,8 +230,13 @@ public final class CraftPlanner {
                                                         boolean includeProtected,
                                                         boolean includeNetworkProtected) {
         Map<ItemKey, Long> counts = snapshotInventory(player.inventory, includeProtected);
+        // A protected stack loose in the player's own grid (issue #50) is protected-tier material:
+        // the confirmed start clears the grid into the main slots first (clearOpenCraftingGrid, in
+        // CraftRequests) and the protected pass draws it there. Only when that clear would really
+        // move the grid (all-or-nothing fit); a station's chest stays a plain pool.
+        boolean gridProtected = includeProtected && gridWouldClear(player);
         for (net.minecraft.inventory.Slot slot : ExternalSlots.materialSlots(player)) {
-            addUsable(counts, slot.getStack());
+            addUsable(counts, slot.getStack(), gridProtected && ExternalSlots.isMatrix(slot));
         }
         if (network) {
             for (Map.Entry<ItemKey, Long> entry : NetworkTerminals.counts(player).entrySet()) {
@@ -252,8 +257,29 @@ public final class CraftPlanner {
         return counts;
     }
 
+    /**
+     * Whether {@link CraftExecutor#clearOpenCraftingGrid} would move the open grid into the main
+     * slots right now: it holds something and all of it fits (the clear's all-or-nothing rule).
+     */
+    public static boolean gridWouldClear(EntityPlayer player) {
+        if (player.isSpectator() || player.openContainer == null) {
+            return false;
+        }
+        List<ItemStack> contents = new ArrayList<ItemStack>();
+        for (net.minecraft.inventory.Slot slot : player.openContainer.inventorySlots) {
+            if (ExternalSlots.isMatrix(slot) && !slot.getStack().isEmpty()) {
+                contents.add(slot.getStack());
+            }
+        }
+        return !contents.isEmpty() && CraftExecutor.fitsInMainInventory(player.inventory, contents);
+    }
+
     private static void addUsable(Map<ItemKey, Long> counts, ItemStack stack) {
-        if (!stack.isEmpty() && CraftExecutor.usableAsIngredient(stack)) {
+        addUsable(counts, stack, false);
+    }
+
+    private static void addUsable(Map<ItemKey, Long> counts, ItemStack stack, boolean allowProtected) {
+        if (!stack.isEmpty() && CraftExecutor.usableAsIngredient(stack, allowProtected)) {
             ItemKey key = ItemKey.of(stack);
             Long current = counts.get(key);
             counts.put(key, saturatingAdd(current == null ? 0L : current.longValue(), stack.getCount()));
@@ -563,6 +589,16 @@ public final class CraftPlanner {
                 return true;
             }
         }
+        // The open grid too (issue #50): snapshotMaterials counts a protected grid stack in the
+        // protected pass, so one sitting only there must open that pass.
+        EntityPlayer player = inventory.player;
+        if (player != null && player.openContainer != null && gridWouldClear(player)) {
+            for (net.minecraft.inventory.Slot slot : ExternalSlots.materialSlots(player)) {
+                if (ExternalSlots.isMatrix(slot) && CraftExecutor.isProtected(slot.getStack())) {
+                    return true;
+                }
+            }
+        }
         return false;
     }
 
@@ -622,6 +658,20 @@ public final class CraftPlanner {
                 ItemKey key = ItemKey.of(stack);
                 Long current = plain.get(key);
                 plain.put(key, (current == null ? 0L : current.longValue()) + stack.getCount());
+            }
+        }
+        // A protected stack loose in the open grid (issue #50): the snapshot counts it in the
+        // protected pass when the confirming clear would move it, so the warning names it too.
+        EntityPlayer owner = inventory.player;
+        if (owner != null && owner.openContainer != null && gridWouldClear(owner)) {
+            for (net.minecraft.inventory.Slot slot : ExternalSlots.materialSlots(owner)) {
+                ItemStack stack = slot.getStack();
+                if (ExternalSlots.isMatrix(slot) && CraftExecutor.isProtected(stack)
+                        && !protectedCopies.containsKey(ItemKey.of(stack))) {
+                    ItemStack copy = stack.copy();
+                    copy.setCount(1);
+                    protectedCopies.put(ItemKey.of(stack), copy);
+                }
             }
         }
         // The network's protected identities (issue #49), after the inventory's: the executor's

@@ -377,6 +377,15 @@ public final class CraftPlanner {
      * skipped too unless {@code includeProtected} — the player-confirmed tier, mirroring exactly what
      * the executor may pick for a job planned with it ({@link CraftExecutor#usableAsIngredient}).
      *
+     * <p>The open crafting grid's input stacks count too (issue #50): a confirmed craft clears them
+     * into the main slots before planning ({@link CraftExecutor#clearOpenCraftingGrid}), so a snapshot
+     * that ignored them would call a craft the confirming click in fact makes impossible (red when it
+     * should be yellow). Exactly the stacks that clear would move — {@link
+     * CraftExecutor#clearableGridStacks}, nothing when the grid would not empty all-or-nothing — under
+     * the same usability filter as the main slots, so a protected grid stack counts only when
+     * {@code includeProtected}. Each stack is counted from one side of the move only: once the clear
+     * has run, the grid reads empty and the stacks sit in the main slots above, never both.
+     *
      * <p>{@code station} adds an open crafting station's plain-item counts (already usable, see
      * {@link StationStorage}), and {@code stationProtected} its protected-stack counts (issue #49) —
      * merged only when {@code includeProtected}, never into a plain session, which would silently
@@ -393,6 +402,11 @@ public final class CraftPlanner {
             ItemStack stack = inventory.getItem(i);
             if (!stack.isEmpty() && CraftExecutor.usableAsIngredient(stack, includeProtected)) {
                 counts.merge(stack.getItem(), (long) stack.getCount(), Long::sum);
+            }
+        }
+        for (ItemStack stack : CraftExecutor.clearableGridStacks(inventory)) {
+            if (CraftExecutor.usableAsIngredient(stack, includeProtected)) {
+                counts.merge(stack.getItem(), (long) stack.getCount(), CraftPlanner::saturatingAdd);
             }
         }
         for (Map.Entry<Item, Long> entry : station.entrySet()) {
@@ -419,13 +433,21 @@ public final class CraftPlanner {
     }
 
     /**
-     * Whether any of the 36 main slots holds a protected stack (enchanted and/or renamed, never
-     * damaged; {@link CraftExecutor#isProtected}). A cheap gate so callers skip the second,
-     * protected planning pass (issue #40) when there is nothing for it to add.
+     * Whether any of the 36 main slots — or the open crafting grid, whose contents a confirmed craft
+     * clears into them (issue #50) — holds a protected stack (enchanted and/or renamed, never damaged;
+     * {@link CraftExecutor#isProtected}). A cheap gate so callers skip the second, protected planning
+     * pass (issue #40) when there is nothing for it to add; the grid side must see exactly the stacks
+     * {@code snapshotInventory} counts, or a protected stack sitting there would open no session that
+     * includes it.
      */
     public static boolean hasProtected(PlayerInventory inventory) {
         for (int i = 0; i < MAIN_SLOTS; i++) {
             if (CraftExecutor.isProtected(inventory.getItem(i))) {
+                return true;
+            }
+        }
+        for (ItemStack stack : CraftExecutor.clearableGridStacks(inventory)) {
+            if (CraftExecutor.isProtected(stack)) {
                 return true;
             }
         }
@@ -465,6 +487,15 @@ public final class CraftPlanner {
                 protectedCopies.putIfAbsent(stack.getItem(), copyOfOne(stack));
             } else if (CraftExecutor.usableAsIngredient(stack)) {
                 plain.merge(stack.getItem(), (long) stack.getCount(), Long::sum);
+            }
+        }
+        // The open grid's stacks land in the main slots before the plan runs (issue #50), so they
+        // join this baseline exactly as the plan's pool counted them.
+        for (ItemStack stack : CraftExecutor.clearableGridStacks(inventory)) {
+            if (CraftExecutor.isProtected(stack)) {
+                protectedCopies.putIfAbsent(stack.getItem(), copyOfOne(stack));
+            } else if (CraftExecutor.usableAsIngredient(stack)) {
+                plain.merge(stack.getItem(), (long) stack.getCount(), CraftPlanner::saturatingAdd);
             }
         }
         for (Map.Entry<Item, ItemStack> entry : stationProtectedSamples.entrySet()) {

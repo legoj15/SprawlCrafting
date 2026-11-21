@@ -21,6 +21,7 @@ import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.player.Inventory;
+import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.crafting.CraftingRecipe;
@@ -340,6 +341,13 @@ public final class CraftPlanner {
      * — the player-confirmed tier, mirroring exactly what the executor may pick for a job planned
      * with it ({@link CraftExecutor#usableAsIngredient(ItemStack, boolean)}).
      *
+     * <p>The open crafting grid's input stacks count too (issue #50): a confirmed craft clears the
+     * grid into the main slots before planning ({@code CraftExecutor.clearOpenCraftingGrid}, from
+     * {@code CraftRequests}), so the snapshot must count exactly what that clear would move — before
+     * #50 the pools that colour recipes and solve the gather list never read the grid, so items
+     * sitting in it read as missing and a craft the clear would enable showed red. See
+     * {@link #addOpenGridToPool} for the rules.
+     *
      * <p>{@code station} adds an open crafting station's plain-item counts (already usable, see
      * {@link StationStorage}), and {@code stationProtected} its protected stacks — the station's side
      * of the same confirmed tier (#49), merged only when {@code includeProtected} and never into the
@@ -359,6 +367,7 @@ public final class CraftPlanner {
                 counts.merge(stack.getItem(), (long) stack.getCount(), Long::sum);
             }
         }
+        addOpenGridToPool(inventory, counts, includeProtected);
         station.forEach((item, count) -> {
             if (count > 0) {
                 counts.merge(item, count, CraftPlanner::saturatingAdd);
@@ -374,6 +383,50 @@ public final class CraftPlanner {
         return counts;
     }
 
+    /**
+     * Adds the open crafting grid's input stacks to {@code counts} (issue #50), counted exactly when
+     * {@code CraftExecutor.clearOpenCraftingGrid} would move them into the main slots: the same
+     * {@link CraftingGrids} lookup, and the all-or-nothing fit rule
+     * ({@link CraftExecutor#fitsInMainInventory}) {@code returnGridToInventory} applies — a grid that
+     * would not move is not counted, because the executor could not see it either (once the clear has
+     * run, the grid is empty, so nothing is ever counted twice). The same ingredient filter as the
+     * main slots: protected grid stacks count only in the protected session
+     * ({@code includeProtected}) — they land in the main slots, and that pass is what may consume
+     * them. Works on both sides: the server plans from {@code player.containerMenu}, the client from
+     * its synced mirror of the same menu.
+     */
+    private static void addOpenGridToPool(Inventory inventory, Map<Item, Long> counts,
+                                          boolean includeProtected) {
+        for (ItemStack stack : clearableGridStacks(inventory)) {
+            if (CraftExecutor.usableAsIngredient(stack, includeProtected)) {
+                counts.merge(stack.getItem(), (long) stack.getCount(), CraftPlanner::saturatingAdd);
+            }
+        }
+    }
+
+    /**
+     * The open grid's stacks {@code CraftExecutor.clearOpenCraftingGrid} would move into the main
+     * slots right now (issue #50): all of them when they all fit, else none (its all-or-nothing rule).
+     */
+    private static List<ItemStack> clearableGridStacks(Inventory inventory) {
+        if (inventory.player.isSpectator()) {
+            return List.of(); // the clear skips a spectator's grid
+        }
+        CraftingGrids.Grid grid = CraftingGrids.find(inventory.player.containerMenu);
+        if (grid == null) {
+            return List.of();
+        }
+        List<ItemStack> contents = new ArrayList<>();
+        for (Slot slot : grid.inputs()) {
+            ItemStack stack = slot.getItem();
+            if (!stack.isEmpty()) {
+                contents.add(stack);
+            }
+        }
+        return contents.isEmpty() || !CraftExecutor.fitsInMainInventory(inventory, contents)
+                ? List.of() : contents;
+    }
+
     /** {@code a} plus {@code b} without overflow: {@link Long#MAX_VALUE} (unbounded) stays there. */
     private static long saturatingAdd(long a, long b) {
         long sum = a + b;
@@ -382,13 +435,26 @@ public final class CraftPlanner {
 
     /**
      * Whether any of the 36 main slots holds a protected stack (enchanted and/or renamed, never
-     * damaged; {@link CraftExecutor#isProtected}). A cheap gate so callers skip the second,
-     * protected planning pass (issue #40) when there is nothing for it to add.
+     * damaged; {@link CraftExecutor#isProtected}) — or the open crafting grid does (issue #50): its
+     * stacks return to the main slots before a confirmed craft, and the protected session counts
+     * them there, so a grid-only protected stack must open that pass too. The grid is checked
+     * without {@code addOpenGridToPool}'s fit gate on purpose: a false positive only builds a session
+     * that may find nothing, while a miss would hide recipes the protected pass can make. A cheap
+     * gate so callers skip the second, protected planning pass (issue #40) when there is nothing
+     * for it to add.
      */
     public static boolean hasProtected(Inventory inventory) {
         for (int i = 0; i < Inventory.INVENTORY_SIZE; i++) {
             if (CraftExecutor.isProtected(inventory.getItem(i))) {
                 return true;
+            }
+        }
+        CraftingGrids.Grid grid = CraftingGrids.find(inventory.player.containerMenu);
+        if (grid != null) {
+            for (Slot slot : grid.inputs()) {
+                if (CraftExecutor.isProtected(slot.getItem())) {
+                    return true;
+                }
             }
         }
         return false;
@@ -424,6 +490,15 @@ public final class CraftPlanner {
                 protectedCopies.putIfAbsent(stack.getItem(), copyOfOne(stack));
             } else if (CraftExecutor.usableAsIngredient(stack)) {
                 plain.merge(stack.getItem(), (long) stack.getCount(), Long::sum);
+            }
+        }
+        // The open grid's stacks land in the main slots before the plan runs (issue #50), so they
+        // join this baseline exactly as the plan's pool counted them.
+        for (ItemStack stack : clearableGridStacks(inventory)) {
+            if (CraftExecutor.isProtected(stack)) {
+                protectedCopies.putIfAbsent(stack.getItem(), copyOfOne(stack));
+            } else if (CraftExecutor.usableAsIngredient(stack)) {
+                plain.merge(stack.getItem(), (long) stack.getCount(), CraftPlanner::saturatingAdd);
             }
         }
         // The station's samples (issue #49), an item the player's own copies already represent

@@ -5,7 +5,9 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 
+import com.legoj15.sprawlcrafting.craft.CraftExecutor;
 import com.legoj15.sprawlcrafting.craft.CraftPlanner;
+import com.legoj15.sprawlcrafting.craft.CraftingGrids;
 import com.legoj15.sprawlcrafting.craft.GridContext;
 import com.legoj15.sprawlcrafting.craft.StationStorages;
 import com.legoj15.sprawlcrafting.network.StartProtectedCraftPayload;
@@ -15,7 +17,9 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.inventory.AbstractContainerMenu;
+import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.crafting.RecipeHolder;
 import net.minecraft.world.item.crafting.RecipeManager;
 
@@ -208,6 +212,8 @@ public final class DeferredCraftableCache {
     /** The same pool plus the player's protected stacks (issue #40); null unless protected planning is possible. */
     private static CraftPlanner.Session protectedSession;
     private static int inventoryGeneration = -1;
+    /** Content hash of the open crafting grid's cells when the sessions were built (issue #50). */
+    private static long sessionGridSignature;
     private static GridContext grid;
     private static RecipeManager recipeManager;
     /** The {@link #stationCounts()} instance the sessions were built with (compared by reference). */
@@ -316,13 +322,18 @@ public final class DeferredCraftableCache {
             return null;
         }
         int generation = player.getInventory().getTimesChanged();
+        // The open crafting grid's contents (issue #50): the session's pool counts them (they return
+        // to the main slots before a confirmed craft), yet moving items into or out of the grid need
+        // not bump the inventory's change counter (the grid is the menu's crafting container, not
+        // the player inventory), so they get their own content hash, compared like the generation.
+        long openGrid = openGridSignature(player);
         RecipeManager recipes = minecraft.level.getRecipeManager();
         // An open crafting station's storage (AE2 Crafting Terminal) joins the pool, as on the server.
         Map<Item, Long> station = stationCounts();
         Map<Item, Long> stationProtected = stationProtectedCounts();
         if (session == null || generation != inventoryGeneration
                 || requestGrid != grid || recipes != recipeManager || station != sessionStation
-                || stationProtected != sessionStationProtected) {
+                || stationProtected != sessionStationProtected || openGrid != sessionGridSignature) {
             session = CraftPlanner.session(recipes, minecraft.level.registryAccess(),
                     player.getInventory(), requestGrid, station);
             // The second pass over the same pool plus the protected stacks (issue #40), built only
@@ -339,6 +350,7 @@ public final class DeferredCraftableCache {
                             player.getInventory(), requestGrid, station, stationProtected, true)
                     : null;
             inventoryGeneration = generation;
+            sessionGridSignature = openGrid;
             grid = requestGrid;
             recipeManager = recipes;
             sessionStation = station;
@@ -347,6 +359,29 @@ public final class DeferredCraftableCache {
             protectedOnly.clear();
         }
         return session;
+    }
+
+    /**
+     * A cheap content hash of the open crafting grid's input cells (issue #50) — the same per-stack
+     * fold the 26.x server sync hashes ({@code DeferredCraftSync}'s {@code gridSignature}), so both
+     * sides key off the same view of the grid. Like the inventory generation it can over-detect (an
+     * item moved between cells rebuilds needlessly) but never misses a change to which items, and
+     * how many, sit in the grid.
+     */
+    private static long openGridSignature(LocalPlayer player) {
+        long sig = 1469598103934665603L; // 64-bit FNV-1a basis
+        CraftingGrids.Grid grid = CraftingGrids.find(player.containerMenu);
+        if (grid != null) {
+            for (Slot slot : grid.inputs()) {
+                ItemStack stack = slot.getItem();
+                int item = stack.isEmpty() ? 0 : System.identityHashCode(stack.getItem());
+                int count = stack.isEmpty() ? 0 : stack.getCount();
+                sig = (sig ^ item) * 1099511628211L;
+                sig = (sig ^ count) * 1099511628211L;
+                sig = (sig ^ (CraftExecutor.isProtected(stack) ? 1 : 0)) * 1099511628211L;
+            }
+        }
+        return sig;
     }
     //?}
 }
