@@ -350,7 +350,7 @@ public final class CraftExecutor {
         }
         Batch batch = batchPlan(player, plan, maxCrafts);
         if (batch == null) {
-            return applyOnce(player, plan, refuseSpill); // nothing has moved yet: the plan is still this craft's
+            return applyOnce(player, plan, refuseSpill); // only staged protected copies may have moved; the plan is the post-staging one
         }
         return applyBatch(player, plan, batch, refuseSpill);
     }
@@ -371,7 +371,7 @@ public final class CraftExecutor {
      * Without one — or when an assignment over the pool still reports something missing — the missing
      * ingredient's accepted items are tried one protected copy at a time, re-assigning after each, at
      * most one pass per grid cell. A copy is drawn only when the main inventory can take it whole
-     * ({@link #roomForOne}): nothing is ever dropped at the feet or pushed back into the station
+     * ({@link #hasEmptyMainSlot}): nothing is ever dropped at the feet or pushed back into the station
      * ({@link StationStorage#insert} refuses non-plain stacks). No room, or nothing the station can
      * supply, stops staging; the craft then reports missing exactly as before, and a copy the craft
      * ends up not using simply stays with the player (the caller logs one debug line).
@@ -419,7 +419,7 @@ public final class CraftExecutor {
                     if (supply >= demand) {
                         continue; // earlier claims plus this cell's are already covered
                     }
-                    if (!roomForOne(inventory, item)) {
+                    if (!hasEmptyMainSlot(inventory)) {
                         return staged; // no room for a whole staged stack: stop, never drop it
                     }
                     if (extractOneInto(player, station, ingredient, item, noneLeft)) {
@@ -441,7 +441,7 @@ public final class CraftExecutor {
                 if (noneLeft.contains(item)) {
                     continue;
                 }
-                if (!roomForOne(inventory, item)) {
+                if (!hasEmptyMainSlot(inventory)) {
                     return staged;
                 }
                 if (extractOneInto(player, station, missing, item, noneLeft)) {
@@ -499,12 +499,17 @@ public final class CraftExecutor {
     }
 
     /**
-     * Whether the main inventory has an empty slot for a staged copy (issue #49). A plain-stack room
+     * Whether one of the 36 main slots is empty, for a staged copy (issue #49). A plain-stack room
      * read would count merges into plain stacks of the item, which a protected copy (different tag or
      * components) cannot join, and the copy would then drop at the feet.
      */
-    private static boolean roomForOne(Inventory inventory, Item item) {
-        return inventory.getFreeSlot() >= 0;
+    private static boolean hasEmptyMainSlot(Inventory inventory) {
+        for (int i = 0; i < Inventory.INVENTORY_SIZE; i++) {
+            if (inventory.getItem(i).isEmpty()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** One debug line for staged copies (issue #49) the craft ended up not using: they stay with the player. */
@@ -2157,7 +2162,7 @@ public final class CraftExecutor {
      */
     private static Component describeMissing(ServerPlayer player, Plan plan) {
         Component what = describe(plan.assignment().missing());
-        if (!plan.allowProtected() || plan.station() == null || player.getInventory().getFreeSlot() >= 0) {
+        if (!plan.allowProtected() || plan.station() == null || hasEmptyMainSlot(player.getInventory())) {
             return what;
         }
         try {
