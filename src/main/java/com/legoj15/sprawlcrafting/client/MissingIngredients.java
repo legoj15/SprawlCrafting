@@ -74,8 +74,15 @@ public final class MissingIngredients {
             return ShortfallView.unavailable();
         }
         // With a crafting station open (AE2 Crafting Terminal) its storage counts as already gathered.
+        // Protected stacks (enchanted/renamed, #40) count whenever the server can honour a protected
+        // start: a confirmed craft consumes them, so the list must not ask for what is held (#48).
+        boolean includeProtected = mc.getConnection() != null
+                && com.legoj15.sprawlcrafting.platform.Services.PLATFORM.canSendToServer(
+                        mc.getConnection().getConnection(),
+                        com.legoj15.sprawlcrafting.network.StartProtectedCraftPayload.ID);
         return CraftPlanner.session(mc.level.getRecipeManager(), mc.level.registryAccess(),
-                mc.player.getInventory(), grid, DeferredCraftableCache.stationCounts()).shortfall(holder);
+                mc.player.getInventory(), grid, DeferredCraftableCache.stationCounts(), includeProtected)
+                .shortfall(holder);
     }
 
     public static void reset() {

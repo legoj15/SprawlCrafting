@@ -80,6 +80,15 @@ public final class ClientPlanCache {
     }
 
     /**
+     * The session a gather list is solved over: the protected twin while the offer is on, else the
+     * plain one. A confirmed craft consumes those stacks, so the list must not ask for them (#48).
+     */
+    public static CraftPlanner.Session gatherSession(EntityPlayer player, GridContext grid) {
+        CraftPlanner.Session withProtected = protectedSession(player, grid);
+        return withProtected != null ? withProtected : session;
+    }
+
+    /**
      * Direct vs deferred vs unsolvable over the plain pool, widened by the protected tier
      * (issue #40): a recipe the plain session cannot make but the protected one can reports
      * {@link CraftPlanner.Craftability#DEFERRED} — never direct, since vanilla's own placement

@@ -142,19 +142,6 @@ public final class CraftPlanner {
     }
 
     /**
-     * The raw materials the player still needs to make {@code target}; an open station's storage counts
-     * as material already gathered. Returns {@link ShortfallView#unavailable()} for unplannable recipes.
-     */
-    public static ShortfallView shortfall(ServerPlayerEntity player, IRecipe<?> target, GridContext grid) {
-        if (McRecipe.of(target) == null) {
-            return ShortfallView.unavailable();
-        }
-        StationStorage station = StationStorages.open(player);
-        return session(player.getServer().getRecipeManager(), player.inventory, grid,
-                station == null ? Collections.<Item, Long>emptyMap() : station.counts()).shortfall(target);
-    }
-
-    /**
      * Snapshots the inventory and indexes all grid-fitting crafting recipes once, so many queries (the
      * client's recipe book pass) share the expensive setup. A session is a point-in-time view: discard
      * it when the inventory or recipes change. The producer index (which only changes on datapack

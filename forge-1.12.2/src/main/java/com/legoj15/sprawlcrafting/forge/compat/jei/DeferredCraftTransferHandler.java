@@ -114,7 +114,7 @@ public class DeferredCraftTransferHandler<C extends Container> implements IRecip
                     // asking the engine for a craft it would only reject with a chat error.
                     // Gated live: a click landing after the needs helper was toggled off no-ops.
                     if (SprawlConfig.needsSystem && SprawlConfig.jeiIntegration) {
-                        PendingGatherScreen.open(session.shortfall(recipe));
+                        PendingGatherScreen.open(ClientPlanCache.gatherSession(player, grid).shortfall(recipe));
                     }
                     return null;
                 }
@@ -190,8 +190,10 @@ public class DeferredCraftTransferHandler<C extends Container> implements IRecip
                         I18n.format("jei.tooltip.error.recipe.transfer.missing"));
             }
             JeiTintState.put(recipeLayout, JeiTintState.Tint.GATHER);
-            return new MissingResourcesError(session.shortfall(recipe),
-                    missingSlots(recipeLayout, player, session));
+            // List and red slots over the same pool (#48): protected stacks count while the tier is on.
+            CraftPlanner.Session gather = ClientPlanCache.gatherSession(player, grid);
+            return new MissingResourcesError(gather.shortfall(recipe),
+                    missingSlots(recipeLayout, player, gather, ServerPresence.protectedCraft()));
         }
         if (session.canDeferCraft(result)) { // plain only: see the click path (#40)
             JeiTintState.put(recipeLayout, JeiTintState.Tint.DEFERRED);
@@ -204,7 +206,7 @@ public class DeferredCraftTransferHandler<C extends Container> implements IRecip
         }
         JeiTintState.put(recipeLayout, JeiTintState.Tint.GATHER);
         return new MissingResourcesError(session.shortfallByResult(result),
-                missingSlots(recipeLayout, player, session));
+                missingSlots(recipeLayout, player, session, false));
     }
 
     /**
@@ -269,21 +271,23 @@ public class DeferredCraftTransferHandler<C extends Container> implements IRecip
      * raw-materials list already tells that story. If every out-of-stock slot is individually
      * craftable yet the recipe still failed (chains competing for the same raws), fall back to
      * stock JEI's semantics — highlight everything out of stock — rather than highlighting nothing.
+     * {@code includeProtected} counts the 36 main slots' protected stacks (#40), as the planner's
+     * protected pool does; pass it with that pool's session so slots and gather list agree (#48).
      */
     private List<Integer> missingSlots(IRecipeLayout recipeLayout, EntityPlayer player,
-                                       CraftPlanner.Session session) {
+                                       CraftPlanner.Session session, boolean includeProtected) {
         Map<Integer, ? extends IGuiIngredient<ItemStack>> guiIngredients =
                 recipeLayout.getItemStacks().getGuiIngredients();
         Map<ItemKey, Integer> pool = new HashMap<ItemKey, Integer>();
         for (int i = 0; i < 36; i++) {
-            accumulate(pool, player.inventory.mainInventory.get(i));
+            accumulate(pool, player.inventory.mainInventory.get(i), includeProtected);
         }
         for (Slot slot : ExternalSlots.materialSlots(player)) {
-            accumulate(pool, slot.getStack());
+            accumulate(pool, slot.getStack(), false);
         }
         // An open AE2 Crafting Terminal's network is part of the solver's pool, so it is part of this one.
         for (ItemStack stack : NetworkTerminals.stacks(player)) {
-            accumulate(pool, stack);
+            accumulate(pool, stack, false);
         }
         List<Integer> outOfStock = new ArrayList<Integer>();
         List<Integer> unobtainable = new ArrayList<Integer>();
@@ -327,8 +331,8 @@ public class DeferredCraftTransferHandler<C extends Container> implements IRecip
         return unobtainable.isEmpty() ? outOfStock : unobtainable;
     }
 
-    private static void accumulate(Map<ItemKey, Integer> pool, ItemStack stack) {
-        if (stack.isEmpty() || !CraftExecutor.usableAsIngredient(stack)) {
+    private static void accumulate(Map<ItemKey, Integer> pool, ItemStack stack, boolean includeProtected) {
+        if (stack.isEmpty() || !CraftExecutor.usableAsIngredient(stack, includeProtected)) {
             return;
         }
         ItemKey key = ItemKey.of(stack);

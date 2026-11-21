@@ -101,7 +101,8 @@ public class GuiRecipeBookMixin {
                 }
                 if (craftability == CraftPlanner.Craftability.UNSOLVABLE && SprawlConfig.needsSystem) {
                     DeferredClickState.disarm();
-                    ShortfallView shortfall = CraftPlanner.shortfall(player, recipe);
+                    ShortfallView shortfall = CraftPlanner.shortfall(player, recipe,
+                            ServerPresence.protectedCraft());
                     Minecraft mc = Minecraft.getMinecraft();
                     mc.displayGuiScreen(new GuiMissingResources(shortfall, mc.currentScreen));
                     return;

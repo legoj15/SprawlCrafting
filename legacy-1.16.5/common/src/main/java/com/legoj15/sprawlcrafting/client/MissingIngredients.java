@@ -3,6 +3,7 @@ package com.legoj15.sprawlcrafting.client;
 import com.legoj15.sprawlcrafting.craft.CraftPlanner;
 import com.legoj15.sprawlcrafting.craft.GridContext;
 import com.legoj15.sprawlcrafting.craft.ShortfallView;
+import com.legoj15.sprawlcrafting.platform.Services;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.item.Item;
@@ -30,8 +31,11 @@ public final class MissingIngredients {
             return ShortfallView.unavailable();
         }
         // With a crafting station open (AE2 Crafting Terminal) its storage counts as already gathered.
+        // Protected stacks (enchanted/renamed, #40) count whenever the server can honour a protected
+        // start: a confirmed craft consumes them, so the list must not ask for what is held (#48).
         return CraftPlanner.session(mc.level.getRecipeManager(), mc.player.inventory, grid,
-                DeferredCraftableCache.stationCounts()).shortfall(recipe);
+                DeferredCraftableCache.stationCounts(), Services.PLATFORM.canStartProtectedCraft())
+                .shortfall(recipe);
     }
 
     public static void reset() {

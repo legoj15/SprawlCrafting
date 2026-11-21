@@ -329,9 +329,13 @@ public final class DeferredCraftSync {
     // grid the way the preview handler does) and stream it back, echoing the request token.
     private static void sendShortfall(ServerPlayer player, int token,
                                       net.minecraft.world.item.crafting.RecipeHolder<?> holder) {
+        // Protected stacks (#40) count for a client that takes the protected-only push (the same gate):
+        // it can confirm a protected craft, so the list must not ask for what that craft uses (#48).
+        boolean includeProtected = Services.PLATFORM.canReceive(player,
+                com.legoj15.sprawlcrafting.network.ProtectedCraftableSyncPayload.TYPE.id());
         ShortfallView view = holder == null
                 ? ShortfallView.unavailable()
-                : CraftPlanner.shortfall(player, holder, GridContext.CRAFTING_TABLE);
+                : CraftPlanner.shortfall(player, holder, GridContext.CRAFTING_TABLE, includeProtected);
         // Wire versioning: a client that registered the V2 channel gets long counts + the saturated
         // flag; a mod-1.0.3 client only knows the original payload, whose ItemDemand codec clamps each
         // count to Integer.MAX_VALUE; a modless client gets nothing.

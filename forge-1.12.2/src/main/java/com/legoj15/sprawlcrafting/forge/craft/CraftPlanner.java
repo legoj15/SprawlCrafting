@@ -144,9 +144,11 @@ public final class CraftPlanner {
     /**
      * The raw materials the player still needs to make {@code recipe} (see {@link Session#shortfall}).
      * Informational, so it always costs the full 3x3 chain regardless of the request grid.
+     * {@code includeProtected} counts the player's protected stacks (#40) when the server can honour
+     * a protected start, so the list never asks for what a confirmed craft would consume (#48).
      */
-    public static ShortfallView shortfall(EntityPlayer player, IRecipe recipe) {
-        return session(player, GridContext.CRAFTING_TABLE).shortfall(recipe);
+    public static ShortfallView shortfall(EntityPlayer player, IRecipe recipe, boolean includeProtected) {
+        return session(player, GridContext.CRAFTING_TABLE, includeProtected).shortfall(recipe);
     }
 
     public static Session session(EntityPlayer player, GridContext grid) {
