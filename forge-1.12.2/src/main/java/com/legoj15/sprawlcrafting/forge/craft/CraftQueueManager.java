@@ -108,26 +108,6 @@ public final class CraftQueueManager {
         if (job == null || !job.tick()) {
             return;
         }
-        // 3x3 steps only run with full-grid access (a vanilla table in reach, or a 3x3 crafter open). The
-        // full check runs when due (every half second, which is every craft of a paced step); a bulk step
-        // bursts every tick in between, so those ticks re-validate just what the last check found (cheap)
-        // and pause the moment it is gone, instead of crafting on for up to half a second after the
-        // player left.
-        if (job.currentStep().needsFullGrid()) {
-            if (job.reachCheckDue()) {
-                BlockPos table = CraftingTableReach.findInReach(player);
-                if (table == null && !hasOpenCrafter(player)) {
-                    job.holdForRetry();
-                    sync(player, job, pausedState(job), ItemStack.EMPTY);
-                    return;
-                }
-                job.markReachChecked(table);
-            } else if (!CraftingTableReach.isStillInReach(player, job.reachTable()) && !hasOpenCrafter(player)) {
-                job.holdForRetry();
-                sync(player, job, pausedState(job), ItemStack.EMPTY);
-                return;
-            }
-        }
         if (!job.isBulkStep()) {
             // One craft per due tick, whatever the clock says: it never draws on the shared burst budget.
             craftBurst(player, job, false, 0L);
@@ -148,6 +128,37 @@ public final class CraftQueueManager {
         } finally {
             BURSTS.charge(System.nanoTime() - start);
         }
+    }
+
+    /**
+     * The full-grid gate: when the current step needs a 3x3 grid and none is available, holds the
+     * job, reports it paused and returns true. It runs per burst, not per tick: an interleaved job's
+     * schedule moves between steps from batch to batch, so a burst that began on a 2x2 step can reach
+     * a 3x3 one, which must pass this gate too.
+     */
+    private static boolean fullGridBlocked(EntityPlayerMP player, CraftJob job) {
+        // 3x3 steps only run with full-grid access (a vanilla table in reach, or a 3x3 crafter open). The
+        // full check runs when due (every half second, which is every craft of a paced step); a bulk step
+        // bursts every tick in between, so those ticks re-validate just what the last check found (cheap)
+        // and pause the moment it is gone, instead of crafting on for up to half a second after the
+        // player left.
+        if (!job.currentStep().needsFullGrid()) {
+            return false;
+        }
+        if (job.reachCheckDue()) {
+            BlockPos table = CraftingTableReach.findInReach(player);
+            if (table == null && !hasOpenCrafter(player)) {
+                job.holdForRetry();
+                sync(player, job, pausedState(job), ItemStack.EMPTY);
+                return true;
+            }
+            job.markReachChecked(table);
+        } else if (!CraftingTableReach.isStillInReach(player, job.reachTable()) && !hasOpenCrafter(player)) {
+            job.holdForRetry();
+            sync(player, job, pausedState(job), ItemStack.EMPTY);
+            return true;
+        }
+        return false;
     }
 
     /** Active jobs that burst this tick and so split its budget (see {@link CraftJob#burstsThisTick()}). */
@@ -172,7 +183,17 @@ public final class CraftQueueManager {
      */
     private static void craftBurst(EntityPlayerMP player, CraftJob job, boolean bulk, long deadline) {
         ItemStack lastCrafted = ItemStack.EMPTY;
+        boolean gridChecked = false;
         while (true) {
+            // The full-grid gate, once per burst: the first time the burst reaches a step that needs a
+            // 3x3 grid (the world does not change between batches of one tick, so one pass covers the
+            // rest of the burst).
+            if (!gridChecked && job.currentStep().needsFullGrid()) {
+                if (fullGridBlocked(player, job)) {
+                    return;
+                }
+                gridChecked = true;
+            }
             // Final-step hand-off: if the very last craft is due and the player is looking at a
             // compatible grid, lay its ingredients there instead — a real, takeable vanilla craft —
             // and finish the job optimistically (grabbing is its own confirmation). Any doubt falls

@@ -100,29 +100,6 @@ public final class CraftQueueManager {
         if (job == null || !job.tick()) {
             return;
         }
-        // 3×3 steps only run with a crafting table in reach. The full scan runs when due (every half
-        // second, which is every craft of a paced step); a bulk step bursts every tick in between, so
-        // those ticks re-validate just the table the last scan found (cheap) and pause the moment it
-        // is gone or out of reach, instead of crafting on for up to half a second after the player left.
-        // A usable open crafting station (AE2 Crafting Terminal, which has its own 3×3 grid but is no
-        // recipe-book menu) counts like a table in reach; the check is the open menu's class plus its live
-        // power state, cheap enough for every burst tick, and asked only when the table check fails.
-        if (job.currentStep().needsFullGrid()) {
-            if (job.reachCheckDue()) {
-                BlockPos table = CraftingTableReach.findInReach(player);
-                if (table == null && !StationStorages.hasUsableStation(player)) {
-                    job.holdForRetry();
-                    sync(player, job, pausedState(job), ItemStack.EMPTY);
-                    return;
-                }
-                job.markReachChecked(table);
-            } else if (!CraftingTableReach.isStillInReach(player, job.reachTable())
-                    && !StationStorages.hasUsableStation(player)) {
-                job.holdForRetry();
-                sync(player, job, pausedState(job), ItemStack.EMPTY);
-                return;
-            }
-        }
         if (!job.isBulkStep()) {
             // One craft per due tick, whatever the clock says: it never draws on the shared burst budget.
             craftBurst(player, job, false, 0L);
@@ -137,6 +114,40 @@ public final class CraftQueueManager {
         } finally {
             BURSTS.charge(System.nanoTime() - start);
         }
+    }
+
+    /**
+     * The full-grid gate: when the current step needs a 3x3 grid and none is available, holds the
+     * job, reports it paused and returns true. It runs per burst, not per tick: an interleaved job's
+     * schedule moves between steps from batch to batch, so a burst that began on a 2x2 step can reach
+     * a 3x3 one, which must pass this gate too.
+     */
+    private static boolean fullGridBlocked(ServerPlayerEntity player, CraftJob job) {
+        // 3×3 steps only run with a crafting table in reach. The full scan runs when due (every half
+        // second, which is every craft of a paced step); a bulk step bursts every tick in between, so
+        // those ticks re-validate just the table the last scan found (cheap) and pause the moment it
+        // is gone or out of reach, instead of crafting on for up to half a second after the player left.
+        // A usable open crafting station (AE2 Crafting Terminal, which has its own 3×3 grid but is no
+        // recipe-book menu) counts like a table in reach; the check is the open menu's class plus its live
+        // power state, cheap enough for every burst tick, and asked only when the table check fails.
+        if (!job.currentStep().needsFullGrid()) {
+            return false;
+        }
+        if (job.reachCheckDue()) {
+            BlockPos table = CraftingTableReach.findInReach(player);
+            if (table == null && !StationStorages.hasUsableStation(player)) {
+                job.holdForRetry();
+                sync(player, job, pausedState(job), ItemStack.EMPTY);
+                return true;
+            }
+            job.markReachChecked(table);
+        } else if (!CraftingTableReach.isStillInReach(player, job.reachTable())
+                && !StationStorages.hasUsableStation(player)) {
+            job.holdForRetry();
+            sync(player, job, pausedState(job), ItemStack.EMPTY);
+            return true;
+        }
+        return false;
     }
 
     /** Active jobs that burst this tick and so split its budget (see {@link CraftJob#burstsThisTick()}). */
@@ -163,8 +174,18 @@ public final class CraftQueueManager {
      */
     private static void craftBurst(ServerPlayerEntity player, CraftJob job, boolean bulk, long deadline) {
         ItemStack lastCrafted = ItemStack.EMPTY;
+        boolean gridChecked = false;
         bursts:
         while (true) {
+            // The full-grid gate, once per burst: the first time the burst reaches a step that needs a
+            // 3x3 grid (the world does not change between batches of one tick, so one pass covers the
+            // rest of the burst).
+            if (!gridChecked && job.currentStep().needsFullGrid()) {
+                if (fullGridBlocked(player, job)) {
+                    return;
+                }
+                gridChecked = true;
+            }
             // Final craft due with a compatible crafting grid open: lay the recipe out in that grid for
             // the player to grab (a real vanilla craft) instead of auto-crafting it.
             if (job.isFinalStep() && job.isLastCraftOfStep() && canHandOff(player, job.currentStep())) {
