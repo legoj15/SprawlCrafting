@@ -1,5 +1,6 @@
 package com.legoj15.sprawlcrafting.craft;
 
+import java.util.Map;
 import java.util.stream.Collectors;
 
 import com.legoj15.sprawlcrafting.craft.CraftPlanner.PlanOutcome;
@@ -8,6 +9,7 @@ import net.minecraft.ChatFormatting;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.item.Item;
 import net.minecraft.world.item.crafting.RecipeHolder;
 import net.minecraft.world.level.GameRules;
 
@@ -30,6 +32,17 @@ public final class CraftRequests {
     }
 
     public static StartOutcome tryStart(ServerPlayer player, RecipeHolder<?> holder) {
+        return tryStart(player, holder, false);
+    }
+
+    /**
+     * {@link #tryStart(ServerPlayer, RecipeHolder)} with the protected tier (issue #40):
+     * {@code allowProtected} is the confirmed request from the protected channel, whose plan may also
+     * count the player's protected stacks (enchanted and/or renamed, never damaged) once the plain
+     * pool — inventory, then an open station's storage — has fallen short. A request that still fails
+     * gets the normal rejection: the message says what is missing, not which tier ran out.
+     */
+    public static StartOutcome tryStart(ServerPlayer player, RecipeHolder<?> holder, boolean allowProtected) {
         if (CraftQueueManager.activeJob(player.getUUID()).isPresent()) {
             return new StartOutcome.Busy();
         }
@@ -45,12 +58,32 @@ public final class CraftRequests {
         // station-dependent. The station's counts are a storage scan, so they are taken only then.
         PlanOutcome outcome = CraftPlanner.plan(player, holder, grid);
         boolean stationDependent = false;
+        StationStorage station = null;
+        Map<Item, Long> stationCounts = null;
         if (outcome instanceof PlanOutcome.Unsolvable || outcome instanceof PlanOutcome.TooComplex) {
-            StationStorage station = StationStorages.open(player);
+            station = StationStorages.open(player);
             if (station != null) {
                 // Even when still unsolvable, report this outcome: its shortfall already counts the network.
-                outcome = CraftPlanner.plan(player, holder, grid, station.counts());
+                stationCounts = station.counts();
+                outcome = CraftPlanner.plan(player, holder, grid, stationCounts);
                 stationDependent = outcome instanceof PlanOutcome.Planned;
+            }
+        }
+        if ((outcome instanceof PlanOutcome.Unsolvable || outcome instanceof PlanOutcome.TooComplex)
+                && allowProtected && CraftPlanner.hasProtected(player.getInventory())) {
+            // The confirmed fallback (#40): count the protected stacks of the 36 main slots too, in the
+            // same order as the plain passes — the inventory alone first, so a job it covers never
+            // depends on the station, then with an open station's counts, which makes the job
+            // station-dependent (it pauses, not cancels, when the station goes away).
+            PlanOutcome withProtected = CraftPlanner.plan(player, holder, grid, Map.<Item, Long>of(), true);
+            stationDependent = false;
+            if (!(withProtected instanceof PlanOutcome.Planned) && station != null) {
+                withProtected = CraftPlanner.plan(player, holder, grid, stationCounts, true);
+                stationDependent = withProtected instanceof PlanOutcome.Planned;
+            }
+            if (withProtected instanceof PlanOutcome.Planned planned) {
+                planned.job().setUsesProtected(true);
+                outcome = withProtected;
             }
         }
         if (outcome instanceof PlanOutcome.Planned planned) {
@@ -64,8 +97,10 @@ public final class CraftRequests {
     /**
      * Packet-path handler: resolves the recipe, applies vanilla-parity guards
      * (spectator, doLimitedCrafting), starts the job, and reports via chat/action bar.
+     * {@code allowProtected} routes to the confirmed protected tier (issue #40; see
+     * {@link #tryStart(ServerPlayer, RecipeHolder, boolean)}) — the protected start packet's handler.
      */
-    public static void handleStartRequest(ServerPlayer player, ResourceLocation recipeId) {
+    public static void handleStartRequest(ServerPlayer player, ResourceLocation recipeId, boolean allowProtected) {
         if (player.isSpectator()) {
             return;
         }
@@ -93,7 +128,7 @@ public final class CraftRequests {
         }*/
         //?}
         // instanceof chain rather than a pattern-matching switch: the 1.20.1 node targets Java 17.
-        StartOutcome outcome = tryStart(player, holder);
+        StartOutcome outcome = tryStart(player, holder, allowProtected);
         Component feedback;
         if (outcome instanceof StartOutcome.Started started) {
             feedback = Component.translatable("sprawlcrafting.craft.started",
@@ -105,6 +140,11 @@ public final class CraftRequests {
             feedback = Component.translatable("sprawlcrafting.craft.busy").withStyle(ChatFormatting.RED);
         }
         notify(player, feedback);
+    }
+
+    /** {@link #handleStartRequest(ServerPlayer, ResourceLocation, boolean)} for the plain start. */
+    public static void handleStartRequest(ServerPlayer player, ResourceLocation recipeId) {
+        handleStartRequest(player, recipeId, false);
     }
 
     /** Player feedback line. 26.x renamed displayClientMessage -> sendSystemMessage(overlay). */

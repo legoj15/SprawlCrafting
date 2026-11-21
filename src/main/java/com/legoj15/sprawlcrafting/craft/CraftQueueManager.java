@@ -178,7 +178,7 @@ public final class CraftQueueManager {
             if (job.isFinalStep() && job.isLastCraftOfStep() && canHandOff(player, job.currentStep())) {
                 // instanceof chains rather than a pattern-matching switch: the 1.20.1 node targets Java 17.
                 CraftExecutor.FillOutcome fill = CraftExecutor.tryFillFinalGrid(player, job.currentStep().recipeId(),
-                        job.produced(), job.currentCraftLayout());
+                        job.produced(), job.currentCraftLayout(), job.usesProtected());
                 if (fill instanceof CraftExecutor.FillOutcome.Filled filled) {
                     job.onCraftPerformed();
                     ACTIVE.remove(player.getUUID());
@@ -199,7 +199,8 @@ public final class CraftQueueManager {
             CraftExecutor.CraftResult craft = bulk
                     ? craftBulk(player, job)
                     : CraftExecutor.craftOnce(player, job.currentStep().recipeId(),
-                            job.produced(), job.stationDependent(), job.currentCraftLayout(), false);
+                            job.produced(), job.stationDependent(), job.currentCraftLayout(), false,
+                            job.usesProtected());
             if (craft instanceof CraftExecutor.CraftResult.Success success) {
                 if (success.usedStation()) {
                     // From now on this job needs the station (a job that started from its inventory alone
@@ -291,10 +292,12 @@ public final class CraftQueueManager {
         maxCrafts = Math.min(maxCrafts, job.craftsLeftInLayoutRun());
         if (maxCrafts <= 1) {
             return CraftExecutor.craftOnce(player, job.currentStep().recipeId(),
-                    job.produced(), job.stationDependent(), job.currentCraftLayout(), true);
+                    job.produced(), job.stationDependent(), job.currentCraftLayout(), true,
+                    job.usesProtected());
         }
         return CraftExecutor.craftBatch(player, job.currentStep().recipeId(),
-                job.produced(), job.stationDependent(), job.currentCraftLayout(), maxCrafts, true);
+                job.produced(), job.stationDependent(), job.currentCraftLayout(), maxCrafts, true,
+                job.usesProtected());
     }
 
     /**

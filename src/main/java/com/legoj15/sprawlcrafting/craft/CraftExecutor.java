@@ -46,7 +46,11 @@ import net.minecraft.world.item.crafting.RecipeHolder;
  *   <li>Damaged, enchanted, or renamed stacks are never consumed, matching what the
  *       vanilla recipe book refuses to auto-fill ({@code StackedContents.accountSimpleStack}),
  *       except up to what the job's {@link ProducedLedger} says it produced itself: some mods
- *       enchant an item on its first inventory tick, after the job inserted it.</li>
+ *       enchant an item on its first inventory tick, after the job inserted it — and, only for a job
+ *       planned with them after the player confirmed (issue #40), the protected stacks
+ *       {@link #isProtected} describes: per cell, a protected copy of the plan's item comes after
+ *       its plain copies (inventory, then station) but before any alternative item, which a later
+ *       cell may need alone.</li>
  * </ul>
  */
 public final class CraftExecutor {
@@ -105,14 +109,21 @@ public final class CraftExecutor {
      * station's storage; see {@link #spilledOutput}) is refused as a {@link CraftResult.NoRoom} before
      * anything moves, instead of dropping the overflow at the player's feet thousands of times per
      * tick. A paced step passes false: a few items at the feet is fine and expected there.
+     *
+     * <p>{@code allowProtected} is the job's {@code CraftJob#usesProtected()} flag: a job planned with
+     * the player's protected stacks (issue #40) may also pick those — per cell, after the plan's item
+     * as a plain inventory or station copy, but before any alternative item (see {@link #assignPass});
+     * with a station open it is pooled from the start, so the station's plain stock is drawn before
+     * the player's protected copies. Every other job keeps the plain rule exactly.
      */
     public static CraftResult craftOnce(ServerPlayer player, ResourceLocation recipeId,
                                         ProducedLedger<Item, LedgerVariant> ledger,
-                                        boolean stationPlanned, List<Item> layout, boolean refuseSpill) {
+                                        boolean stationPlanned, List<Item> layout, boolean refuseSpill,
+                                        boolean allowProtected) {
         // Phase 1: look the recipe up and match every ingredient slot to an inventory slot (or a
         // crafting station's storage) without mutating, so a shortfall discovered at slot N leaves
         // slots 1..N-1 untouched.
-        Plan plan = prepare(player, recipeId, ledger, stationPlanned, layout);
+        Plan plan = prepare(player, recipeId, ledger, stationPlanned, layout, allowProtected);
         if (plan == null) {
             return new CraftResult.RecipeGone();
         }
@@ -212,12 +223,14 @@ public final class CraftExecutor {
      * everything up to (but not including) the first mutation of inventory or station, so both a
      * single craft and a batch start from the very same assignment a {@link #craftOnce} would make
      * right now. {@code layout} is that craft's plan layout (null: none), honoured or fallen back
-     * from exactly as craftOnce would. Returns null when the recipe is gone; otherwise the
-     * assignment's {@code missing} carries the first ingredient nothing could satisfy, if any.
+     * from exactly as craftOnce would. {@code allowProtected} is the job's protected flag, whose
+     * assignment may pick protected stacks (see {@link #craftOnce}). Returns null when the recipe is
+     * gone; otherwise the assignment's {@code missing} carries the first ingredient nothing could
+     * satisfy, if any.
      */
     private static Plan prepare(ServerPlayer player, ResourceLocation recipeId,
                                 ProducedLedger<Item, LedgerVariant> ledger, boolean stationPlanned,
-                                List<Item> layout) {
+                                List<Item> layout, boolean allowProtected) {
         RecipeHolder<?> holder = RecipeIds.byId(player.level().getServer().getRecipeManager(), recipeId).orElse(null);
         if (holder == null || !(holder.value() instanceof CraftingRecipe recipe)) {
             return null;
@@ -236,23 +249,33 @@ public final class CraftExecutor {
         // re-opened for every craft, so a closed or offline station stops being drawn from at once.
         StationStorage station = StationStorages.open(player);
         Assignment assignment = null;
-        if (station == null || !stationPlanned) {
-            assignment = assign(inventory, ingredients, ledger, null, layout);
+        // A protected job (#40) with a station open goes straight to the pooled pass: its per-cell order
+        // (the preferred item from the inventory, then the station, then as a protected copy, before
+        // any alternative) is the rule, while an inventory-only pass would either take a protected copy
+        // ahead of the station's plain one or, kept plain, reject the plan's layout and substitute an
+        // alternative a later step needs.
+        if ((station == null || !stationPlanned) && !(allowProtected && station != null)) {
+            assignment = assign(inventory, ingredients, ledger, null, layout, allowProtected);
             if (assignment.missing() != null && station != null) {
                 assignment = null; // the inventory alone fell short: let the open station supply the rest
             }
         }
         if (assignment == null) {
-            assignment = assign(inventory, ingredients, ledger, station, layout);
+            assignment = assign(inventory, ingredients, ledger, station, layout, allowProtected);
         }
-        return new Plan(recipeId, ledger, stationPlanned, layout, result, ingredients, station, assignment);
+        return new Plan(recipeId, ledger, stationPlanned, layout, result, ingredients, station, assignment,
+                allowProtected);
     }
 
-    /** What {@link #prepare} looked up: the inputs plus the assignment both craft paths start from. */
+    /**
+     * What {@link #prepare} looked up: the inputs plus the assignment both craft paths start from.
+     * {@code allowProtected} is the job's protected flag: its assignment may pick protected stacks
+     * (see {@link #isProtected}).
+     */
     private record Plan(ResourceLocation recipeId, ProducedLedger<Item, LedgerVariant> ledger,
                         boolean stationPlanned, List<Item> layout,
                         ItemStack result, List<Ingredient> ingredients, StationStorage station,
-                        Assignment assignment) {
+                        Assignment assignment, boolean allowProtected) {
     }
 
     /**
@@ -269,11 +292,16 @@ public final class CraftExecutor {
      * the plan already prepared, with exactly craftOnce's result, message and partial progress.
      * That fallback (and the batch's own short-draw fallback into {@link #craftOnce}) applies the
      * {@code refuseSpill} check like a plain bulk-step craftOnce would.
+     *
+     * <p>{@code allowProtected} is the job's {@code CraftJob#usesProtected()} flag (see
+     * {@link #craftOnce}); a protected-planned batch counts, consumes and charges protected stacks like
+     * plain material, so the repetition proof holds for them too.
      */
     public static CraftResult craftBatch(ServerPlayer player, ResourceLocation recipeId,
                                          ProducedLedger<Item, LedgerVariant> ledger, boolean stationPlanned,
-                                         List<Item> layout, int maxCrafts, boolean refuseSpill) {
-        Plan plan = prepare(player, recipeId, ledger, stationPlanned, layout);
+                                         List<Item> layout, int maxCrafts, boolean refuseSpill,
+                                         boolean allowProtected) {
+        Plan plan = prepare(player, recipeId, ledger, stationPlanned, layout, allowProtected);
         if (plan == null) {
             return new CraftResult.RecipeGone();
         }
@@ -291,9 +319,10 @@ public final class CraftExecutor {
      * A batched craft worked out ahead of applying it: {@code crafts} how many crafts it applies (at
      * least 2); {@code use} the per-item consumption of ONE craft (one of every non-blank cell's
      * preferred item); {@code remainders} the per-craft crafting remainders, by item;
-     * {@code usableInventory} the usable counts of the used items in the 36 main slots, read before
-     * anything moved; {@code stationTakes} the station's share of the whole batch (empty when the
-     * inventory covers it all).
+     * {@code usableInventory} the usable counts of the used items in the 36 main slots — protected
+     * stacks included for a protected-planned job, which counted them — read before anything moved;
+     * {@code stationTakes} the station's share of the whole batch (empty when the plain inventory
+     * covers it all).
      */
     private record Batch(int crafts, Map<Item, Long> use, Map<Item, Long> remainders,
                          Map<Item, Long> usableInventory, Map<Item, Integer> stationTakes) {
@@ -383,11 +412,14 @@ public final class CraftExecutor {
         // {@link SlotAssignment#stableRepeats} reads is plain inventory plus station, every pick is
         // plain, and one counted charge of k*m equals k charges of m: {@code chargeTo}'s plain
         // drain is min(k*m, outstanding less keep), exactly the total of k per-craft drains of m
-        // against the same frozen keep. (The lookups above ran before anything was drawn, so a
-        // throwing remainder mod cannot strand items here.)
+        // against the same frozen keep. A protected-planned job's protected stacks are plain
+        // material in exactly that sense ({@link #assignPass} records their picks as plain and
+        // {@link #countRefused} keeps them out of the ledger's refused baseline), so they do not
+        // block batching; damaged stacks always do. (The lookups above ran before anything was
+        // drawn, so a throwing remainder mod cannot strand items here.)
         for (int i = 0; i < Inventory.INVENTORY_SIZE; i++) {
             ItemStack stack = inventory.getItem(i);
-            if (!stack.isEmpty() && !usableAsIngredient(stack)
+            if (!stack.isEmpty() && !usableAsIngredient(stack, plan.allowProtected())
                     && (candidates.contains(stack.getItem()) || acceptedByAny(plan.ingredients(), stack))) {
                 return null;
             }
@@ -402,7 +434,8 @@ public final class CraftExecutor {
             }
             for (int i = 0; i < Inventory.INVENTORY_SIZE; i++) {
                 ItemStack stack = inventory.getItem(i);
-                if (!stack.isEmpty() && stack.getItem() == assignment.preferred()[n] && usableAsIngredient(stack)
+                if (!stack.isEmpty() && stack.getItem() == assignment.preferred()[n]
+                        && usableAsIngredient(stack, plan.allowProtected())
                         && !ingredient.test(stack)) {
                     return null;
                 }
@@ -410,6 +443,7 @@ public final class CraftExecutor {
         }
         long k = SlotAssignment.stableRepeats(slots, item -> count(assignment.stock(), item), use, made, maxCrafts);
         Map<Item, Long> usableInventory = new LinkedHashMap<>();
+        Map<Item, Long> plainInventory = new LinkedHashMap<>();
         for (Map.Entry<Item, Long> entry : use.entrySet()) {
             Item item = entry.getKey();
             long perCraft = entry.getValue();
@@ -417,7 +451,8 @@ public final class CraftExecutor {
             // a non-station-planned job the inventory covers never touches the network. The limit is
             // Integer.MAX_VALUE (StationPool.count's precedent): the int caps below bound k*perCraft
             // anyway, so anything a bigger limit could report is never reachable.
-            long inInventory = usableCount(inventory, item);
+            long inInventory = usableCount(inventory, item, plan.allowProtected());
+            plainInventory.put(item, usableCount(inventory, item, false));
             long available = inInventory;
             if (assignment.stationPooled()) {
                 available += plan.station().available(item, Integer.MAX_VALUE);
@@ -461,23 +496,30 @@ public final class CraftExecutor {
         int crafts = (int) k;
         Map<Item, Integer> stationTakes = new LinkedHashMap<>();
         for (Map.Entry<Item, Long> entry : use.entrySet()) {
-            // Inventory first, exactly as the per-cell order takes: the station covers only what the
-            // inventory cannot supply of the whole batch.
+            // The per-cell order takes: the inventory's plain stacks, then (a pooled station's) plain
+            // stock, then — only a protected-planned job — the inventory's protected copies. So the
+            // station's share is what the plain inventory cannot supply, and protected copies fill only
+            // what is left; the caps above guarantee the pool covers the whole batch either way.
             long need = (long) crafts * entry.getValue();
-            long fromInventory = Math.min(usableInventory.get(entry.getKey()), need);
-            if (need > fromInventory) {
-                stationTakes.put(entry.getKey(), (int) (need - fromInventory));
+            long covered = Math.min(plainInventory.get(entry.getKey()), need);
+            if (assignment.stationPooled() && covered < need) {
+                long fromStation = Math.min(plan.station().available(entry.getKey(), Integer.MAX_VALUE),
+                        need - covered);
+                stationTakes.put(entry.getKey(), (int) fromStation);
             }
         }
         return new Batch(crafts, use, remainders, usableInventory, stationTakes);
     }
 
-    /** How many items the 36 main slots hold in stacks {@link #usableAsIngredient} accepts. */
-    private static long usableCount(Inventory inventory, Item item) {
+    /**
+     * How many items the 36 main slots hold in stacks {@link #usableAsIngredient} accepts — plus, for
+     * a protected-planned job ({@code allowProtected}), its protected stacks, which the plan counted.
+     */
+    private static long usableCount(Inventory inventory, Item item, boolean allowProtected) {
         long count = 0;
         for (int i = 0; i < Inventory.INVENTORY_SIZE; i++) {
             ItemStack stack = inventory.getItem(i);
-            if (!stack.isEmpty() && stack.getItem() == item && usableAsIngredient(stack)) {
+            if (!stack.isEmpty() && stack.getItem() == item && usableAsIngredient(stack, allowProtected)) {
                 count += stack.getCount();
             }
         }
@@ -643,24 +685,34 @@ public final class CraftExecutor {
         Map<Item, Integer> stationTakes = batch.stationTakes();
         if (!stationTakes.isEmpty() && drawFromStation(player, station, stationTakes) != null) {
             return craftOnce(player, plan.recipeId(), plan.ledger(), plan.stationPlanned(), plan.layout(),
-                    refuseSpill);
+                    refuseSpill, plan.allowProtected());
         }
         // Phase 2b: apply. The consumption is the same as k per-craft passes: per item, the batch's
-        // share drains usable stacks in slot order, the order findPreferredSlot walks.
+        // share drains usable stacks in slot order, the order findPreferredSlot walks. A
+        // protected-planned job drains plain stacks of the item first and protected copies second —
+        // the order the assignment's tiers take them — so which copies survive is what that many
+        // single crafts would leave.
         try {
             for (Map.Entry<Item, Long> entry : batch.use().entrySet()) {
+                // The station's share (drawn above) comes off the top; what is left is the inventory's.
+                long need = (long) batch.crafts() * entry.getValue()
+                        - batch.stationTakes().getOrDefault(entry.getKey(), 0);
                 long toConsume = Math.min(batch.usableInventory().get(entry.getKey()),
-                        (long) batch.crafts() * entry.getValue());
-                for (int i = 0; i < Inventory.INVENTORY_SIZE && toConsume > 0; i++) {
-                    ItemStack stack = inventory.getItem(i);
-                    if (stack.isEmpty() || stack.getItem() != entry.getKey() || !usableAsIngredient(stack)) {
-                        continue;
-                    }
-                    int take = (int) Math.min(toConsume, stack.getCount());
-                    stack.shrink(take);
-                    toConsume -= take;
-                    if (stack.isEmpty()) {
-                        inventory.setItem(i, ItemStack.EMPTY);
+                        Math.max(0, need));
+                for (int pass = 0; pass < 2 && toConsume > 0; pass++) {
+                    for (int i = 0; i < Inventory.INVENTORY_SIZE && toConsume > 0; i++) {
+                        ItemStack stack = inventory.getItem(i);
+                        if (stack.isEmpty() || stack.getItem() != entry.getKey()
+                                || usableAsIngredient(stack) != (pass == 0)
+                                || !usableAsIngredient(stack, plan.allowProtected())) {
+                            continue;
+                        }
+                        int take = (int) Math.min(toConsume, stack.getCount());
+                        stack.shrink(take);
+                        toConsume -= take;
+                        if (stack.isEmpty()) {
+                            inventory.setItem(i, ItemStack.EMPTY);
+                        }
                     }
                 }
             }
@@ -681,7 +733,7 @@ public final class CraftExecutor {
         // charge of k*m equals k charges of m (see batchPlan).
         if (plan.ledger() != null) {
             LedgerTally<Item, LedgerVariant> tally = new LedgerTally<>();
-            countRefused(inventory, tally);
+            countRefused(inventory, tally, plan.allowProtected());
             tally.open(plan.ledger());
             for (Map.Entry<Item, Long> entry : batch.use().entrySet()) {
                 tally.picked(entry.getKey(), null, false, (int) ((long) batch.crafts() * entry.getValue()));
@@ -783,7 +835,8 @@ public final class CraftExecutor {
      *
      * <p>Vanilla's placement counts only undamaged, unenchanted, unnamed stacks, so when the
      * recipe needs an intermediate the job crafted that has since been altered (see
-     * {@link ProducedLedger}), the grid is laid out here instead, from the same assignment
+     * {@link ProducedLedger}), or a protected stack the job was planned with ({@code allowProtected},
+     * issue #40), the grid is laid out here instead, from the same assignment
      * {@link #craftOnce} would consume. The same manual layout is the only path for a grid that is
      * not a recipe-book menu (a crafting upgrade: {@link CraftingGrids.Grid#recipeBookPlacement()} is
      * false, there is no {@code handlePlacement}), and a grid that is not on screen
@@ -800,7 +853,8 @@ public final class CraftExecutor {
      * step depends on which alternative it consumes.
      */
     public static FillOutcome tryFillFinalGrid(ServerPlayer player, ResourceLocation recipeId,
-                                               ProducedLedger<Item, LedgerVariant> ledger, List<Item> layout) {
+                                               ProducedLedger<Item, LedgerVariant> ledger, List<Item> layout,
+                                               boolean allowProtected) {
         RecipeHolder<?> holder = RecipeIds.byId(player.level().getServer().getRecipeManager(), recipeId).orElse(null);
         if (holder == null || !(holder.value() instanceof CraftingRecipe recipe)) {
             return new FillOutcome.RecipeGone();
@@ -826,14 +880,21 @@ public final class CraftExecutor {
             return new FillOutcome.Fallback();
         }
         List<Ingredient> cells = gridLayout(recipe, grid.width(), grid.height());
-        boolean needsLedger = cells != null
-                && assign(player.getInventory(), cells, null, null, layout).missing() != null
-                && assign(player.getInventory(), cells, ledger, null, layout).missing() == null;
-        if (needsLedger || !grid.recipeBookPlacement()) {
+        boolean plainFallsShort = cells != null
+                && assign(player.getInventory(), cells, null, null, layout, false).missing() != null;
+        boolean needsLedger = plainFallsShort
+                && assign(player.getInventory(), cells, ledger, null, layout, false).missing() == null;
+        // A protected stack vanilla's placement would refuse is just as much ours to lay out as the
+        // ledger's altered intermediates; plain stacks alone still hand the grid to vanilla. The
+        // ledger stays in this probe so a craft needing one admitted stack AND one protected stack
+        // is caught too.
+        boolean needsProtected = plainFallsShort && allowProtected
+                && assign(player.getInventory(), cells, ledger, null, layout, true).missing() == null;
+        if (needsLedger || needsProtected || !grid.recipeBookPlacement()) {
             // No handlePlacement outside a recipe-book menu, so the layout is ours; a recipe that does
             // not fit the grid has nothing to lay out there (vanilla's own no-op falls through below).
             return cells == null ? new FillOutcome.Fallback()
-                    : placeFromLedger(player, menu, grid, cells, expected, ledger, layout);
+                    : placeFromLedger(player, menu, grid, cells, expected, ledger, layout, allowProtected);
         }
         //? if >=1.21.11 {
         /*if (!(menu instanceof net.minecraft.world.inventory.AbstractCraftingMenu craftingMenu)) {
@@ -949,13 +1010,15 @@ public final class CraftExecutor {
      * visible, never voided or duplicated.
      *
      * <p>{@code layout} is the plan's per-slot item choice for this craft (null: none); see
-     * {@link #tryFillFinalGrid}.
+     * {@link #tryFillFinalGrid}. {@code allowProtected} is the job's protected flag: its assignment may
+     * pick protected stacks, in {@link #assign}'s tier order as always.
      */
     private static FillOutcome placeFromLedger(ServerPlayer player,
                                                net.minecraft.world.inventory.AbstractContainerMenu menu,
                                                CraftingGrids.Grid grid,
                                                List<Ingredient> cells, ItemStack expected,
-                                               ProducedLedger<Item, LedgerVariant> ledger, List<Item> layout) {
+                                               ProducedLedger<Item, LedgerVariant> ledger, List<Item> layout,
+                                               boolean allowProtected) {
         if (!returnGridToInventory(player, menu, grid)) {
             return new FillOutcome.Fallback();
         }
@@ -964,11 +1027,14 @@ public final class CraftExecutor {
         List<Slot> inputs = grid.inputs();
         Inventory inventory = player.getInventory();
         // Phase 1: match every cell to an inventory slot without mutating; an open station joins the
-        // pool only for what the inventory lacks, exactly as craftOnce assigns a non-station-planned job.
+        // pool only for what the inventory lacks, exactly as craftOnce assigns a non-station-planned job
+        // (and, as there, a protected job with a station open uses the pooled pass straight away, #40).
         StationStorage station = StationStorages.open(player);
-        Assignment assignment = assign(inventory, cells, ledger, null, layout);
-        if (assignment.missing() != null && station != null) {
-            assignment = assign(inventory, cells, ledger, station, layout);
+        Assignment assignment = allowProtected && station != null
+                ? assign(inventory, cells, ledger, station, layout, true)
+                : assign(inventory, cells, ledger, null, layout, allowProtected);
+        if (assignment.missing() != null && station != null && !allowProtected) {
+            assignment = assign(inventory, cells, ledger, station, layout, allowProtected);
         }
         if (assignment.missing() != null) {
             return new FillOutcome.Fallback();
@@ -1174,12 +1240,43 @@ public final class CraftExecutor {
         return true;
     }
 
-    /** Vanilla recipe-book parity: never consume damaged, enchanted, or renamed stacks. */
+    /**
+     * Vanilla recipe-book parity: a plain stack (not damaged, enchanted, or renamed). Enchanted or
+     * renamed stacks are still consumed by a job the player confirmed for them (issue #40; see
+     * {@link #usableAsIngredient(ItemStack, boolean)}); damaged stacks never are, beyond the ledger.
+     */
     public static boolean usableAsIngredient(ItemStack stack) {
         //? if >=1.20.5 {
         return !stack.isDamaged() && !stack.isEnchanted() && !stack.has(DataComponents.CUSTOM_NAME);
         //?} else {
         /*return !stack.isDamaged() && !stack.isEnchanted() && !stack.hasCustomHoverName(); // pre-components NBT name*/
+        //?}
+    }
+
+    /**
+     * {@link #usableAsIngredient} widened by the job's protected tier (issue #40): with
+     * {@code allowProtected} (a job planned with protected stacks, after the player confirmed), a
+     * {@link #isProtected} stack counts as material too — the plan already counted it, so every
+     * executor count and pick the plan relies on must accept it as well, or the executor would
+     * disagree with the plan and stall. Damaged stacks are never material either way.
+     */
+    public static boolean usableAsIngredient(ItemStack stack, boolean allowProtected) {
+        return usableAsIngredient(stack) || (allowProtected && isProtected(stack));
+    }
+
+    /**
+     * A protected stack (issue #40): not damaged, but enchanted and/or renamed. Some mods only ever
+     * hand out such copies of an intermediate (enchanted + renamed, Unbreakable, never damaged), so
+     * recipes needing it can be planned at all only by counting them — which is why they are a
+     * separate, player-confirmed tier and not plain material: a plain stack of the same item always
+     * wins, both at planning and at every pick. Damaged stacks are never protected.
+     */
+    public static boolean isProtected(ItemStack stack) {
+        //? if >=1.20.5 {
+        return !stack.isEmpty() && !stack.isDamaged() && (stack.isEnchanted()
+                || stack.has(DataComponents.CUSTOM_NAME));
+        //?} else {
+        /*return !stack.isEmpty() && !stack.isDamaged() && (stack.isEnchanted() || stack.hasCustomHoverName());*/
         //?}
     }
 
@@ -1206,13 +1303,18 @@ public final class CraftExecutor {
      *       different item than the plan chose could starve a later step the plan counted on);</li>
      *   <li>(with a ledger, #26 pass only) a refused inventory copy of the preferred item the tally
      *       admits: the job's altered intermediate, which the plan's counts include;</li>
+     *   <li>(with {@code allowProtected} only, #40) a protected inventory copy of the preferred item:
+     *       still before any alternative item, which a later cell may need alone;</li>
      *   <li>any usable inventory match;</li>
      *   <li>any of the ingredient's items from the station;</li>
+     *   <li>(with {@code allowProtected} only) any protected inventory stack the ingredient accepts;</li>
      *   <li>(with a ledger) a refused inventory stack the tally admits, the last resort as before.</li>
      * </ol>
      * Station cells are marked {@link #STATION_CELL} and summed per item in
      * {@link Assignment#stationTakes}; they count as plain picks in the tally (a station only holds
-     * plain items), which can only draw the ledger down, never admit more.
+     * plain items), which can only draw the ledger down, never admit more. A protected pick counts
+     * as plain in the tally too: the plan counted the stack like material, and charging it against
+     * the job's produced count would refuse the altered intermediates the job really did make.
      *
      * <p>{@code layout} is the plan's per-slot item choice for this craft, one entry per non-empty
      * cell in cell order (null or a mismatch: decide with {@link SlotAssignment}); see
@@ -1220,19 +1322,20 @@ public final class CraftExecutor {
      */
     private static Assignment assignPass(Inventory inventory, List<Ingredient> ingredients,
                                          ProducedLedger<Item, LedgerVariant> ledger, StationStorage station,
-                                         List<Item> layout, boolean admittedPreference) {
+                                         List<Item> layout, boolean admittedPreference,
+                                         boolean allowProtected) {
         int[] slots = new int[ingredients.size()];
         Item[] stationItems = new Item[ingredients.size()];
         int[] reserved = new int[Inventory.INVENTORY_SIZE];
         LedgerTally<Item, LedgerVariant> tally = new LedgerTally<>();
         if (ledger != null) {
-            countRefused(inventory, tally);
+            countRefused(inventory, tally, allowProtected);
             tally.open(ledger);
         }
         StationPool pool = station == null ? null : new StationPool(station);
         Map<Item, Integer> stock = new HashMap<>();
         Item[] preferred = preferredItems(inventory, ingredients, pool, stock, layout,
-                ledger != null && admittedPreference ? tally : null);
+                ledger != null && admittedPreference ? tally : null, allowProtected);
         // Whether every non-blank cell took its preferred item straight from an inventory stack or the
         // station pool (no fallback): only then is one assignment provably k crafts' worth of picks.
         boolean preferredFilled = true;
@@ -1252,11 +1355,11 @@ public final class CraftExecutor {
                 }
                 if (slot < 0) {
                     // Everything findMatchingSlot tries past the preferred item (a ledger-admitted
-                    // altered copy of it, any usable stack, a refused stack the tally admits)
-                    // depends on more than the shared slot rule; they rule out batching.
+                    // altered copy of it, any usable stack, a protected stack, a refused stack the
+                    // tally admits) depends on more than the shared slot rule; they rule out batching.
                     preferredFilled = false;
                     slot = findMatchingSlot(inventory, ingredient, preferred[n], reserved,
-                            ledger == null ? null : tally, admittedPreference);
+                            ledger == null ? null : tally, admittedPreference, allowProtected);
                 }
             } else {
                 slot = preferred[n] == null ? -1 : findPreferredSlot(inventory, ingredient, preferred[n], reserved);
@@ -1267,19 +1370,42 @@ public final class CraftExecutor {
                         && admittedPreference) {
                     // The station's plain copy of the preferred item came first; the job's altered
                     // copy of it still beats an alternative item, which a later cell may need alone.
-                    slot = findRefusedPreferredSlot(inventory, ingredient, preferred[n], reserved, tally);
+                    slot = findRefusedPreferredSlot(inventory, ingredient, preferred[n], reserved, tally,
+                            allowProtected);
+                }
+                if (slot < 0 && fromStation == null && preferred[n] != null && allowProtected) {
+                    // The plan's own item as a protected copy (#40), after its plain copies in the
+                    // inventory and the station, but before any alternative item: a later cell may
+                    // need that alternative alone. A fallback pick: it rules out batching.
+                    slot = findProtectedSlot(inventory, ingredient, preferred[n], reserved);
+                    if (slot >= 0) {
+                        preferredFilled = false;
+                    }
                 }
                 if (slot < 0 && fromStation == null) {
-                    // Fallbacks below (any usable stack, any station alternative, a ledger-admitted
-                    // refused stack) depend on more than the shared slot rule; they rule out batching.
+                    // Fallbacks below (any usable stack, any station alternative, a protected stack,
+                    // a ledger-admitted refused stack) depend on more than the shared slot rule; they
+                    // rule out batching.
                     preferredFilled = false;
                     slot = findUsableSlot(inventory, ingredient, reserved);
                 }
                 if (slot < 0 && fromStation == null) {
                     fromStation = pool.take(ingredient, CraftPlanner.slotAlternatives(ingredient));
                 }
+                if (slot < 0 && fromStation == null && allowProtected) {
+                    // The protected tier (#40): the player's confirmed special copies, taken only
+                    // after every plain stack and the station's stock could not fill the cell. The
+                    // preferred item first — an alternative could starve a later cell that needs it
+                    // alone. Either pick is a fallback one (preferredFilled is already false).
+                    if (preferred[n] != null) {
+                        slot = findProtectedSlot(inventory, ingredient, preferred[n], reserved);
+                    }
+                    if (slot < 0) {
+                        slot = findProtectedSlot(inventory, ingredient, null, reserved);
+                    }
+                }
                 if (slot < 0 && fromStation == null && ledger != null) {
-                    slot = findRefusedSlot(inventory, ingredient, reserved, tally);
+                    slot = findRefusedSlot(inventory, ingredient, reserved, tally, allowProtected);
                 }
             }
             if (fromStation != null) {
@@ -1298,7 +1424,10 @@ public final class CraftExecutor {
             slots[n] = slot;
             if (ledger != null) {
                 ItemStack stack = inventory.getItem(slot);
-                boolean refused = !usableAsIngredient(stack);
+                // A protected pick counts as plain in the ledger: the plan counted the stack as
+                // material, and countRefused keeps protected stacks out of the refused baseline, so
+                // recording it refused would wrongly spend the job's altered-copy headroom.
+                boolean refused = !usableAsIngredient(stack, allowProtected);
                 tally.picked(stack.getItem(), refused ? variantOf(stack) : null, refused);
             }
         }
@@ -1312,15 +1441,16 @@ public final class CraftExecutor {
      * rule cannot see which cells accept an altered copy, so counting one can steer a cell to an item
      * only another cell could take; the second pass makes the change never worse than before it. A
      * pass changes no pool state (the ledger's preexisting snapshot is rewritten with equal values).
+     * {@code allowProtected} adds the protected tier of passes' pick order (see {@link #assignPass}).
      */
     private static Assignment assign(Inventory inventory, List<Ingredient> ingredients,
                                      ProducedLedger<Item, LedgerVariant> ledger, StationStorage station,
-                                     List<Item> layout) {
-        Assignment first = assignPass(inventory, ingredients, ledger, station, layout, true);
+                                     List<Item> layout, boolean allowProtected) {
+        Assignment first = assignPass(inventory, ingredients, ledger, station, layout, true, allowProtected);
         if (first.missing() == null || ledger == null) {
             return first;
         }
-        return assignPass(inventory, ingredients, ledger, station, layout, false);
+        return assignPass(inventory, ingredients, ledger, station, layout, false, allowProtected);
     }
 
     /**
@@ -1365,24 +1495,28 @@ public final class CraftExecutor {
      * slots (an open station supplies plain items only, so its storage is not counted: a refused copy
      * pulled out of it mid-job is an arrival, bounded by the produced count); the rest are counted for
      * the player's-own baseline alone, so moving a stack between them cannot make it look like one of
-     * the job's copies.
+     * the job's copies. A protected-planned job ({@code allowProtected}) does not count its protected
+     * stacks here: to it they are plain material (picked without admission, charged like plain picks),
+     * and a baseline entry would let the ledger refuse or double-charge them; damaged stacks stay
+     * refused for every job.
      */
-    private static void countRefused(Inventory inventory, LedgerTally<Item, LedgerVariant> tally) {
+    private static void countRefused(Inventory inventory, LedgerTally<Item, LedgerVariant> tally,
+                                     boolean allowProtected) {
         for (int i = 0; i < inventory.getContainerSize(); i++) {
             ItemStack stack = inventory.getItem(i);
-            if (!stack.isEmpty() && !usableAsIngredient(stack)) {
+            if (!stack.isEmpty() && !usableAsIngredient(stack, allowProtected)) {
                 tally.held(stack.getItem(), variantOf(stack), stack.getCount());
             }
         }
         ItemStack carried = inventory.player.containerMenu.getCarried();
-        if (!carried.isEmpty() && !usableAsIngredient(carried)) {
+        if (!carried.isEmpty() && !usableAsIngredient(carried, allowProtected)) {
             tally.held(carried.getItem(), variantOf(carried), carried.getCount());
         }
         CraftingGrids.Grid grid = CraftingGrids.find(inventory.player.containerMenu);
         if (grid != null) {
             for (Slot slot : grid.inputs()) {
                 ItemStack stack = slot.getItem();
-                if (!stack.isEmpty() && !usableAsIngredient(stack)) {
+                if (!stack.isEmpty() && !usableAsIngredient(stack, allowProtected)) {
                     tally.held(stack.getItem(), variantOf(stack), stack.getCount());
                 }
             }
@@ -1447,21 +1581,23 @@ public final class CraftExecutor {
      * {@link SlotAssignment} runs over the same slot lists ({@link CraftPlanner#slotAlternatives})
      * and the same counts, so its fallback still takes what a plan made without layouts counted on.
      * With {@code admitting} (the #26 pass of {@link #assign}) the job's admitted altered copies
-     * join that stock too ({@link #countAdmitted}), since the plan counted them as well.
+     * join that stock too ({@link #countAdmitted}), since the plan counted them as well, and with
+     * {@code allowProtected} so do the protected stacks of a job planned with them (issue #40): the
+     * plan's counts included them, and a layout chosen or honoured over less would not fit.
      * {@code stock} receives those exact pooled counts, so a later
      * {@link SlotAssignment#stableRepeats} reads the same view the choice was made over.
      */
     private static Item[] preferredItems(Inventory inventory, List<Ingredient> ingredients, StationPool pool,
                                          Map<Item, Integer> stock, List<Item> layout,
-                                         LedgerTally<Item, LedgerVariant> admitting) {
+                                         LedgerTally<Item, LedgerVariant> admitting, boolean allowProtected) {
         for (int i = 0; i < Inventory.INVENTORY_SIZE; i++) {
             ItemStack stack = inventory.getItem(i);
-            if (!stack.isEmpty() && usableAsIngredient(stack)) {
+            if (!stack.isEmpty() && usableAsIngredient(stack, allowProtected)) {
                 stock.merge(stack.getItem(), stack.getCount(), Integer::sum);
             }
         }
         if (admitting != null) {
-            countAdmitted(ingredients, inventory, admitting, stock);
+            countAdmitted(ingredients, inventory, admitting, stock, allowProtected);
         }
         List<List<Item>> cells = new ArrayList<>();
         for (Ingredient ingredient : ingredients) {
@@ -1533,15 +1669,16 @@ public final class CraftExecutor {
      * them too (#26). Each stack adds at most what {@link LedgerTally#variantHeadroom} and
      * {@link LedgerTally#identityHeadroom} still allow, drawn down as stacks are counted. A copy no
      * cell of this recipe accepts is skipped: it would only inflate the count the rule spreads over
-     * the cells.
+     * the cells. A protected-planned job's protected stacks never come here: they are already plain
+     * stock ({@link #preferredItems}), not ledger-admitted ones.
      */
     private static void countAdmitted(List<Ingredient> ingredients, Inventory inventory, LedgerTally<Item, LedgerVariant> tally,
-                                      Map<Item, Integer> stock) {
+                                      Map<Item, Integer> stock, boolean allowProtected) {
         Map<LedgerVariant, Long> variantLeft = new HashMap<>();
         Map<Item, Long> identityLeft = new HashMap<>();
         for (int i = 0; i < Inventory.INVENTORY_SIZE; i++) {
             ItemStack stack = inventory.getItem(i);
-            if (stack.isEmpty() || usableAsIngredient(stack) || !acceptedByAny(ingredients, stack)) {
+            if (stack.isEmpty() || usableAsIngredient(stack, allowProtected) || !acceptedByAny(ingredients, stack)) {
                 continue;
             }
             LedgerVariant variant = variantOf(stack);
@@ -1570,14 +1707,17 @@ public final class CraftExecutor {
     /**
      * The first unreserved refused stack of {@code preferred} of a variant the tally still admits that
      * the ingredient accepts, or -1: the job's altered copy of the item the rule chose, taken before
-     * any alternative item a later cell may need alone (#26).
+     * any alternative item a later cell may need alone (#26). Protected stacks are not ledger material
+     * for a job planned with them (they have their own, earlier tier), so they never match here.
      */
     private static int findRefusedPreferredSlot(Inventory inventory, Ingredient ingredient, Item preferred,
-                                                int[] reserved, LedgerTally<Item, LedgerVariant> tally) {
+                                                int[] reserved, LedgerTally<Item, LedgerVariant> tally,
+                                                boolean allowProtected) {
         for (int i = 0; i < Inventory.INVENTORY_SIZE; i++) {
             ItemStack stack = inventory.getItem(i);
             if (!stack.isEmpty() && stack.getItem() == preferred && stack.getCount() - reserved[i] > 0
-                    && !usableAsIngredient(stack) && tally.admits(stack.getItem(), variantOf(stack))
+                    && !usableAsIngredient(stack, allowProtected)
+                    && tally.admits(stack.getItem(), variantOf(stack))
                     && ingredient.test(stack)) {
                 return i;
             }
@@ -1586,16 +1726,25 @@ public final class CraftExecutor {
     }
 
     /**
-     * A usable stack of {@code preferred} ({@link #preferredItems}) when one matches, then (with a tally,
-     * #26 pass only) a refused copy of it the tally admits; otherwise the first
-     * match in inventory order, then (with a ledger) a refused stack the tally admits.
+     * A plain stack of {@code preferred} ({@link #preferredItems}) when one matches, then (a protected-planned
+     * job only) a protected copy of it; otherwise the first plain match in inventory order, then (a
+     * protected-planned job only) any protected stack, and last (with a ledger) a refused stack the tally
+     * admits: the inventory tiers of {@link #assignPass}'s documented order.
      */
     private static int findMatchingSlot(Inventory inventory, Ingredient ingredient, Item preferred, int[] reserved,
-                                        LedgerTally<Item, LedgerVariant> tally, boolean admittedPreference) {
+                                        LedgerTally<Item, LedgerVariant> tally, boolean admittedPreference,
+                                        boolean allowProtected) {
         if (preferred != null) {
             int slot = findPreferredSlot(inventory, ingredient, preferred, reserved);
             if (slot < 0 && tally != null && admittedPreference) {
-                slot = findRefusedPreferredSlot(inventory, ingredient, preferred, reserved, tally);
+                slot = findRefusedPreferredSlot(inventory, ingredient, preferred, reserved, tally,
+                        allowProtected);
+            }
+            if (slot < 0 && allowProtected) {
+                // The plan's own item before any plain alternative (#40): the plan may have given a
+                // plain alternative to a later cell that accepts nothing else, and taking it here
+                // would starve that cell. Plain copies of the preferred item were tried first.
+                slot = findProtectedSlot(inventory, ingredient, preferred, reserved);
             }
             if (slot >= 0) {
                 return slot;
@@ -1605,7 +1754,37 @@ public final class CraftExecutor {
         if (slot >= 0 || tally == null) {
             return slot;
         }
-        return findRefusedSlot(inventory, ingredient, reserved, tally);
+        if (allowProtected) {
+            if (preferred != null) {
+                slot = findProtectedSlot(inventory, ingredient, preferred, reserved);
+                if (slot >= 0) {
+                    return slot;
+                }
+            }
+            slot = findProtectedSlot(inventory, ingredient, null, reserved);
+            if (slot >= 0) {
+                return slot;
+            }
+        }
+        return findRefusedSlot(inventory, ingredient, reserved, tally, allowProtected);
+    }
+
+    /**
+     * The first unreserved protected stack ({@link #isProtected}) the ingredient accepts — of
+     * {@code preferred} when non-null, else of any item — or -1. The #40 tier, reached only by a job
+     * planned with protected stacks and only after every plain stack and the station's stock fell
+     * short, so a plain copy of the needed item always wins.
+     */
+    private static int findProtectedSlot(Inventory inventory, Ingredient ingredient, Item preferred,
+                                         int[] reserved) {
+        for (int i = 0; i < Inventory.INVENTORY_SIZE; i++) {
+            ItemStack stack = inventory.getItem(i);
+            if (!stack.isEmpty() && stack.getCount() - reserved[i] > 0 && isProtected(stack)
+                    && (preferred == null || stack.getItem() == preferred) && ingredient.test(stack)) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     /** The first unreserved usable stack of {@code preferred} the ingredient accepts, or -1. */
@@ -1632,12 +1811,17 @@ public final class CraftExecutor {
         return -1;
     }
 
-    /** The first unreserved refused stack of a variant the tally still admits that the ingredient accepts, or -1. */
+    /**
+     * The first unreserved refused stack of a variant the tally still admits that the ingredient
+     * accepts, or -1. As in {@link #findRefusedPreferredSlot}, protected stacks never match for a job
+     * planned with them: damaged copies are the ledger's alone there.
+     */
     private static int findRefusedSlot(Inventory inventory, Ingredient ingredient, int[] reserved,
-                                       LedgerTally<Item, LedgerVariant> tally) {
+                                       LedgerTally<Item, LedgerVariant> tally, boolean allowProtected) {
         for (int i = 0; i < Inventory.INVENTORY_SIZE; i++) {
             ItemStack stack = inventory.getItem(i);
-            if (!stack.isEmpty() && stack.getCount() - reserved[i] > 0 && !usableAsIngredient(stack)
+            if (!stack.isEmpty() && stack.getCount() - reserved[i] > 0
+                    && !usableAsIngredient(stack, allowProtected)
                     && tally.admits(stack.getItem(), variantOf(stack)) && ingredient.test(stack)) {
                 return i;
             }

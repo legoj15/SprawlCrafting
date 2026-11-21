@@ -9,6 +9,7 @@ import com.legoj15.sprawlcrafting.network.CancelCraftPayload;
 import com.legoj15.sprawlcrafting.network.CraftProgressPayload;
 import com.legoj15.sprawlcrafting.network.CraftingScreenStatePayload;
 import com.legoj15.sprawlcrafting.network.StartDeferredCraftPayload;
+import com.legoj15.sprawlcrafting.network.StartProtectedCraftPayload;
 //? if >=1.21.11 {
 /*import com.legoj15.sprawlcrafting.client.DeferredClickState;
 import com.legoj15.sprawlcrafting.client.DeferredCraftableCache;
@@ -16,12 +17,14 @@ import com.legoj15.sprawlcrafting.client.MissingIngredients;
 import com.legoj15.sprawlcrafting.craft.DeferredCraftSync;
 import com.legoj15.sprawlcrafting.network.CraftPreviewPayload;
 import com.legoj15.sprawlcrafting.network.DeferredCraftableSyncPayload;
+import com.legoj15.sprawlcrafting.network.ProtectedCraftableSyncPayload;
 import com.legoj15.sprawlcrafting.network.RequestCraftPreviewPayload;
 import com.legoj15.sprawlcrafting.network.RequestShortfallByDisplayPayload;
 import com.legoj15.sprawlcrafting.network.RequestShortfallByRecipePayload;
 import com.legoj15.sprawlcrafting.network.ShortfallPayload;
 import com.legoj15.sprawlcrafting.network.ShortfallV2Payload;
-import com.legoj15.sprawlcrafting.network.StartDeferredCraftByDisplayPayload;*/
+import com.legoj15.sprawlcrafting.network.StartDeferredCraftByDisplayPayload;
+import com.legoj15.sprawlcrafting.network.StartProtectedCraftByDisplayPayload;*/
 //?}
 
 import net.minecraft.resources.ResourceLocation;
@@ -99,12 +102,29 @@ final class ForgeNetwork {
                                 CraftQueueManager.cancel(sender);
                             }
                         })
+                // The protected start (#40): its own payload id on this per-payload channel, so an
+                // older client that lacks it is told apart by id (canSendToServer/canReceive).
+                .addMain(StartProtectedCraftPayload.TYPE, widen(StartProtectedCraftPayload.STREAM_CODEC),
+                        (payload, context) -> {
+                            ServerPlayer sender = context.getSender();
+                            if (sender != null) {
+                                CraftRequests.handleStartRequest(sender, payload.recipeId(), true);
+                            }
+                        })
                 //? if >=1.21.11 {
                 /*.addMain(StartDeferredCraftByDisplayPayload.TYPE, widen(StartDeferredCraftByDisplayPayload.STREAM_CODEC),
                         (payload, context) -> {
                             ServerPlayer sender = context.getSender();
                             if (sender != null) {
                                 DeferredCraftSync.handleStartByDisplay(sender, payload.displayId());
+                            }
+                        })
+                // The protected by-display start (#40), the recipe book's confirm for a protected-only entry.
+                .addMain(StartProtectedCraftByDisplayPayload.TYPE, widen(StartProtectedCraftByDisplayPayload.STREAM_CODEC),
+                        (payload, context) -> {
+                            ServerPlayer sender = context.getSender();
+                            if (sender != null) {
+                                DeferredCraftSync.handleStartByDisplay(sender, payload.displayId(), true);
                             }
                         })
                 .addMain(RequestCraftPreviewPayload.TYPE, widen(RequestCraftPreviewPayload.STREAM_CODEC),
@@ -141,6 +161,11 @@ final class ForgeNetwork {
                 //? if >=1.21.11 {
                 /*.addMain(DeferredCraftableSyncPayload.TYPE, widen(DeferredCraftableSyncPayload.STREAM_CODEC),
                         (payload, context) -> DeferredCraftableCache.accept(payload.displayIds(), payload.recipeIds()))
+                // The protected-only subset of that set (#40): pushed right after it, only to clients
+                // that registered this channel (the server checks canReceive before sending).
+                .addMain(ProtectedCraftableSyncPayload.TYPE, widen(ProtectedCraftableSyncPayload.STREAM_CODEC),
+                        (payload, context) -> DeferredCraftableCache.acceptProtected(
+                                payload.displayIds(), payload.recipeIds()))
                 .addMain(CraftPreviewPayload.TYPE, widen(CraftPreviewPayload.STREAM_CODEC),
                         (payload, context) -> DeferredClickState.acceptPreview(payload.displayId(), payload.lines()))
                 .addMain(ShortfallPayload.TYPE, widen(ShortfallPayload.STREAM_CODEC),
@@ -176,6 +201,8 @@ final class ForgeNetwork {
     private static SimpleChannel channel;
 
     private static SimpleChannel cancelChannel;
+
+    private static SimpleChannel protectedChannel;
 
     private ForgeNetwork() {
     }
@@ -237,6 +264,25 @@ final class ForgeNetwork {
                     }
                 })
                 .add();
+        // The protected start (#40) rides its own channel for the same reason as the cancel: main's
+        // discriminators are frozen, and this payload's presence on the peer is what tells the client
+        // a protected request would be honoured (an older server never negotiates it).
+        protectedChannel = NetworkRegistry.ChannelBuilder
+                .named(ResourceLocation.fromNamespaceAndPath(Constants.MOD_ID, "start_craft_protected"))
+                .networkProtocolVersion(() -> PROTOCOL)
+                .clientAcceptedVersions(version -> true)
+                .serverAcceptedVersions(version -> true)
+                .simpleChannel();
+        protectedChannel.messageBuilder(StartProtectedCraftPayload.class, 0, NetworkDirection.PLAY_TO_SERVER)
+                .encoder(StartProtectedCraftPayload::write)
+                .decoder(StartProtectedCraftPayload::read)
+                .consumerMainThread((payload, context) -> {
+                    ServerPlayer sender = context.get().getSender();
+                    if (sender != null) {
+                        CraftRequests.handleStartRequest(sender, payload.recipeId(), true);
+                    }
+                })
+                .add();
     }
 
     static SimpleChannel channel() {
@@ -245,6 +291,10 @@ final class ForgeNetwork {
 
     static SimpleChannel cancelChannel() {
         return cancelChannel;
+    }
+
+    static SimpleChannel protectedChannel() {
+        return protectedChannel;
     }
 
     // Whether the peer on this connection registered the channel. A vanilla or modless peer never does,
@@ -257,6 +307,12 @@ final class ForgeNetwork {
     // never negotiates it, so the client's key stays inert against it.
     static boolean isCancelRemotePresent(Connection connection) {
         return cancelChannel.isRemotePresent(connection);
+    }
+
+    // Same, for the protected start's own channel (#40): a server on an older jar (before the
+    // protected tier) never negotiates it, so the client never offers protected crafts against it.
+    static boolean isProtectedRemotePresent(Connection connection) {
+        return protectedChannel.isRemotePresent(connection);
     }*/
     //?}
 }

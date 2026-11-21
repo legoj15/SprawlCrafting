@@ -141,11 +141,19 @@ public class StationTransferHandler<C extends AbstractContainerMenu>
             if (ClientJobTracker.hasActiveJob()) {
                 return helper.createUserErrorWithTooltip(Component.translatable("sprawlcrafting.craft.busy"));
             }
+            // A recipe only the protected tier can make (issue #40) confirms through the protected
+            // start packet; the button tooltip carries the special-items warning.
+            boolean protectedCraft = DeferredCraftableCache.isProtectedOnly(holder);
             if (doTransfer) {
-                DeferredClickState.sendStartPacket(holder);
+                if (protectedCraft) {
+                    DeferredClickState.sendProtectedStartPacket(holder);
+                } else {
+                    DeferredClickState.sendStartPacket(holder);
+                }
                 return null;
             }
-            return DeferredTransfers.DEFERRED_AVAILABLE;
+            return protectedCraft ? DeferredTransfers.protectedDeferredAvailable(holder, GridContext.CRAFTING_TABLE)
+                    : DeferredTransfers.DEFERRED_AVAILABLE;
         }
         // stock is never null here: StationJeiPlugin's >=1.21.11 branch always builds AE2 26.x's handler.
         IRecipeTransferError simulated =
@@ -184,11 +192,24 @@ public class StationTransferHandler<C extends AbstractContainerMenu>
                 // AE2 lays the recipe into the terminal grid straight from the network: stock behaviour.
                 return busyOr(() -> stock.transferRecipe(container, recipe, recipeSlots, player, maxTransfer, doTransfer));
             }
+            // A recipe only the protected tier can make (issue #40) confirms through the protected
+            // start packet; the button tooltip carries the special-items warning. A direct craft is
+            // never protected-only — the plain pool covers it — so it keeps the plain start (AE2 19.x
+            // has no stock handler; its green button starts a single-step job, as before).
+            boolean protectedCraft = craftability == Craftability.DEFERRED
+                    && DeferredCraftableCache.isProtectedOnly(holder);
             if (doTransfer) {
-                DeferredClickState.sendStartPacket(holder);
+                if (protectedCraft) {
+                    DeferredClickState.sendProtectedStartPacket(holder);
+                } else {
+                    DeferredClickState.sendStartPacket(holder);
+                }
                 return null;
             }
-            return craftability == Craftability.DEFERRED ? DeferredTransfers.DEFERRED_AVAILABLE : null;
+            return craftability == Craftability.DEFERRED
+                    ? (protectedCraft ? DeferredTransfers.protectedDeferredAvailable(holder, grid)
+                            : DeferredTransfers.DEFERRED_AVAILABLE)
+                    : null;
         }
         if (craftability == Craftability.UNSOLVABLE && SprawlConfig.get().needsSystem()) {
             if (doTransfer) {

@@ -50,7 +50,8 @@ public class ForgePlatformHelper implements IPlatformHelper {
     // told apart by its own id: ProgressStatesV2Payload (the marker for newer progress states) is not
     // registered on this line, and a 1.0.x client has the channel yet cannot decode those states. It
     // answers false, so the server always sends such a client the original state. CancelCraftPayload
-    // is the one payload with its own channel on that line, so it answers for itself.
+    // and StartProtectedCraftPayload each ride their own channel on that line, so each answers for
+    // itself.
     private static boolean remoteHas(Connection connection, ResourceLocation payloadId) {
         //? if >=1.20.5 {
         return NetworkContext.get(connection).getRemoteChannels().contains(payloadId);
@@ -61,6 +62,9 @@ public class ForgePlatformHelper implements IPlatformHelper {
         if (com.legoj15.sprawlcrafting.network.CancelCraftPayload.ID.equals(payloadId)) {
             return ForgeNetwork.isCancelRemotePresent(connection);
         }
+        if (com.legoj15.sprawlcrafting.network.StartProtectedCraftPayload.ID.equals(payloadId)) {
+            return ForgeNetwork.isProtectedRemotePresent(connection);
+        }
         return ForgeNetwork.isRemotePresent(connection);*/
         //?}
     }
@@ -70,9 +74,14 @@ public class ForgePlatformHelper implements IPlatformHelper {
         //? if >=1.20.5 {
         ForgeNetwork.channel().send(payload, PacketDistributor.SERVER.noArg());
         //?} else {
-        /*// On Forge 47 the cancel payload rides its own channel (main's discriminators are frozen).
+        /*// On Forge 47 the cancel and protected-start payloads ride their own channels (main's
+        // discriminators are frozen).
         if (payload instanceof com.legoj15.sprawlcrafting.network.CancelCraftPayload) {
             ForgeNetwork.cancelChannel().send(PacketDistributor.SERVER.noArg(), payload);
+            return;
+        }
+        if (payload instanceof com.legoj15.sprawlcrafting.network.StartProtectedCraftPayload) {
+            ForgeNetwork.protectedChannel().send(PacketDistributor.SERVER.noArg(), payload);
             return;
         }
         ForgeNetwork.channel().send(PacketDistributor.SERVER.noArg(), payload);*/
