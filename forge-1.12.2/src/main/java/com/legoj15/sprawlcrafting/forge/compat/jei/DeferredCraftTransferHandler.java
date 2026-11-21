@@ -272,7 +272,8 @@ public class DeferredCraftTransferHandler<C extends Container> implements IRecip
      * raw-materials list already tells that story. If every out-of-stock slot is individually
      * craftable yet the recipe still failed (chains competing for the same raws), fall back to
      * stock JEI's semantics — highlight everything out of stock — rather than highlighting nothing.
-     * {@code includeProtected} counts the 36 main slots' protected stacks (#40) and — while the
+     * {@code includeProtected} counts the 36 main slots' protected stacks (#40), the open grid's
+     * when the confirming clear would move it (#50; a station's chest stays plain), and — while the
      * server also counts them (#49's capability) — an open terminal network's, as the planner's
      * protected pool does; pass it with that pool's session so slots and gather list agree (#48).
      */
