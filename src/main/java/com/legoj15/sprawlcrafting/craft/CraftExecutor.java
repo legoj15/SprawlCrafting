@@ -360,7 +360,7 @@ public final class CraftExecutor {
      * tier's station half is staging, not identity plumbing: one copy at a time is moved into the
      * inventory, where the existing protected-inventory path (per cell: plain inventory, plain
      * station, protected inventory) then picks it, so the per-source order holds. Active only for a
-     * protected-planned job ({@code allowProtected}) whose station reports protected stock at all.
+     * protected-planned job ({@code allowProtected}); the station is asked only for a cell that is short.
      *
      * <p>With a {@code layout}, each cell whose preferred item the usable inventory (protected copies
      * included, minus copies earlier cells of this layout claimed) plus the station's plain stock
@@ -1081,7 +1081,7 @@ public final class CraftExecutor {
         // Staging (issue #49) before the probes below: a protected copy drawn out of the station
         // lands in the main inventory, so the probes and placeFromLedger's assignment see it, and
         // the protected probe can then pick this manual layout over vanilla's plain fill.
-        int stagedProtected = cells == null ? 0
+        int stagedProtected = cells == null || !allowProtected ? 0
                 : stageProtectedFromStation(player, StationStorages.open(player), cells, layout, ledger,
                         allowProtected, null);
         boolean plainFallsShort = cells != null
