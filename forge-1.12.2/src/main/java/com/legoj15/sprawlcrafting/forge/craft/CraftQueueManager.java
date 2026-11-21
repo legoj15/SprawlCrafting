@@ -292,17 +292,22 @@ public final class CraftQueueManager {
      * Whether one craft of {@code step} still has somewhere to put its output: the 36 main slots
      * ({@link CraftExecutor#fitsInMainInventory}'s rule — merge room, then empty slots; slots the
      * craft's own consumption would free are not counted, the executor's assignment is not visible
-     * here) or, with a usable network terminal open, its network, which takes what the slots
-     * cannot. Asked only of an interleaved job's crafts: the refusal is what lets the schedule
-     * shrink its batch around a full store instead of spilling the output at the player's feet.
+     * here) or, with a usable network terminal open, its network when a simulated insert says it
+     * takes the whole output. Asked only of an interleaved job's crafts: the refusal is what lets
+     * the schedule shrink its batch around a full store instead of spilling the output at the
+     * player's feet.
      */
     private static boolean hasRoomFor(EntityPlayerMP player, CraftStep step) {
-        if (NetworkTerminals.usable(player)) {
+        ItemStack output = stepOutput(step);
+        if (output.isEmpty() || CraftExecutor.fitsInMainInventory(player.inventory,
+                Collections.singletonList(output))) {
             return true;
         }
-        ItemStack output = stepOutput(step);
-        return output.isEmpty() || CraftExecutor.fitsInMainInventory(player.inventory,
-                Collections.singletonList(output));
+        if (!NetworkTerminals.usable(player)) {
+            return false;
+        }
+        NetworkTerminals.View network = NetworkTerminals.view(player);
+        return network != null && network.accepts(output);
     }
 
     /**

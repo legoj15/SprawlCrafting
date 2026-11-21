@@ -204,4 +204,17 @@ final class Ae2NetworkView implements NetworkTerminals.View {
         }
         return leftover.createItemStack();
     }
+
+    @Override
+    public boolean accepts(ItemStack stack) {
+        if (stack.isEmpty()) {
+            return true;
+        }
+        IAEItemStack input = channel.createStack(stack);
+        if (input == null) {
+            return false;
+        }
+        IAEItemStack leftover = Platform.poweredInsert(energy, cell, input, source, Actionable.SIMULATE);
+        return leftover == null || leftover.getStackSize() <= 0;
+    }
 }

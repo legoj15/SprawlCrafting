@@ -404,7 +404,7 @@ public final class CraftPlanner {
         }
         station.forEach((item, count) -> {
             if (count > 0) {
-                plain.merge(item, count, Long::sum);
+                plain.merge(item, count, CraftPlanner::saturatingAdd);
             }
         });
         Map<Item, Long> net = new HashMap<>();

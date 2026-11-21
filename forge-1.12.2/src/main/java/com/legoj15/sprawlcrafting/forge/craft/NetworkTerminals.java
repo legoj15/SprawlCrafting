@@ -110,6 +110,14 @@ public final class NetworkTerminals {
 
         /** Server only. Inserts {@code stack} into the network; returns what did not fit (EMPTY if all did). */
         ItemStack insert(ItemStack stack);
+
+        /**
+         * Server only. Whether the network would take all of {@code stack} now (a simulated insert,
+         * nothing moves). The default says yes: a view that cannot simulate is trusted to take it.
+         */
+        default boolean accepts(ItemStack stack) {
+            return true;
+        }
     }
 
     private static volatile Provider provider;

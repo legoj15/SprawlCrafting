@@ -570,7 +570,7 @@ public final class CraftPlanner {
             if (entry.getValue() > 0) {
                 ItemKey key = entry.getKey();
                 Long current = plain.get(key);
-                plain.put(key, (current == null ? 0L : current.longValue()) + entry.getValue().longValue());
+                plain.put(key, NetworkTerminals.saturatingAdd(current == null ? 0L : current.longValue(), entry.getValue().longValue()));
             }
         }
         Map<ItemKey, Long> net = new HashMap<ItemKey, Long>();
