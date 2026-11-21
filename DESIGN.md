@@ -560,8 +560,8 @@ compression mods saturate at `Long.MAX_VALUE`. Counts are therefore `long` from 
   counts). The server sends V2 when `canReceive(player, ShortfallV2Payload.ID)`, else the old
   payload with counts clamped to `Integer.MAX_VALUE`, else nothing; a new client registers
   receivers for both, so it also works against a 1.0.3 server. Both are registered optional on
-  Fabric and NeoForge, so neither gates a connection. (Forge 1.21.1 carries no shortfall payload:
-  the gather list is client-side there. A future Forge 26.x node must register both ids.)
+  Fabric and NeoForge, so neither gates a connection. Forge 26.x registers both ids on its main
+  channel; Forge 1.20.1/1.21.1 carry no shortfall payload (the gather list is client-side there).
 - **Progress (`CraftProgressPayload`, 1.12.2 `CraftProgressMessage`, 1.16.5 packet):** stays
   int on the wire. `CraftJob` counts in saturating `long`s and `wireDone()`/`wireTotal()`
   scale a job of more than `Integer.MAX_VALUE` crafts down proportionally, so the bar's ratio
