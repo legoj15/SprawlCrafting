@@ -103,6 +103,9 @@ public final class DeferredCraftableCache {
         LocalPlayer player = minecraft.player;
         if (player == null || minecraft.level == null) {
             stationUsable = false;
+            stationCounts = Map.of();
+            stationProtectedCounts = Map.of();
+            stationProtectedSamples = Map.of();
             return;
         }
         AbstractContainerMenu menu = player.containerMenu;
