@@ -25,16 +25,22 @@ import net.minecraft.util.ResourceLocation;
  * {@link SlotLayout}): the executor follows it and falls back to {@code SlotAssignment} only when
  * the live pool no longer matches. Empty means no layout — the executor decides each craft with
  * {@code SlotAssignment} itself, as every step did before plans carried one.
+ *
+ * <p>{@code result}/{@code resultCount} name the recipe's output, what one craft of the step
+ * produces; the depth-first schedule of an over-int job sizes and interleaves its batches from
+ * them (a step is over-int when {@code crafts * max(resultCount, slots)} exceeds an int).
  */
 public final class CraftStep {
 
     private final ResourceLocation recipeId;
-    private final int crafts;
+    private final long crafts;
     private final boolean needsFullGrid;
     private final List<SlotLayout<ItemKey>> layouts;
+    private final ItemKey result;
+    private final int resultCount;
 
-    public CraftStep(ResourceLocation recipeId, int crafts, boolean needsFullGrid,
-                     List<SlotLayout<ItemKey>> layouts) {
+    public CraftStep(ResourceLocation recipeId, long crafts, boolean needsFullGrid,
+                     List<SlotLayout<ItemKey>> layouts, ItemKey result, int resultCount) {
         if (crafts < 1) {
             throw new IllegalArgumentException("crafts must be >= 1, got " + crafts);
         }
@@ -44,13 +50,15 @@ public final class CraftStep {
         this.layouts = layouts == null
                 ? Collections.<SlotLayout<ItemKey>>emptyList()
                 : Collections.unmodifiableList(new ArrayList<SlotLayout<ItemKey>>(layouts));
+        this.result = result;
+        this.resultCount = resultCount;
     }
 
     public ResourceLocation recipeId() {
         return recipeId;
     }
 
-    public int crafts() {
+    public long crafts() {
         return crafts;
     }
 
@@ -61,5 +69,20 @@ public final class CraftStep {
     /** The plan's per-slot item runs for this step's crafts; empty when the step carries no layout. */
     public List<SlotLayout<ItemKey>> layouts() {
         return layouts;
+    }
+
+    /** The recipe's output identity, or null when the recipe is no longer resolvable. */
+    public ItemKey result() {
+        return result;
+    }
+
+    /** How many of {@link #result()} one craft produces (0 when the recipe is no longer resolvable). */
+    public int resultCount() {
+        return resultCount;
+    }
+
+    /** The step's slot count: every run of its layout lists the same number of slots. */
+    public int slotCount() {
+        return layouts.isEmpty() ? 0 : layouts.get(0).items().size();
     }
 }

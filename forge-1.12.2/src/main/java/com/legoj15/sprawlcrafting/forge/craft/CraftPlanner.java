@@ -189,33 +189,43 @@ public final class CraftPlanner {
      *
      * <p>With a network crafting terminal open ({@link NetworkTerminals}, the AE2 Crafting Terminal)
      * the network's stock is added too — the live monitor on the server, the terminal screen's own
-     * mirror on the client — under the same filter and key; sums saturate at
-     * {@link Integer#MAX_VALUE} because a network can hold more than an int of one item.
+     * mirror on the client — under the same filter and key. Counts are {@code long} with a saturating
+     * add: an unbounded count ({@link Long#MAX_VALUE}, an AE2 creative cell proved by the server's
+     * probe) stays unbounded, and a real count above {@link Integer#MAX_VALUE} stays that finite
+     * count — the solver's long entry points read it exactly (issue #47).
      *
      * <p>{@code includeProtected} widens only the player's own snapshot: protected stacks are a
      * player-confirmed tier (issue #40), so the external slots (a station's chest, the grid) and the
      * network stay plain pools for every session.
      */
-    private static Map<ItemKey, Integer> snapshotMaterials(EntityPlayer player, boolean network,
-                                                           boolean includeProtected) {
-        Map<ItemKey, Integer> counts = snapshotInventory(player.inventory, includeProtected);
+    private static Map<ItemKey, Long> snapshotMaterials(EntityPlayer player, boolean network,
+                                                        boolean includeProtected) {
+        Map<ItemKey, Long> counts = snapshotInventory(player.inventory, includeProtected);
         for (net.minecraft.inventory.Slot slot : ExternalSlots.materialSlots(player)) {
             addUsable(counts, slot.getStack());
         }
         if (network) {
-            for (ItemStack stack : NetworkTerminals.stacks(player)) {
-                addUsable(counts, stack);
+            for (Map.Entry<ItemKey, Long> entry : NetworkTerminals.counts(player).entrySet()) {
+                if (entry.getValue() > 0) {
+                    counts.merge(entry.getKey(), entry.getValue(), CraftPlanner::saturatingAdd);
+                }
             }
         }
         return counts;
     }
 
-    private static void addUsable(Map<ItemKey, Integer> counts, ItemStack stack) {
+    private static void addUsable(Map<ItemKey, Long> counts, ItemStack stack) {
         if (!stack.isEmpty() && CraftExecutor.usableAsIngredient(stack)) {
             ItemKey key = ItemKey.of(stack);
-            Integer current = counts.get(key);
-            counts.put(key, NetworkTerminals.saturatedAdd(current == null ? 0 : current, stack.getCount()));
+            Long current = counts.get(key);
+            counts.put(key, saturatingAdd(current == null ? 0L : current.longValue(), stack.getCount()));
         }
+    }
+
+    /** {@code a} plus {@code b} without overflow: {@link Long#MAX_VALUE} (unbounded) stays there. */
+    private static long saturatingAdd(long a, long b) {
+        long sum = a + b;
+        return sum < 0 ? Long.MAX_VALUE : sum;
     }
 
     /**
@@ -226,14 +236,16 @@ public final class CraftPlanner {
      * executor draws them (before any protected copy, as in {@link #protectedItemsUsed}); the plan
      * itself counts them into its pool, so this is only the split-back-out.
      */
-    public static Map<ItemKey, Integer> plainExternalCounts(EntityPlayer player, boolean network) {
-        Map<ItemKey, Integer> counts = new HashMap<ItemKey, Integer>();
+    public static Map<ItemKey, Long> plainExternalCounts(EntityPlayer player, boolean network) {
+        Map<ItemKey, Long> counts = new HashMap<ItemKey, Long>();
         for (net.minecraft.inventory.Slot slot : ExternalSlots.materialSlots(player)) {
             addUsable(counts, slot.getStack());
         }
         if (network) {
-            for (ItemStack stack : NetworkTerminals.stacks(player)) {
-                addUsable(counts, stack);
+            for (Map.Entry<ItemKey, Long> entry : NetworkTerminals.counts(player).entrySet()) {
+                if (entry.getValue() > 0) {
+                    counts.merge(entry.getKey(), entry.getValue(), CraftPlanner::saturatingAdd);
+                }
             }
         }
         return counts;
@@ -243,13 +255,13 @@ public final class CraftPlanner {
         private final GridContext grid;
         private final Map<ItemKey, List<McRecipe>> producers = new HashMap<ItemKey, List<McRecipe>>();
         private final Map<ResourceLocation, McRecipe> byId = new HashMap<ResourceLocation, McRecipe>();
-        private final Map<ItemKey, Integer> inventory;
+        private final Map<ItemKey, Long> inventory;
         private final RecipeGraphSolver<ResourceLocation, ItemKey> solver;
         private final Map<ResourceLocation, Craftability> classifyCache = new HashMap<ResourceLocation, Craftability>();
         private final Map<ItemKey, Boolean> resultSolvableCache = new HashMap<ItemKey, Boolean>();
         private final Map<ItemKey, ShortfallView> shortfallCache = new HashMap<ItemKey, ShortfallView>();
 
-        private Session(GridContext grid, Map<ItemKey, Integer> inventory) {
+        private Session(GridContext grid, Map<ItemKey, Long> inventory) {
             this.grid = grid;
             this.inventory = inventory;
             for (IRecipe recipe : CraftingManager.REGISTRY) {
@@ -416,7 +428,7 @@ public final class CraftPlanner {
                 return new ShortfallView(target.resultStack, false, false,
                         java.util.Collections.<ItemDemand>emptyList());
             }
-            RecipeGraphSolver.ShortfallResult<ItemKey> result = solver.shortfall(target, inventory);
+            RecipeGraphSolver.ShortfallResult<ItemKey> result = solver.shortfallLong(target, inventory);
             List<ItemDemand> demands = new ArrayList<ItemDemand>();
             // demandsLong, not the int-clamped demands(): batched gather lists exceed Integer.MAX_VALUE.
             for (Map.Entry<ItemKey, Long> entry : result.demandsLong().entrySet()) {
@@ -439,17 +451,19 @@ public final class CraftPlanner {
             if (!target.fits(grid)) {
                 return new PlanOutcome.NeedsBiggerGrid();
             }
-            Result<ResourceLocation, ItemKey> result = solver.solveIntSized(target, inventory);
+            Result<ResourceLocation, ItemKey> result = solver.solveLong(target, inventory);
             if (result instanceof Result.Success) {
                 Result.Success<ResourceLocation, ItemKey> success = (Result.Success<ResourceLocation, ItemKey>) result;
                 List<PlannedStep<ResourceLocation>> planned = success.steps();
                 List<CraftStep> steps = new ArrayList<CraftStep>();
                 for (int i = 0; i < planned.size(); i++) {
                     PlannedStep<ResourceLocation> step = planned.get(i);
-                    steps.add(new CraftStep(step.recipeId(), (int) step.crafts(), !fits2x2(step.recipeId(), target),
-                            success.layouts().get(i)));
+                    McRecipe info = stepInfo(step.recipeId());
+                    steps.add(new CraftStep(step.recipeId(), step.crafts(), !fits2x2(step.recipeId(), target),
+                            success.layouts().get(i),
+                            info == null ? null : info.result, info == null ? 0 : info.resultCount));
                 }
-                return new PlanOutcome.Planned(new CraftJob(target.id, target.resultStack, steps));
+                return new PlanOutcome.Planned(new CraftJob(target.id, target.resultStack, steps, inventory));
             }
             Result.Failure<ResourceLocation, ItemKey> failure =
                     (Result.Failure<ResourceLocation, ItemKey>) result;
@@ -466,6 +480,15 @@ public final class CraftPlanner {
             McRecipe recipe = byId.get(recipeId);
             return recipe == null || recipe.fits2x2;
         }
+
+        /**
+         * A plan step's recipe reduced to the solver's view, or null when its id no longer resolves —
+         * such a job fails on its first craft ({@code RecipeGone}) long before its result count
+         * matters, so the steps carry a null result and a zero count then.
+         */
+        private McRecipe stepInfo(ResourceLocation recipeId) {
+            return byId.get(recipeId);
+        }
     }
 
     /**
@@ -474,17 +497,18 @@ public final class CraftPlanner {
      * from the main slots. Damaged stacks are always skipped; enchanted/renamed (protected, issue
      * #40) stacks are skipped too unless {@code includeProtected} — the player-confirmed tier,
      * mirroring exactly what the executor may pick for a job planned with it
-     * ({@code CraftExecutor#usableAsIngredient(ItemStack, boolean)}).
+     * ({@code CraftExecutor#usableAsIngredient(ItemStack, boolean)}). Counts are {@code long} with
+     * a saturating add, so {@link Long#MAX_VALUE} (unbounded) never clamps to an int.
      */
-    private static Map<ItemKey, Integer> snapshotInventory(InventoryPlayer inventory,
-                                                           boolean includeProtected) {
-        Map<ItemKey, Integer> counts = new HashMap<ItemKey, Integer>();
+    private static Map<ItemKey, Long> snapshotInventory(InventoryPlayer inventory,
+                                                        boolean includeProtected) {
+        Map<ItemKey, Long> counts = new HashMap<ItemKey, Long>();
         for (int i = 0; i < MAIN_INVENTORY_SIZE; i++) {
             ItemStack stack = inventory.mainInventory.get(i);
             if (!stack.isEmpty() && CraftExecutor.usableAsIngredient(stack, includeProtected)) {
                 ItemKey key = ItemKey.of(stack);
-                Integer current = counts.get(key);
-                counts.put(key, (current == null ? 0 : current) + stack.getCount());
+                Long current = counts.get(key);
+                counts.put(key, (current == null ? 0L : current.longValue()) + stack.getCount());
             }
         }
         return counts;
@@ -518,7 +542,7 @@ public final class CraftPlanner {
      * tooltip); the executor itself re-decides per craft from the live pool.
      */
     public static List<ItemStack> protectedItemsUsed(CraftJob job, InventoryPlayer inventory,
-                                                     Map<ItemKey, Integer> external) {
+                                                     Map<ItemKey, Long> external) {
         Map<ItemKey, Long> plain = new HashMap<ItemKey, Long>();
         Map<ItemKey, ItemStack> protectedCopies = new LinkedHashMap<ItemKey, ItemStack>();
         for (int i = 0; i < MAIN_INVENTORY_SIZE; i++) {
@@ -542,11 +566,11 @@ public final class CraftPlanner {
         if (protectedCopies.isEmpty()) {
             return Collections.emptyList();
         }
-        for (Map.Entry<ItemKey, Integer> entry : external.entrySet()) {
+        for (Map.Entry<ItemKey, Long> entry : external.entrySet()) {
             if (entry.getValue() > 0) {
                 ItemKey key = entry.getKey();
                 Long current = plain.get(key);
-                plain.put(key, (current == null ? 0L : current.longValue()) + entry.getValue().intValue());
+                plain.put(key, (current == null ? 0L : current.longValue()) + entry.getValue().longValue());
             }
         }
         Map<ItemKey, Long> net = new HashMap<ItemKey, Long>();
