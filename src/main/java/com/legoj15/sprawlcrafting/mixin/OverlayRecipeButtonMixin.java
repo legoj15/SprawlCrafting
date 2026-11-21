@@ -38,8 +38,9 @@ public abstract class OverlayRecipeButtonMixin implements GatherCandidate {
 
     @Override
     public boolean sprawlcrafting$tryOpenGatherList() {
-        if (isCraftable || recipe == null) {
-            return false; // craftable (incl. our deferred yellow): vanilla's left-click handles it
+        if (isCraftable || recipe == null
+                || !com.legoj15.sprawlcrafting.client.MissingIngredients.canRequestByDisplay()) {
+            return false; // craftable (vanilla's left-click), or a server that can't answer (#42)
         }
         MissingIngredientsView.open(recipe);
         return true;

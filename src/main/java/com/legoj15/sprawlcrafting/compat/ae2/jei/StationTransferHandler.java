@@ -167,7 +167,7 @@ public class StationTransferHandler<C extends AbstractContainerMenu>
                     ? busyOr(() -> stock.transferRecipe(container, recipe, recipeSlots, player, maxTransfer, doTransfer))
                     : simulated;
         }
-        if (SprawlConfig.get().needsSystem()) {
+        if (SprawlConfig.get().needsSystem() && MissingIngredients.canRequestByRecipe()) {
             if (doTransfer) {
                 // Same as the crafting-table handler: open after JEI's click handling settles.
                 MissingIngredients.requestOpenNextTick(

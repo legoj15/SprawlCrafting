@@ -62,6 +62,23 @@ public final class MissingIngredients {
         latestToken = 0;
         latest = null;
         pendingOpen = null;
+    }
+
+    // A server without SprawlCrafting never answers a request (Forge drops it, the list loads forever)
+    // or refuses to send it at all (NeoForge throws from the click handler, crashing the client), so
+    // every trigger offers the gather list only when the server registered the request it will send (#42).
+    public static boolean canRequestByDisplay() {
+        return serverHas(com.legoj15.sprawlcrafting.network.RequestShortfallByDisplayPayload.ID);
+    }
+
+    public static boolean canRequestByRecipe() {
+        return serverHas(com.legoj15.sprawlcrafting.network.RequestShortfallByRecipePayload.ID);
+    }
+
+    private static boolean serverHas(ResourceLocation payloadId) {
+        net.minecraft.client.multiplayer.ClientPacketListener connection = Minecraft.getInstance().getConnection();
+        return connection != null && com.legoj15.sprawlcrafting.platform.Services.PLATFORM.canSendToServer(
+                connection.getConnection(), payloadId);
     }*/
     //?} else {
     /**
@@ -90,6 +107,15 @@ public final class MissingIngredients {
     public static void reset() {
         // 1.21.1 recomputes on demand; nothing cached to clear (but drop any queued open).
         pendingOpen = null;
+    }
+
+    /** 1.21.1 solves the list on the client: always available, whatever the server runs. */
+    public static boolean canRequestByDisplay() {
+        return true;
+    }
+
+    public static boolean canRequestByRecipe() {
+        return true;
     }
     //?}
 

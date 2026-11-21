@@ -86,7 +86,8 @@ public final class DeferredTransfers {
             return protectedCraft ? protectedDeferredAvailable(holder, GridContext.CRAFTING_TABLE)
                     : DEFERRED_AVAILABLE;
         }
-        if (craftability == Craftability.UNSOLVABLE && SprawlConfig.get().needsSystem()) {
+        if (craftability == Craftability.UNSOLVABLE && SprawlConfig.get().needsSystem()
+                && MissingIngredients.canRequestByRecipe()) {
             // Even deferred crafting can't make it from current resources. Repurpose JEI's otherwise
             // dead red button into a clickable "what would I need to gather" prompt (still available
             // mid-job, since it's informational). On the real click, open our own screen — deferred,
