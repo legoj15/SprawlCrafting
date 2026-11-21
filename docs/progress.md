@@ -336,6 +336,7 @@ Unbound "Cancel deferred craft" keybind on every tree. The server's `CraftQueueM
 - review_fast on d55c7c0..f8704d5 (shop26 + glm-flash): both approve; lows accepted (per-craft probe cost on big networks, bounded by the 2 ms burst budget; container remainders and declared-vs-computed output are pre-existing, and the executor still never loses an item). Final sha reviewed.
 
 - 2026-11-21: #46 playtested PASS on Forge 1.16.5 (8.35T-step craft, card matches chat); issue closed. 1.12.2/modern not playtested.
+
 ## Full-grid gate per burst, not per tick (2026-11-21)
 - Found by the #44 port session's review: the 3x3 gate (table in reach / 3x3 grid or station open) ran once per tick against the step the tick started on. An interleaved job's `currentStep()` follows the schedule, which moves between steps from batch to batch inside one burst, so a burst that began on a 2x2 step could craft a 3x3 step with no table. "Walked away mid-tick" was not the mechanism; nothing in the world changes inside one job tick.
 - Merged claude/build-44-minecraft-1165-5a8a76 into main first (65133fb). Conflicts were in imports, progress.md, and RecipeGraphSolver.planByQuantity (#43's two-probe logic plus #44's longSteps parameter). All three trees compiled and solver tests passed before the merge commit.

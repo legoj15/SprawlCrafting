@@ -109,8 +109,8 @@ public final class CraftQueueManager {
             return;
         }
         // The full-grid gate for the step the tick starts on runs before the burst budget is granted, so a
-        // job paused for a table never takes a slice of it; craftBurst re-runs the gate only for a 3x3
-        // step an interleaved burst reaches later.
+        // job paused for a table at tick start takes no slice of it; craftBurst runs the gate for a 3x3
+        // step an interleaved burst first reaches later. gridChecked: the gate already ran and passed.
         boolean gridChecked = job.currentStep().needsFullGrid();
         if (gridChecked && fullGridBlocked(player, job)) {
             return;
@@ -134,9 +134,9 @@ public final class CraftQueueManager {
 
     /**
      * The full-grid gate: when the current step needs a 3x3 grid and none is available, holds the
-     * job, reports it paused and returns true. It runs per burst, not per tick: an interleaved job's
-     * schedule moves between steps from batch to batch, so a burst that began on a 2x2 step can reach
-     * a 3x3 one, which must pass this gate too.
+     * job, reports it paused and returns true. tick() runs it for the starting step before the burst
+     * budget is granted; craftBurst runs it for a 3x3 step first reached mid-burst, since an interleaved
+     * job's schedule moves between steps from batch to batch.
      */
     private static boolean fullGridBlocked(ServerPlayer player, CraftJob job) {
         // 3×3 steps only run with a crafting table in reach. The full scan runs when due (every half
