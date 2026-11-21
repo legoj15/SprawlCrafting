@@ -139,8 +139,9 @@ final class RoundSchedule {
             }
         }
         long endedRound = round; // full targets there (r == N) or in a drain pass: no progress is final
+        boolean progressed = progressedThisPass; // read before advancePass resets it
         advancePass();
-        if (endedRound >= rounds && !progressedThisPass) {
+        if (endedRound >= rounds && !progressed) {
             stuck = true;
             return false;
         }

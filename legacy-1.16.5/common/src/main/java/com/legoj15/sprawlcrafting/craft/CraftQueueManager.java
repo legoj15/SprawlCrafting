@@ -186,6 +186,7 @@ public final class CraftQueueManager {
                 }
                 // FALLBACK: couldn't hand off (recipe locked, grid uncleanable, …) — auto-craft below.
             }
+            long requested = bulk ? Math.min(bulkRequest(job), Integer.MAX_VALUE) : 1;
             CraftExecutor.CraftResult result = bulk
                     ? craftBulk(player, job)
                     : CraftExecutor.craftOnce(player, job.currentStep().recipeId(),
@@ -201,6 +202,13 @@ public final class CraftQueueManager {
                     }
                     lastCrafted = result.crafted();
                     boolean stepDone = job.onCraftsPerformed(result.crafts());
+                    // An interleaved slice that came back as a short batch (more than one craft, fewer
+                    // than asked) was capped by supply or room: the next call would only fail on the
+                    // same shortage, so the step yields the rest of its slice to a later round now.
+                    if (!stepDone && bulk && job.isInterleaved() && result.crafts() > 1
+                            && result.crafts() < requested) {
+                        job.deferCurrentStep(); // the batch was progress, so this pass is never stuck
+                    }
                     if (job.isFinished()) {
                         ACTIVE.remove(player.getUUID());
                         sync(player, job, CraftProgressPacket.State.FINISHED, lastCrafted);
@@ -301,12 +309,17 @@ public final class CraftQueueManager {
      * craft whose output would spill ({@code refuseSpill}: a bulk step stops rather than drop at the
      * feet); a paced step keeps the spill, a few items at the feet being fine and expected there.
      */
-    private static CraftExecutor.CraftResult craftBulk(ServerPlayerEntity player, CraftJob job) {
+    /** How many crafts {@link #craftBulk} asks for: the rule in its javadoc, before the int cap. */
+    private static long bulkRequest(CraftJob job) {
         long maxCrafts = job.craftsLeftInStep();
         if (job.isFinalStep() && maxCrafts > 1) {
             maxCrafts--;
         }
-        maxCrafts = Math.min(maxCrafts, job.craftsLeftInLayoutRun());
+        return Math.min(maxCrafts, job.craftsLeftInLayoutRun());
+    }
+
+    private static CraftExecutor.CraftResult craftBulk(ServerPlayerEntity player, CraftJob job) {
+        long maxCrafts = bulkRequest(job);
         CraftExecutor.takeDropped(); // forget drops from anything before this call
         CraftExecutor.CraftResult result = maxCrafts <= 1
                 ? CraftExecutor.craftOnce(player, job.currentStep().recipeId(),

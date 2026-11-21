@@ -116,4 +116,23 @@ class RoundScheduleTest {
         assertFalse(schedule.defer(), "a stuck schedule stays stuck");
         assertEquals(4L, schedule.done(0));
     }
+
+    /**
+     * A wait in the final round, after another step made progress in that same pass, is lag the next
+     * drain pass repays, not a stuck job: the job must finish rather than cancel at the very end.
+     */
+    @Test
+    void aDeferAfterProgressInTheFinalRoundIsNotStuck() {
+        RoundSchedule schedule = new RoundSchedule(new long[] {2, 1}, 1);
+        assertTrue(schedule.interleaved());
+        assertEquals(0, schedule.current());
+        schedule.performed(1); // round 1: step 0's slice; step 1's target is still 0
+        assertEquals(0, schedule.current()); // round 2 (final): step 0's second craft
+        schedule.performed(1);
+        assertEquals(1, schedule.current());
+        assertTrue(schedule.defer(), "step 0 progressed in this pass, so the job is not stuck");
+        assertEquals(1, schedule.current());
+        schedule.performed(1);
+        assertTrue(schedule.finished());
+    }
 }
