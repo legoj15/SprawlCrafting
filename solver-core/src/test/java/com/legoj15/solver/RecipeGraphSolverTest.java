@@ -118,6 +118,14 @@ class RecipeGraphSolverTest {
         return map;
     }
 
+    private static Map<String, Long> invLong(Object... pairs) {
+        Map<String, Long> map = new HashMap<>();
+        for (int i = 0; i < pairs.length; i += 2) {
+            map.put((String) pairs[i], (Long) pairs[i + 1]);
+        }
+        return map;
+    }
+
     private List<PlannedStep<String>> solveOk(TestRecipe target, Map<String, Integer> inventory) {
         Result<String, String> result = solver().solve(target, inventory);
         assertInstanceOf(Result.Success.class, result, "expected solvable, got " + result);
@@ -499,6 +507,31 @@ class RecipeGraphSolverTest {
         TestRecipe target = compressionChain(10);
         solveOk(target, inv("raw", Integer.MAX_VALUE));
         assertTrue(solver().shortfall(target, inv("raw", Integer.MAX_VALUE)).demandsLong().isEmpty());
+    }
+
+    @Test
+    void finiteStockAboveAnIntIsNotUnbounded() {
+        // #47: through the long entry points only Long.MAX_VALUE means unbounded, so a REAL count above
+        // Integer.MAX_VALUE (billions of leftover ingots in an ME network) is that finite count: three of
+        // the four billion a's one target needs is a shortfall naming a (not a budget failure), five
+        // billion (also over an int) plans, and the sentinel still plans.
+        String previous = "a";
+        for (int level = 1; level <= 9; level++) {
+            String[] ten = new String[10];
+            Arrays.fill(ten, previous);
+            recipes.add(TestRecipe.of("x" + level, "x" + level, 1, ten));
+            previous = "x" + level;
+        }
+        // Four x9 slots, each level ten of the one below: one target craft needs 4 * 10^9 of a.
+        TestRecipe target = TestRecipe.of("t", "t", 1, "x9", "x9", "x9", "x9");
+        Result<String, String> result = solver().solveIntSizedLong(target, invLong("a", 3_000_000_000L));
+        Result.Failure<String, String> failure = assertInstanceOf(Result.Failure.class, result);
+        assertFalse(failure.budgetExceeded(), "a real shortfall, not a tree too complex to plan");
+        assertTrue(failure.missing().contains("a"), "the shortfall must be named, got " + failure.missing());
+        assertInstanceOf(Result.Success.class,
+                solver().solveIntSizedLong(target, invLong("a", 5_000_000_000L)));
+        assertInstanceOf(Result.Success.class,
+                solver().solveIntSizedLong(target, invLong("a", Long.MAX_VALUE)));
     }
 
     @Test

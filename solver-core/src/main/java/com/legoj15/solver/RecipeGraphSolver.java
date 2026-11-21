@@ -352,24 +352,46 @@ public final class RecipeGraphSolver<R, K> {
      * A plan whose steps may hold more than {@link Integer#MAX_VALUE} crafts: a tree driven by quantity
      * is planned in about one step per recipe, whatever its counts. Executing it in plan order would
      * make each intermediate in full before anything consumes it, so an executor of such a plan must
-     * interleave the steps itself.
+     * interleave the steps itself. An int stock snapshot: {@link Integer#MAX_VALUE} means unbounded
+     * ({@link #stockCount}); a real count that high needs {@link #solveLong}.
      */
     public Result<R, K> solve(RecipeInfo<R, K> target, Map<K, Integer> inventory) {
-        return solve(target, inventory, true);
+        return solveLong(target, toLong(inventory));
     }
 
     /**
      * A plan of int-sized steps, recorded depth first: a quantity-driven tree becomes batches of at most
      * {@link Integer#MAX_VALUE} crafts, each followed by the steps that consume it, so plan order already
      * holds no more than about one batch of any intermediate. At most {@code maxSteps} steps; past that
-     * the answer is {@link Result.Failure#tooLarge()}.
+     * the answer is {@link Result.Failure#tooLarge()}. An int stock snapshot: {@link Integer#MAX_VALUE}
+     * means unbounded ({@link #stockCount}); a real count that high needs {@link #solveIntSizedLong}.
      */
     public Result<R, K> solveIntSized(RecipeInfo<R, K> target, Map<K, Integer> inventory) {
-        return solve(target, inventory, false);
+        return solveIntSizedLong(target, toLong(inventory));
     }
 
-    private Result<R, K> solve(RecipeInfo<R, K> target, Map<K, Integer> inventory, boolean longSteps) {
-        Plan<R, K> plan = plan(target, toLong(inventory), true, longSteps);
+    /**
+     * {@link #solve} over long stock counts: {@link Long#MAX_VALUE} is the unbounded sentinel — a source
+     * that behaves as infinite (an AE2 creative cell) — and every other value is that finite count, so a
+     * real stock above {@link Integer#MAX_VALUE} is planned as exactly what it holds, never as
+     * infinite (#47).
+     */
+    public Result<R, K> solveLong(RecipeInfo<R, K> target, Map<K, Long> inventory) {
+        return solve(target, sanitizeLong(inventory), true);
+    }
+
+    /**
+     * {@link #solveIntSized} over long stock counts: {@link Long#MAX_VALUE} is the unbounded sentinel —
+     * a source that behaves as infinite (an AE2 creative cell) — and every other value is that finite
+     * count, so a real stock above {@link Integer#MAX_VALUE} is planned as exactly what it holds, never
+     * as infinite (#47).
+     */
+    public Result<R, K> solveIntSizedLong(RecipeInfo<R, K> target, Map<K, Long> inventory) {
+        return solve(target, sanitizeLong(inventory), false);
+    }
+
+    private Result<R, K> solve(RecipeInfo<R, K> target, Map<K, Long> inventory, boolean longSteps) {
+        Plan<R, K> plan = plan(target, inventory, true, longSteps);
         if (plan.steps == null) {
             return new Result.Failure<>(plan.missing, plan.budgetExceeded, plan.tooLarge);
         }
@@ -772,11 +794,31 @@ public final class RecipeGraphSolver<R, K> {
 
     /** True if the target could be crafted right now, possibly via sub-crafts. */
     public boolean isSolvable(RecipeInfo<R, K> target, Map<K, Integer> inventory) {
-        return solve(target, inventory) instanceof Result.Success;
+        return isSolvableLong(target, toLong(inventory));
     }
 
     /**
-     * Net raw-gatherable demand to perform one craft of {@code target}: the leaf items — those
+     * {@link #isSolvable} over long stock counts: {@link Long#MAX_VALUE} is the unbounded sentinel — a
+     * source that behaves as infinite — and every other value is that finite count (#47).
+     */
+    public boolean isSolvableLong(RecipeInfo<R, K> target, Map<K, Long> inventory) {
+        return solveLong(target, inventory) instanceof Result.Success;
+    }
+
+    /**
+     * {@link #shortfallLong} over an int stock snapshot: {@link Integer#MAX_VALUE} means unbounded
+     * ({@link #stockCount}); a real count that high needs the long form.
+     */
+    public ShortfallResult<K> shortfall(RecipeInfo<R, K> target, Map<K, Integer> inventory) {
+        return shortfallLong(target, toLong(inventory));
+    }
+
+    /**
+     * {@link #shortfall} over long stock counts: {@link Long#MAX_VALUE} is the unbounded sentinel — a
+     * source that behaves as infinite (an AE2 creative cell) — and every other value is that finite
+     * count, so a real stock above {@link Integer#MAX_VALUE} covers only what it really holds (#47).
+     *
+     * <p>Net raw-gatherable demand to perform one craft of {@code target}: the leaf items — those
      * with no usable producer recipe (ore, logs, smelt-only or trade-only items) — that the player
      * must acquire, with counts, after consuming what's in {@code inventory} and crediting the
      * overproduction of any intermediates the chain would make along the way.
@@ -793,8 +835,8 @@ public final class RecipeGraphSolver<R, K> {
      * {@link ShortfallResult#approximate()}. Crafting remainders are intentionally ignored by the
      * walk: a byproduct (an empty bucket) is never a gatherable input.
      */
-    public ShortfallResult<K> shortfall(RecipeInfo<R, K> target, Map<K, Integer> inventory) {
-        Map<K, Long> held = toLong(inventory);
+    public ShortfallResult<K> shortfallLong(RecipeInfo<R, K> target, Map<K, Long> inventory) {
+        Map<K, Long> held = sanitizeLong(inventory);
         Walk<K> walk = walk(target, held);
         Map<K, Long> demands = walk.demands;
         Map<K, List<K>> alternatives = walk.alternatives;
@@ -1655,6 +1697,22 @@ public final class RecipeGraphSolver<R, K> {
             Integer count = entry.getValue();
             if (count != null && count > 0) {
                 out.put(entry.getKey(), stockCount(count));
+            }
+        }
+        return out;
+    }
+
+    /**
+     * A long stock map as planning uses it: null and non-positive entries dropped, the unbounded
+     * sentinel ({@link Long#MAX_VALUE}) and every finite count kept as-is. A copy, like {@link #toLong},
+     * so a caller-held map cannot change mid-solve.
+     */
+    private static <T> Map<T, Long> sanitizeLong(Map<T, Long> inventory) {
+        Map<T, Long> out = new HashMap<>();
+        for (Map.Entry<T, Long> entry : inventory.entrySet()) {
+            Long count = entry.getValue();
+            if (count != null && count > 0) {
+                out.put(entry.getKey(), count);
             }
         }
         return out;
