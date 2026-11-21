@@ -100,9 +100,16 @@ public final class CraftQueueManager {
         if (job == null || !job.tick()) {
             return;
         }
+        // The full-grid gate for the step the tick starts on runs before the burst budget is granted, so a
+        // job paused for a table never takes a slice of it; craftBurst re-runs the gate only for a 3x3
+        // step an interleaved burst reaches later.
+        boolean gridChecked = job.currentStep().needsFullGrid();
+        if (gridChecked && fullGridBlocked(player, job)) {
+            return;
+        }
         if (!job.isBulkStep()) {
             // One craft per due tick, whatever the clock says: it never draws on the shared burst budget.
-            craftBurst(player, job, false, 0L);
+            craftBurst(player, job, false, 0L, gridChecked);
             return;
         }
         // The window is keyed on the SERVER tick, NOT player.tickCount: that is per-entity and resets to 0
@@ -110,7 +117,7 @@ public final class CraftQueueManager {
         long start = System.nanoTime();
         long deadline = start + BURSTS.grant(player.getServer().getTickCount(), CraftQueueManager::bulkJobCount);
         try {
-            craftBurst(player, job, true, deadline);
+            craftBurst(player, job, true, deadline, gridChecked);
         } finally {
             BURSTS.charge(System.nanoTime() - start);
         }
@@ -172,14 +179,13 @@ public final class CraftQueueManager {
      * clock is checked after a batch, never before, so a job always makes at least one craft of
      * progress even when its {@code deadline} (nanoTime) has already passed.
      */
-    private static void craftBurst(ServerPlayerEntity player, CraftJob job, boolean bulk, long deadline) {
+    private static void craftBurst(ServerPlayerEntity player, CraftJob job, boolean bulk, long deadline, boolean gridChecked) {
         ItemStack lastCrafted = ItemStack.EMPTY;
-        boolean gridChecked = false;
         bursts:
         while (true) {
             // The full-grid gate, once per burst: the first time the burst reaches a step that needs a
-            // 3x3 grid (the world does not change between batches of one tick, so one pass covers the
-            // rest of the burst).
+            // 3x3 grid, unless tick() already ran it (the world does not change between batches of one
+            // tick, so one pass covers the rest of the burst).
             if (!gridChecked && job.currentStep().needsFullGrid()) {
                 if (fullGridBlocked(player, job)) {
                     return;
