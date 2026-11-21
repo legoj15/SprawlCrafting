@@ -151,7 +151,7 @@ public final class DepthFirstSchedule<K> {
     /** The step whose batch is due, or -1 once every step has reached its total. */
     public int current() {
         if (!haveBatch) {
-            Choice next = finished() ? null : choose();
+            Choice next = finished() ? null : choose(); // null: only surplus steps were left
             currentStep = next == null ? -1 : next.step;
             currentBatch = next == null ? 0 : next.batch;
             haveBatch = true;
@@ -272,29 +272,37 @@ public final class DepthFirstSchedule<K> {
     }
 
     /**
-     * The next batch: expand the plan depth first from the target step. The target's own LAST craft
-     * waits until every other step is finished (the grid hand-off wants it to be the job's final
-     * craft), so with one craft left and a step still open, that step is demanded instead; once the
-     * target is finished, any still-open step is demanded in plan order (model drift).
+     * The next batch: expand the plan depth first from the target step ({@link #demand}). When that
+     * demand is the target's own remaining crafts — the model already holds everything they need —
+     * every other step still open is surplus: the planner counted held stock differently from the
+     * model's first-come use of it, and running those steps would only make intermediates nothing
+     * asks for (in play, trillions of gold ingots into a full network before the one crystal craft).
+     * They are skipped ({@link #skipOpenSteps}), so that batch is also the job's final one.
      */
     private Choice choose() {
         int top = crafts.length - 1;
-        if (done[top] < crafts[top]) {
-            if (crafts[top] - done[top] == 1) {
-                for (int i = 0; i < top; i++) {
-                    if (done[i] < crafts[i]) {
-                        return demand(i, crafts[i] - done[i], new HashSet<Integer>());
-                    }
-                }
-            }
-            return demand(top, crafts[top] - done[top], new HashSet<Integer>());
+        if (done[top] >= crafts[top]) {
+            skipOpenSteps();
+            return null;
         }
+        long remaining = crafts[top] - done[top];
+        Choice next = demand(top, remaining, new HashSet<Integer>());
+        if (next.step == top && next.batch == remaining) {
+            skipOpenSteps();
+        }
+        return next;
+    }
+
+    /** Marks every open step but the target as done without running it (see {@link #choose}). */
+    private void skipOpenSteps() {
+        int top = crafts.length - 1;
         for (int i = 0; i < top; i++) {
             if (done[i] < crafts[i]) {
-                return demand(i, crafts[i] - done[i], new HashSet<Integer>());
+                totalDone = saturatingAdd(totalDone, crafts[i] - done[i]);
+                done[i] = crafts[i];
+                unfinished--;
             }
         }
-        return null;
     }
 
     /**

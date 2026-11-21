@@ -10,6 +10,7 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -269,12 +270,13 @@ class DepthFirstScheduleTest {
      * A shared intermediate consumed by two different steps, one of which carries two layout runs
      * over different items (x+y, then x plus an uncrafted raw): the walk must feed both consumers
      * from the one producer, follow the run boundary when it re-reads the step's inputs, and still
-     * land every exact total with no negative stock.
+     * land every exact total with no negative stock. The plan over-makes m by 20 (10 crafts of
+     * step 2); nothing asks for them, so those crafts are skipped, never run.
      */
     @Test
     void aSharedIntermediateAndTwoLayoutRunsCompleteExactly() {
         // step0: 9 raws -> x; step1: reed -> y; step2: (x+y) then (x+w) -> 2m; step3: x+m -> n;
-        // step4: m+n -> target. x: 50 + 40 = 90 made and used; y: 20 used; m: 100 made, 80 used.
+        // step4: m+n -> target. x: 50 + 40 = 90 planned; y: 20 used; m: 100 planned, 80 used.
         Plan plan = new Plan(
                 new long[] {90, 20, 50, 40, 40},
                 Arrays.asList(
@@ -292,7 +294,8 @@ class DepthFirstScheduleTest {
         for (int i = 0; i < plan.crafts.length; i++) {
             assertEquals(plan.crafts[i], schedule.done(i), "step " + i + " reached its exact total");
         }
-        assertEquals(20L, storage.stock.get("m").longValue(), "the overproduced m stays in stock");
+        assertEquals(40L, storage.done[2], "step 2 runs only the 40 crafts the consumers need");
+        assertEquals(0L, storage.stock.get("m").longValue(), "no surplus m is made");
     }
 
     /**
@@ -310,6 +313,30 @@ class DepthFirstScheduleTest {
         for (int i = 0; i < chain.crafts.length; i++) {
             assertEquals(chain.crafts[i], schedule.done(i), "step " + i + " reached its exact total");
         }
+    }
+
+    /**
+     * A single target craft whose demand the held stock already covers partway down (the playtest's
+     * Evolved Divine Crystal: one craft, billions of gold ingots held): the steps below the held item are
+     * surplus to the model and must never run — making them first would fill the storage with an
+     * intermediate nothing asked for — and the job still finishes, the target last.
+     */
+    @Test
+    void aOneCraftTargetNeverRunsStepsItsHeldStockMakesSurplus() {
+        Plan chain = chain(1L); // 59049 / 6561 / 729 / 81 / 9 / 1 crafts
+        chain.held.put("i3", 1_000_000_000_000L); // covers step 3's 729 inputs many times over
+        FakeStorage storage = new FakeStorage(chain, Long.MAX_VALUE / 4);
+        DepthFirstSchedule<String> schedule = new DepthFirstSchedule<>(
+                chain.crafts, chain.layouts, chain.results, chain.resultCounts, chain.held);
+        storage.drive(schedule, 10_000L);
+        for (int k = 0; k < 3; k++) {
+            assertNull(storage.doneAtFirstRun[k], "surplus step " + k + " ran");
+        }
+        for (int k = 3; k < chain.crafts.length; k++) {
+            assertEquals(chain.crafts[k], storage.done[k], "step " + k + " reached its exact total");
+        }
+        assertTrue(schedule.finished());
+        assertEquals(1, storage.finalBatches, "exactly one final batch");
     }
 
     private static List<SlotLayout<String>> runs(SlotLayout<String>... runList) {
