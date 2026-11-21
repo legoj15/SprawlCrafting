@@ -2,6 +2,7 @@ package com.legoj15.sprawlcrafting.forge.compat.jei;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -541,20 +542,18 @@ public class DeferredCraftTransferHandler<C extends Container> implements IRecip
                     continue;
                 }
                 // Vanilla's drag admits a slot only while the cursor holds more items than slots
-                // already admitted (issue #38), so a short cursor (1-count stacks) must be offered
-                // the emptiest cells first and no more cells than it can cover: otherwise the first
-                // cell keeps winning and the group piles into it.
+                // already admitted (issue #38), in the order offered, so a short cursor (1-count
+                // stacks) must be offered the emptiest cells first: otherwise the first cell keeps
+                // winning and the group piles into it. No explicit cap: vanilla stops at the held
+                // count itself, and a cap would waste admissions on a cell a modded grid refuses.
                 if (maxTransfer) {
-                    java.util.Collections.sort(targets, new java.util.Comparator<Integer>() {
+                    Collections.sort(targets, new Comparator<Integer>() {
                         @Override
                         public int compare(Integer a, Integer b) {
                             return container.getSlot(a.intValue()).getStack().getCount()
                                     - container.getSlot(b.intValue()).getStack().getCount();
                         }
                     });
-                }
-                if (targets.size() > held) {
-                    targets = new ArrayList<Integer>(targets.subList(0, held));
                 }
 
                 mc.playerController.windowClick(wid, -999, dragStart, ClickType.QUICK_CRAFT, player);
@@ -569,9 +568,11 @@ public class DeferredCraftTransferHandler<C extends Container> implements IRecip
             }
         }
 
-        // Verify the fill (issue #38): every planned cell must hold its chosen identity. A cell the
-        // sweep could not clear, or a drag the server trimmed, would otherwise pass as placed and
-        // skip the engine fallback; on a mismatch, return the grid and let the caller hand off.
+        // Verify the fill (issue #38): every planned cell must hold its chosen identity. This reads
+        // the client's prediction, so it catches a cell the sweep could not clear or a slot the drag
+        // refused, not a server-side trim (the server resyncs the window itself on a mismatch). A
+        // failed cell would otherwise pass as placed and skip the engine fallback; on a mismatch,
+        // return the grid and let the caller hand off.
         for (int c = 0; c < cellSlots.size(); c++) {
             ItemStack inCell = container.getSlot(cellSlots.get(c).intValue()).getStack();
             if (inCell.isEmpty() || !sameStackIdentity(inCell, identities.get(chosen.get(c).intValue()))) {
