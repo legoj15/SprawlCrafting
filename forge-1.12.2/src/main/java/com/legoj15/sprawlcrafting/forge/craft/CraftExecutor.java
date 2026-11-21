@@ -434,6 +434,20 @@ public final class CraftExecutor {
                 return null;
             }
         }
+        // The same rule under the ledger's own identity, which drops meta for non-subtyped and
+        // damageable items: an output that shares a consumed input's ledger key charges against it.
+        Set<ItemKey> consumedLedger = new HashSet<ItemKey>();
+        for (ItemStack consumed : identity.values()) {
+            consumedLedger.add(ledgerKey(consumed));
+        }
+        if (consumedLedger.contains(ledgerKey(result))) {
+            return null;
+        }
+        for (ItemStack remainder : remainders) {
+            if (consumedLedger.contains(ledgerKey(remainder))) {
+                return null;
+            }
+        }
         for (ItemStack remainder : remainders) {
             if (ItemKey.of(remainder).equals(ItemKey.of(result))) {
                 return null; // the result's and the remainder's room proofs would count the same stacks
