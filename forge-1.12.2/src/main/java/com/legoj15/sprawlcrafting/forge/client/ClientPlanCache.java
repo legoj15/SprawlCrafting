@@ -121,8 +121,28 @@ public final class ClientPlanCache {
      */
     public static CraftPlanner.Session gatherSession(EntityPlayer player, GridContext grid) {
         CraftPlanner.Session withProtected = protectedSession(player, grid);
-        return withProtected != null ? withProtected : session;
+        CraftPlanner.Session base = withProtected != null ? withProtected : session;
+        if (grid == GridContext.CRAFTING_TABLE) {
+            return base;
+        }
+        // The list is informational (issue #51): from the 2x2 screen it must still cost the whole
+        // chain at a crafting table, as the recipe book and the modern trees do. A 2x2-costed
+        // session answers an empty demand list for any 3x3 recipe, which the screen then reads as
+        // "you already have the materials". Built once per pool: keyed on the session it mirrors,
+        // which is replaced whenever the pool or the protected offer moves.
+        if (gatherTableFor != base) {
+            gatherTable = withProtected != null
+                    ? CraftPlanner.session(player, GridContext.CRAFTING_TABLE, true, protectedNetworkBuilt)
+                    : CraftPlanner.session(player, GridContext.CRAFTING_TABLE);
+            gatherTableFor = base;
+        }
+        return gatherTable;
     }
+
+    /** The CRAFTING_TABLE-costed twin {@link #gatherSession} hands out from the 2x2 (issue #51). */
+    private static CraftPlanner.Session gatherTable;
+    /** The session {@link #gatherTable} was built alongside; a different one means rebuild. */
+    private static CraftPlanner.Session gatherTableFor;
 
     /**
      * Direct vs deferred vs unsolvable over the plain pool, widened by the protected tier
