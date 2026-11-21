@@ -77,6 +77,10 @@ import net.minecraft.world.item.ItemStack;
  *   <li>{@code StorageHelper.poweredExtraction} caps an extraction at what the energy source can pay
  *       for (one power unit per item), so a connected but power-starved network delivers less than it
  *       stores.</li>
+ *   <li>{@code MEStorage.extract(key, amount, Actionable.SIMULATE, source)} — the {@code MEStorage}
+ *       method under {@code StorageHelper.poweredExtraction} — simulates with no energy cap: a creative
+ *       cell answers any amount, a real network at most what it holds. That probe is what tells an
+ *       infinite source from a merely huge one ({@code NetworkStorage#unboundedIfProbed}, #47).</li>
  *   <li>Client side, {@code MEStorageMenu.getClientRepo()} is the screen's repo;
  *       {@code IClientRepo.getAllEntries()} gives {@code GridInventoryEntry}s with the key and stored
  *       amount the server synced (already filtered by the menu's view).</li>
@@ -255,6 +259,14 @@ public final class Ae2Station implements StationStorages.Provider {
         //?}
     }
 
+    /**
+     * Client-side counts from the server-synced repo, for colouring only (yellow outlines, click
+     * previews): the server's own plan — which can probe the network (see
+     * {@code NetworkStorage#unboundedIfProbed}) — decides what a job may really consume (#47). This
+     * side has no storage to probe, so a stored amount at or above {@link Integer#MAX_VALUE} keeps
+     * the old listing rule: unbounded ({@link Long#MAX_VALUE}), exactly what an AE2 creative cell or
+     * a Sophisticated Storage infinity upgrade lists.
+     */
     @Override
     public Map<Item, Long> clientCounts(AbstractContainerMenu menu) {
         // The client only has the synced online copy (the link status, or AE2 15's power flag); a
@@ -273,7 +285,9 @@ public final class Ae2Station implements StationStorages.Provider {
             //?} else {
             /*if (entry.getWhat() instanceof AEItemKey key && plain(key) && entry.getStoredAmount() > 0) {*/
             //?}
-                counts.merge(key.getItem(), entry.getStoredAmount(), Ae2Station::saturatingAdd);
+                long stored = entry.getStoredAmount();
+                counts.merge(key.getItem(), stored >= Integer.MAX_VALUE ? Long.MAX_VALUE : stored,
+                        Ae2Station::saturatingAdd);
             }
         }
         return counts;
@@ -356,18 +370,11 @@ public final class Ae2Station implements StationStorages.Provider {
     }
 
     /**
-     * A stored count at or above {@link Integer#MAX_VALUE} is reported as unbounded ({@link Long#MAX_VALUE}),
-     * whatever the energy-capped simulated extraction said. Verified sources: an AE2 creative cell lists
-     * every item at exactly Integer.MAX_VALUE and extracts any amount; a Sophisticated Storage infinity
-     * upgrade (seen through a storage bus) lists Integer.MAX_VALUE per slot and extracts any amount. The
-     * energy cap would otherwise shrink the count to what one extraction could power right now, though
-     * crafts draw a few items at a time and re-check power then. The planner reads Integer.MAX_VALUE as
-     * unbounded ({@code RecipeGraphSolver.stockCount}); a real network this full is over-trusted and the
-     * job pauses or cancels mid-way if it runs dry.
+     * The probe amount for {@code NetworkStorage#unboundedIfProbed}: a quarter of the long range, far
+     * above any real stock — even a network holding billions of one item (issue #47) — so only a source
+     * that hands out any amount can supply the whole request.
      */
-    static long unboundedIfSaturated(long stored, long deliverable) {
-        return stored >= Integer.MAX_VALUE ? Long.MAX_VALUE : deliverable;
-    }
+    private static final long PROBE = Long.MAX_VALUE / 4;
 
     private static long saturatingAdd(long a, long b) {
         long sum = a + b;
@@ -394,6 +401,36 @@ public final class Ae2Station implements StationStorages.Provider {
             return StorageHelper.poweredExtraction(energy, storage, key, limit, source, Actionable.SIMULATE);
         }
 
+        /**
+         * The count one stored stack plans as: the energy-capped {@link #deliverable} as a finite long
+         * (no int clamp — a real network can hold billions of one item, #47), or unbounded
+         * ({@link Long#MAX_VALUE}) when a probe proves the source behind the stack hands out any
+         * amount of it.
+         */
+        private long count(AEItemKey key, long stored) {
+            long deliverable = deliverable(key, stored);
+            if (deliverable > 0 && stored >= Integer.MAX_VALUE && unboundedIfProbed(key)) {
+                return Long.MAX_VALUE;
+            }
+            return deliverable;
+        }
+
+        /**
+         * Whether the network hands out any amount of {@code key}: an UNPOWERED simulated extraction of
+         * {@link Ae2Station#PROBE} returns at least {@code PROBE}. The call is
+         * {@code storage.extract(key, PROBE, Actionable.SIMULATE, source)} — the {@code MEStorage}
+         * method under {@link StorageHelper#poweredExtraction}, which {@link #deliverable} wraps —
+         * because the energy cap would starve even a creative cell. A creative cell (or a Sophisticated
+         * Storage infinity upgrade seen through a storage bus) hands back the whole request; a real
+         * network at most what it holds, and {@code PROBE} is far over any real stock. Asked only for a
+         * listing at or above {@link Integer#MAX_VALUE}, which those sources report exactly — and which
+         * no longer alone means unbounded, because a real network CAN hold that many (#47): without the
+         * probe the plan would treat it as infinite, consume the real stock and cancel "went missing".
+         */
+        private boolean unboundedIfProbed(AEItemKey key) {
+            return storage.extract(key, PROBE, Actionable.SIMULATE, source) >= PROBE;
+        }
+
         @Override
         public Map<Item, Long> counts() {
             Map<Item, Long> counts = new HashMap<>();
@@ -408,10 +445,9 @@ public final class Ae2Station implements StationStorages.Provider {
                 /*if (entry.getKey() instanceof AEItemKey key && plain(key) && entry.getLongValue() > 0
                         && menu.isKeyVisible(key) && CraftExecutor.usableAsIngredient(key.toStack())) {*/
                 //?}
-                    long deliverable = deliverable(key, entry.getLongValue());
-                    if (deliverable > 0) {
-                        deliverable = unboundedIfSaturated(entry.getLongValue(), deliverable);
-                        counts.merge(key.getItem(), deliverable, Ae2Station::saturatingAdd);
+                    long count = count(key, entry.getLongValue());
+                    if (count > 0) {
+                        counts.merge(key.getItem(), count, Ae2Station::saturatingAdd);
                     }
                 }
             }

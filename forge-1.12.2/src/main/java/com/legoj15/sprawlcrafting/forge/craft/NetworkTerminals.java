@@ -1,7 +1,9 @@
 package com.legoj15.sprawlcrafting.forge.craft;
 
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import net.minecraft.entity.player.EntityPlayer;
@@ -80,6 +82,26 @@ public final class NetworkTerminals {
         List<ItemStack> stacks(Set<Item> items);
 
         /**
+         * Usable-material counts per {@link ItemKey} for the planner, long: {@link Long#MAX_VALUE}
+         * means unbounded, every other value that finite count. The default derives from
+         * {@link #stacks}, so it inherits the int-clamped listing and only reads a count at
+         * {@link Integer#MAX_VALUE} as unbounded — the client mirror cannot prove more (issue #47),
+         * and the server's own plan, which can probe the network (see the live view's override),
+         * decides what a job may really consume. {@code items} filters as in {@link #stacks}.
+         */
+        default Map<ItemKey, Long> counts(Set<Item> items) {
+            Map<ItemKey, Long> counts = new HashMap<ItemKey, Long>();
+            for (ItemStack stack : stacks(items)) {
+                if (!stack.isEmpty() && CraftExecutor.usableAsIngredient(stack)) {
+                    long count = stack.getCount();
+                    counts.merge(ItemKey.of(stack), count >= Integer.MAX_VALUE ? Long.MAX_VALUE : count,
+                            NetworkTerminals::saturatingAdd);
+                }
+            }
+            return counts;
+        }
+
+        /**
          * Server only. Extracts up to {@code count} items exactly like {@code like} (item, metadata
          * and NBT), returning how many were (or, simulating, would be) extracted: 0..count. The
          * network charges its own power for the transfer.
@@ -88,6 +110,15 @@ public final class NetworkTerminals {
 
         /** Server only. Inserts {@code stack} into the network; returns what did not fit (EMPTY if all did). */
         ItemStack insert(ItemStack stack);
+
+        /**
+         * Server only. Whether the network would take all of {@code stack} now (a simulated insert,
+         * nothing moves). The default says no (a view that cannot simulate never invites a spill);
+         * the client mirror keeps it, and is never asked.
+         */
+        default boolean accepts(ItemStack stack) {
+            return stack.isEmpty();
+        }
     }
 
     private static volatile Provider provider;
@@ -143,6 +174,12 @@ public final class NetworkTerminals {
         return view == null ? Collections.<ItemStack>emptyList() : view.stacks(null);
     }
 
+    /** The open terminal's network as long planner counts (empty when none); see {@link View#counts}. */
+    public static Map<ItemKey, Long> counts(EntityPlayer player) {
+        View view = view(player);
+        return view == null ? Collections.<ItemKey, Long>emptyMap() : view.counts(null);
+    }
+
     /** Client only: see {@link Provider#clientSignature}. */
     public static int clientSignature(EntityPlayer player) {
         Provider current = provider;
@@ -156,5 +193,11 @@ public final class NetworkTerminals {
     public static int saturatedAdd(int a, int b) {
         long sum = (long) a + (long) b;
         return sum > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) sum;
+    }
+
+    /** {@code a + b} for non-negative counts, pinned at {@link Long#MAX_VALUE} (unbounded) instead of wrapping. */
+    public static long saturatingAdd(long a, long b) {
+        long sum = a + b;
+        return sum < 0 ? Long.MAX_VALUE : sum;
     }
 }

@@ -1,7 +1,12 @@
 package com.legoj15.sprawlcrafting.craft;
 
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 
+import com.legoj15.sprawlcrafting.Constants;
+import com.legoj15.solver.DepthFirstSchedule;
 import com.legoj15.solver.ProducedLedger;
 import com.legoj15.solver.SlotLayout;
 
@@ -33,6 +38,16 @@ import net.minecraft.world.item.ItemStack;
  * at the boundary between two bulk steps the next step is due on the very next tick rather than
  * waiting another half second, so a compression chain runs as one long burst split only by the
  * time budget.
+ *
+ * <p>A job with any step whose crafts times its per-craft volume (result count or slot count,
+ * whichever is bigger) exceeds {@link Integer#MAX_VALUE} — a long step from the solver's quantity
+ * path — runs <em>scheduled</em> ({@link DepthFirstSchedule}): the schedule picks the next batch at
+ * run time, expanding the plan depth first from the target against a model of the intermediates it
+ * itself produced, so no intermediate is ever made much beyond one batch ahead of its consumer. Its
+ * batches are capped in items (an int's worth at first) and the cap halves when a batch's output
+ * has no room and doubles back after a batch ran whole, so the storage, not a fixed batch size,
+ * bounds the intermediates. Every step of such a job bursts as a bulk one; a job whose steps all
+ * fit an int behaves exactly as the cadence above describes (the sequential path).
  */
 public final class CraftJob {
 
@@ -74,13 +89,27 @@ public final class CraftJob {
     private final List<CraftStep> steps;
     private final long totalCrafts;
     private final ProducedLedger<Item, CraftExecutor.LedgerVariant> produced = new ProducedLedger<>();
+    /**
+     * The schedule, decided once here: used when any step's crafts times its per-craft volume exceeds
+     * {@link Integer#MAX_VALUE}; null on the sequential path, which keeps the fields below.
+     */
+    private final DepthFirstSchedule<Item> schedule;
+    /** Whether this job runs interleaved; every step-state method below branches on it. */
+    private final boolean interleaved;
+    /**
+     * {@link #currentCraftLayout}'s per-step cursor for an interleaved job (the schedule revisits a
+     * step batch by batch): each step's run and that run's first craft against that step's own done
+     * count ({@link DepthFirstSchedule#done}). A run start of -1 marks a step never visited.
+     */
+    private final int[] layoutRunByStep;
+    private final long[] layoutRunStartByStep;
 
     private int stepIndex;
-    private int craftsDoneInStep;
+    private long craftsDoneInStep;
     /** {@link #currentCraftLayout}'s cursor: the step it is for, its run, and that run's first craft. */
     private int layoutCursorStep = -1;
     private int layoutRun;
-    private int layoutRunStart;
+    private long layoutRunStart;
     /** Crafts of all steps before {@link #stepIndex}, so {@link #craftsDone()} is O(1). */
     private long craftsBeforeStep;
     private int progressTicks;
@@ -108,7 +137,12 @@ public final class CraftJob {
      */
     private boolean usesProtected;
 
-    public CraftJob(ResourceLocation targetRecipe, ItemStack targetResult, List<CraftStep> steps) {
+    /**
+     * @param held the planning inventory snapshot the job was planned against (missing = 0,
+     *             {@link Long#MAX_VALUE} = unbounded): the seed of the interleaved path's stock model
+     */
+    public CraftJob(ResourceLocation targetRecipe, ItemStack targetResult, List<CraftStep> steps,
+                    Map<Item, Long> held) {
         if (steps.isEmpty()) {
             throw new IllegalArgumentException("a craft job needs at least one step");
         }
@@ -116,10 +150,65 @@ public final class CraftJob {
         this.targetResult = targetResult.copy();
         this.steps = List.copyOf(steps);
         long total = 0;
-        for (CraftStep step : this.steps) {
-            total = saturatingAdd(total, step.crafts());
+        long[] totals = new long[steps.size()];
+        List<List<SlotLayout<Item>>> layouts = new ArrayList<>(steps.size());
+        List<Item> results = new ArrayList<>(steps.size());
+        int[] resultCounts = new int[steps.size()];
+        boolean overInt = false;
+        for (int i = 0; i < totals.length; i++) {
+            CraftStep step = this.steps.get(i);
+            totals[i] = step.crafts();
+            total = saturatingAdd(total, totals[i]);
+            layouts.add(step.layouts());
+            results.add(step.result());
+            resultCounts[i] = step.resultCount();
+            overInt |= saturating(totals[i], Math.max(step.resultCount(), step.slotCount())) > Integer.MAX_VALUE;
         }
         this.totalCrafts = total;
+        this.interleaved = overInt;
+        this.schedule = interleaved
+                ? new DepthFirstSchedule<>(totals, layouts, results, resultCounts, held)
+                : null;
+        if (interleaved) {
+            Constants.LOG.info("SprawlCrafting: {} runs on a depth-first schedule:{}", targetRecipe, scheduleReport());
+            this.layoutRunByStep = new int[steps.size()];
+            this.layoutRunStartByStep = new long[steps.size()];
+            Arrays.fill(layoutRunStartByStep, -1L);
+        } else {
+            this.layoutRunByStep = null;
+            this.layoutRunStartByStep = null;
+        }
+    }
+
+    /**
+     * Diagnostic text for an interleaved job's log lines: one line per step with its recipe, crafts done of
+     * its total, result and the schedule's model stock of that result, then the current batch and cap.
+     */
+    public String scheduleReport() {
+        if (!interleaved) {
+            return " (sequential)";
+        }
+        // Choose first: choosing can skip surplus steps, and the lines below should show that.
+        int current = schedule.current();
+        StringBuilder text = new StringBuilder();
+        for (int i = 0; i < steps.size(); i++) {
+            CraftStep step = steps.get(i);
+            text.append("\n  ").append(i).append(' ').append(step.recipeId()).append(": ")
+                    .append(schedule.done(i)).append('/').append(step.crafts()).append(" -> ")
+                    .append(step.resultCount()).append("x ").append(step.result())
+                    .append(", model stock ").append(step.result() == null ? -1 : schedule.stock(step.result()));
+        }
+        text.append("\n  current step ").append(current).append(", batch ")
+                .append(current < 0 ? 0 : schedule.batch()).append(", cap ").append(schedule.cap());
+        return text.toString();
+    }
+
+    /** {@code a * b} for non-negative counts, pinned at {@link Long#MAX_VALUE} instead of wrapping. */
+    private static long saturating(long a, long b) {
+        if (a == 0 || b == 0) {
+            return 0;
+        }
+        return a > Long.MAX_VALUE / b ? Long.MAX_VALUE : a * b;
     }
 
     /** {@code a + b} for non-negative counts, pinned at {@link Long#MAX_VALUE} instead of wrapping. */
@@ -163,20 +252,37 @@ public final class CraftJob {
         return steps;
     }
 
+    /** The step now due: the schedule's current step when interleaved, else the sequential cursor. */
     public CraftStep currentStep() {
-        return steps.get(stepIndex);
+        return steps.get(interleaved ? schedule.current() : stepIndex);
     }
 
     /**
-     * The plan's per-slot items for the craft about to run — the layout run covering
-     * {@code craftsDoneInStep} within the current step — or null when the step carries no layout
-     * (a step built without one, or the counter past the last run: defensive, the step advances with
-     * the last craft) or the job is finished: the executor then falls back to {@code SlotAssignment}.
-     * Read it before {@link #onCraftPerformed()}, which advances the counter (and the step).
+     * The plan's per-slot items for the craft about to run — the layout run covering the current
+     * step's done count — or null when the step carries no layout (a step built without one, or the
+     * counter past the last run: defensive, the step advances with the last craft) or the job is
+     * finished: the executor then falls back to {@code SlotAssignment}. Read it before
+     * {@link #onCraftPerformed()}, which advances the counter (and the step). An interleaved job's
+     * cursor is per step, so it stays correct when a later batch comes back to a step.
      */
     public List<Item> currentCraftLayout() {
         if (isFinished()) {
             return null;
+        }
+        if (interleaved) {
+            int step = schedule.current();
+            long done = schedule.done(step);
+            List<SlotLayout<Item>> runs = steps.get(step).layouts();
+            if (layoutRunStartByStep[step] < 0 || done < layoutRunStartByStep[step]) { // latter: defensive
+                layoutRunByStep[step] = 0;
+                layoutRunStartByStep[step] = 0;
+            }
+            while (layoutRunByStep[step] < runs.size()
+                    && done - layoutRunStartByStep[step] >= runs.get(layoutRunByStep[step]).crafts()) {
+                layoutRunStartByStep[step] += runs.get(layoutRunByStep[step]).crafts();
+                layoutRunByStep[step]++;
+            }
+            return layoutRunByStep[step] < runs.size() ? runs.get(layoutRunByStep[step]).items() : null;
         }
         List<SlotLayout<Item>> runs = currentStep().layouts();
         // A cursor, not a walk from the first run: a step whose remainders flip-flop can carry one
@@ -194,30 +300,37 @@ public final class CraftJob {
     }
 
     public boolean isFinished() {
-        return stepIndex >= steps.size();
+        return interleaved ? schedule.finished() : stepIndex >= steps.size();
     }
 
     /**
-     * True while the current step is the last one — the step that produces the requested
-     * item. Must be read before {@link #onCraftPerformed()} (which advances {@code stepIndex}).
+     * True while the current batch is the job's last — it runs the target step (the one that produces
+     * the requested item), every other step is finished, and it holds exactly that step's remaining
+     * crafts. Must be read before {@link #onCraftPerformed()} (which advances the batch).
      */
     public boolean isFinalStep() {
-        return stepIndex == steps.size() - 1;
+        return interleaved ? schedule.isFinalBatch() : stepIndex == steps.size() - 1;
     }
 
     /**
      * True when the craft about to be performed is the final craft of the current step
      * (the next {@link #onCraftPerformed()} will advance past it). Lets the grid-fill
-     * hand-off divert only the very last craft of the final step, auto-crafting any
-     * earlier crafts of a multi-craft step normally.
+     * hand-off divert only the very last craft of the final step — on an interleaved job, the whole
+     * job's very last craft, which the schedule holds back until every other step is done.
      */
     public boolean isLastCraftOfStep() {
+        if (interleaved) {
+            return isFinalStep() && schedule.batch() == 1;
+        }
         return craftsDoneInStep == currentStep().crafts() - 1;
     }
 
-    /** How many crafts of the current step are still to run ({@link #onCraftsPerformed} accepts at most this many). */
-    public int craftsLeftInStep() {
-        return currentStep().crafts() - craftsDoneInStep;
+    /**
+     * How many crafts of the current step are still to run ({@link #onCraftsPerformed} accepts at most
+     * this many): the current batch when interleaved, the whole remainder of the step otherwise.
+     */
+    public long craftsLeftInStep() {
+        return interleaved ? schedule.batch() : currentStep().crafts() - craftsDoneInStep;
     }
 
     /**
@@ -227,19 +340,43 @@ public final class CraftJob {
      * assignment. {@link #craftsLeftInStep()} when the step carries no layout or the cursor is past
      * the last run (defensive, as in {@link #currentCraftLayout}): no run bounds a batch then.
      */
-    public int craftsLeftInLayoutRun() {
+    public long craftsLeftInLayoutRun() {
+        if (interleaved) {
+            if (currentCraftLayout() == null) {
+                return craftsLeftInStep();
+            }
+            int step = schedule.current();
+            return layoutRunStartByStep[step]
+                    + steps.get(step).layouts().get(layoutRunByStep[step]).crafts() - schedule.done(step);
+        }
         return currentCraftLayout() == null
                 ? craftsLeftInStep()
                 : layoutRunStart + currentStep().layouts().get(layoutRun).crafts() - craftsDoneInStep;
     }
 
     /**
-     * True when the current step has more than {@link #BULK_THRESHOLD} crafts and so runs in bursts;
-     * false for a paced step (one craft per {@link #TICKS_PER_STEP}). Read before
+     * True when the current step runs in bursts; false for a paced step (one craft per
+     * {@link #TICKS_PER_STEP}). Every step of an interleaved job bursts, whatever its size — the
+     * batches are the point of such a job, not the per-step rhythm. Read before
      * {@link #onCraftPerformed()}, which may advance to the next step.
      */
     public boolean isBulkStep() {
-        return currentStep().crafts() > BULK_THRESHOLD;
+        return interleaved || currentStep().crafts() > BULK_THRESHOLD;
+    }
+
+    /** Whether this job runs on a {@link DepthFirstSchedule} (some step exceeds an int's volume). */
+    public boolean isInterleaved() {
+        return interleaved;
+    }
+
+    /**
+     * The current batch's output had nowhere to go: halve the schedule's batch cap so the next batch
+     * is smaller (a smaller batch both fits a tighter network and lets the consuming steps run
+     * first). Returns false when the batch is already a single craft at the per-craft floor — the
+     * storage is genuinely full and the caller stops the job. The sequential path never shrinks.
+     */
+    public boolean shrinkForRoom() {
+        return interleaved && schedule.noRoom();
     }
 
     /**
@@ -260,7 +397,7 @@ public final class CraftJob {
 
     /** Number of individual craft executions completed so far. */
     public long craftsDone() {
-        return saturatingAdd(craftsBeforeStep, craftsDoneInStep);
+        return interleaved ? schedule.totalDone() : saturatingAdd(craftsBeforeStep, craftsDoneInStep);
     }
 
     /**
@@ -268,7 +405,7 @@ public final class CraftJob {
      *
      * @return true if a craft is due now: one craft for a paced step, a burst bounded by
      *         {@link #BURST_BUDGET_NANOS} for a bulk step (the caller records what it applied with
-     *         {@link #onCraftsPerformed(int)})
+     *         {@link #onCraftsPerformed(long)})
      */
     public boolean tick() {
         ticksSinceSync++;
@@ -293,7 +430,7 @@ public final class CraftJob {
      * @return true if that craft completed the step. The half-second wait restarts after every craft of
      *         a paced step and only at the step boundary of a bulk step (whose remaining crafts stay due,
      *         so the next burst runs on the following tick — or immediately so at a bulk-to-bulk
-     *         boundary, see {@link #onCraftsPerformed(int)}).
+     *         boundary, see {@link #onCraftsPerformed(long)}).
      */
     public boolean onCraftPerformed() {
         return onCraftsPerformed(1);
@@ -305,15 +442,22 @@ public final class CraftJob {
      * of {@link #onCraftPerformed()}, recorded in one go.
      *
      * @param n how many crafts were applied, 1..{@link #craftsLeftInStep()}
-     * @return true if those crafts completed the step. The half-second wait restarts after every craft
-     *         of a paced step and at a step boundary — except the boundary of a bulk step whose next
-     *         step is bulk too, where the next step is due on the very next tick
+     * @return true if those crafts completed the step's run — the step itself on the sequential
+     *         path, the current batch of an interleaved one. The half-second wait restarts after
+     *         every craft of a paced step and at a step boundary — except the boundary of a bulk step
+     *         whose next step is bulk too (and every batch boundary of an interleaved job, whose steps
+     *         all burst), where the next batch is due on the very next tick
      *         ({@code progressTicks = TICKS_PER_STEP - 1}) instead of restarting the half-second wait
      *         between two parts of what is really one long burst.
      */
-    public boolean onCraftsPerformed(int n) {
+    public boolean onCraftsPerformed(long n) {
         if (n < 1 || n > craftsLeftInStep()) {
             throw new IllegalArgumentException("crafts performed must be in [1, " + craftsLeftInStep() + "], got " + n);
+        }
+        if (interleaved) {
+            schedule.performed(n);
+            progressTicks = TICKS_PER_STEP - 1; // keep bursting into the next batch, as bulk-to-bulk today
+            return true;
         }
         boolean paced = !isBulkStep();
         craftsDoneInStep += n;

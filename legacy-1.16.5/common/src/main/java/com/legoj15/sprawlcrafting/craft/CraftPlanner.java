@@ -223,12 +223,12 @@ public final class CraftPlanner {
     public static final class Session {
         private final RecipeManager recipes;
         private final GridContext grid;
-        private final Map<Item, Integer> inventory;
+        private final Map<Item, Long> inventory;
         private final RecipeGraphSolver<ResourceLocation, Item> solver;
         private final Map<ResourceLocation, Craftability> classifyCache = new HashMap<>();
 
         private Session(RecipeManager recipes, GridContext grid,
-                        final Map<Item, List<McRecipe>> producers, Map<Item, Integer> inventory) {
+                        final Map<Item, List<McRecipe>> producers, Map<Item, Long> inventory) {
             this.recipes = recipes;
             this.grid = grid;
             this.inventory = inventory;
@@ -278,7 +278,7 @@ public final class CraftPlanner {
             if (!target.fits(grid)) {
                 return PlanOutcome.of(PlanOutcome.Kind.NEEDS_BIGGER_GRID);
             }
-            RecipeGraphSolver.Result<ResourceLocation, Item> result = solver.solve(target, inventory);
+            RecipeGraphSolver.Result<ResourceLocation, Item> result = solver.solveLong(target, inventory);
             if (result instanceof RecipeGraphSolver.Result.Success) {
                 RecipeGraphSolver.Result.Success<ResourceLocation, Item> success =
                         (RecipeGraphSolver.Result.Success<ResourceLocation, Item>) result;
@@ -286,10 +286,13 @@ public final class CraftPlanner {
                 List<CraftStep> steps = new ArrayList<>();
                 for (int i = 0; i < planned.size(); i++) {
                     PlannedStep<ResourceLocation> step = planned.get(i);
+                    McRecipe info = stepInfo(step.recipeId());
                     steps.add(new CraftStep(step.recipeId(), step.crafts(), !fits2x2(step.recipeId(), target),
-                            success.layouts().get(i)));
+                            success.layouts().get(i),
+                            info != null ? info.result() : null, info != null ? info.resultCount() : 0));
                 }
-                return PlanOutcome.planned(new CraftJob(targetRecipe.getId(), target.resultStack, steps));
+                return PlanOutcome.planned(
+                        new CraftJob(targetRecipe.getId(), target.resultStack, steps, inventory));
             }
             RecipeGraphSolver.Result.Failure<ResourceLocation, Item> failure =
                     (RecipeGraphSolver.Result.Failure<ResourceLocation, Item>) result;
@@ -315,7 +318,7 @@ public final class CraftPlanner {
             if (!target.fits(grid)) {
                 return new ShortfallView(targetId, target.resultCount(), false, false, ImmutableList.<ItemDemand>of());
             }
-            RecipeGraphSolver.ShortfallResult<Item> result = solver.shortfall(target, inventory);
+            RecipeGraphSolver.ShortfallResult<Item> result = solver.shortfallLong(target, inventory);
             List<ItemDemand> demands = new ArrayList<>();
             // demandsLong, not the int-clamped demands(): batched gather lists exceed Integer.MAX_VALUE.
             for (Map.Entry<Item, Long> e : result.demandsLong().entrySet()) {
@@ -344,6 +347,16 @@ public final class CraftPlanner {
             }
             return recipe.get() instanceof ICraftingRecipe && recipe.get().canCraftInDimensions(2, 2);
         }
+
+        /**
+         * A plan step's recipe reduced to the solver's view, or null when its id no longer resolves —
+         * such a job fails on its first craft ({@code RECIPE_GONE}) long before its result count
+         * matters, so the steps carry a null result and a zero count then.
+         */
+        private McRecipe stepInfo(ResourceLocation recipeId) {
+            Optional<? extends IRecipe<?>> recipe = RecipeIds.byId(recipes, recipeId);
+            return recipe.isPresent() ? McRecipe.of(recipe.get()) : null;
+        }
     }
 
     /**
@@ -354,26 +367,33 @@ public final class CraftPlanner {
      * the executor may pick for a job planned with it ({@link CraftExecutor#usableAsIngredient}).
      *
      * <p>{@code station} adds an open crafting station's plain-item counts (already usable, see
-     * {@link StationStorage}); the solver counts in {@code int}, so each total is clamped at
-     * {@link Integer#MAX_VALUE} (an ME network can hold far more).
+     * {@link StationStorage}). Counts are {@code long} with a saturating add: an unbounded station
+     * count ({@link Long#MAX_VALUE}, an AE2 creative cell) stays unbounded, and a real count above
+     * {@link Integer#MAX_VALUE} (a network holding billions of one item) stays that finite count —
+     * the solver's long entry points read it exactly (issue #47).
      */
-    private static Map<Item, Integer> snapshotInventory(PlayerInventory inventory, Map<Item, Long> station,
-                                                        boolean includeProtected) {
-        Map<Item, Integer> counts = new HashMap<>();
+    private static Map<Item, Long> snapshotInventory(PlayerInventory inventory, Map<Item, Long> station,
+                                                     boolean includeProtected) {
+        Map<Item, Long> counts = new HashMap<>();
         for (int i = 0; i < MAIN_SLOTS; i++) {
             ItemStack stack = inventory.getItem(i);
             if (!stack.isEmpty() && CraftExecutor.usableAsIngredient(stack, includeProtected)) {
-                counts.merge(stack.getItem(), stack.getCount(), Integer::sum);
+                counts.merge(stack.getItem(), (long) stack.getCount(), Long::sum);
             }
         }
         for (Map.Entry<Item, Long> entry : station.entrySet()) {
             long count = entry.getValue();
             if (count > 0) {
-                counts.merge(entry.getKey(), (int) Math.min(count, Integer.MAX_VALUE),
-                        (a, b) -> (int) Math.min((long) a + b, Integer.MAX_VALUE));
+                counts.merge(entry.getKey(), count, CraftPlanner::saturatingAdd);
             }
         }
         return counts;
+    }
+
+    /** {@code a} plus {@code b} without overflow: {@link Long#MAX_VALUE} (unbounded) stays there. */
+    private static long saturatingAdd(long a, long b) {
+        long sum = a + b;
+        return sum < 0 ? Long.MAX_VALUE : sum;
     }
 
     /**
@@ -450,14 +470,14 @@ public final class CraftPlanner {
                 for (SlotLayout<Item> run : step.layouts()) {
                     for (Item item : run.items()) {
                         if (item != null && protectedCopies.containsKey(item)) {
-                            net.merge(item, (long) run.crafts(), Long::sum);
+                            net.merge(item, run.crafts(), Long::sum);
                         }
                     }
                 }
             }
             ItemStack produced = RecipeIds.resultOf(recipe);
             if (!produced.isEmpty() && protectedCopies.containsKey(produced.getItem())) {
-                net.merge(produced.getItem(), -((long) Math.max(1, produced.getCount()) * step.crafts()),
+                net.merge(produced.getItem(), -(Math.max(1, produced.getCount()) * step.crafts()),
                         Long::sum);
             }
         }

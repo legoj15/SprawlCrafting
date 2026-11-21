@@ -4,8 +4,10 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 import org.junit.jupiter.api.Test;
@@ -112,6 +114,14 @@ class RecipeGraphSolverTest {
         Map<String, Integer> map = new HashMap<>();
         for (int i = 0; i < pairs.length; i += 2) {
             map.put((String) pairs[i], (Integer) pairs[i + 1]);
+        }
+        return map;
+    }
+
+    private static Map<String, Long> invLong(Object... pairs) {
+        Map<String, Long> map = new HashMap<>();
+        for (int i = 0; i < pairs.length; i += 2) {
+            map.put((String) pairs[i], (Long) pairs[i + 1]);
         }
         return map;
     }
@@ -497,6 +507,31 @@ class RecipeGraphSolverTest {
         TestRecipe target = compressionChain(10);
         solveOk(target, inv("raw", Integer.MAX_VALUE));
         assertTrue(solver().shortfall(target, inv("raw", Integer.MAX_VALUE)).demandsLong().isEmpty());
+    }
+
+    @Test
+    void finiteStockAboveAnIntIsNotUnbounded() {
+        // #47: through the long entry points only Long.MAX_VALUE means unbounded, so a REAL count above
+        // Integer.MAX_VALUE (billions of leftover ingots in an ME network) is that finite count: three of
+        // the four billion a's one target needs is a shortfall naming a (not a budget failure), five
+        // billion (also over an int) plans, and the sentinel still plans.
+        String previous = "a";
+        for (int level = 1; level <= 9; level++) {
+            String[] ten = new String[10];
+            Arrays.fill(ten, previous);
+            recipes.add(TestRecipe.of("x" + level, "x" + level, 1, ten));
+            previous = "x" + level;
+        }
+        // Four x9 slots, each level ten of the one below: one target craft needs 4 * 10^9 of a.
+        TestRecipe target = TestRecipe.of("t", "t", 1, "x9", "x9", "x9", "x9");
+        Result<String, String> result = solver().solveIntSizedLong(target, invLong("a", 3_000_000_000L));
+        Result.Failure<String, String> failure = assertInstanceOf(Result.Failure.class, result);
+        assertFalse(failure.budgetExceeded(), "a real shortfall, not a tree too complex to plan");
+        assertTrue(failure.missing().contains("a"), "the shortfall must be named, got " + failure.missing());
+        assertInstanceOf(Result.Success.class,
+                solver().solveIntSizedLong(target, invLong("a", 5_000_000_000L)));
+        assertInstanceOf(Result.Success.class,
+                solver().solveIntSizedLong(target, invLong("a", Long.MAX_VALUE)));
     }
 
     @Test
@@ -1304,16 +1339,44 @@ class RecipeGraphSolverTest {
     }
 
     @Test
-    void makeablePlanLongerThanTheStepCapIsReportedTooLarge() {
-        // The same makeable tree with room for 64 steps: refused, and said to be too large rather
-        // than short of anything. budgetExceeded stays set for callers that only read that.
+    void quantityPlanLengthDoesNotGrowWithQuantity() {
+        // The same makeable tree with room for only 64 steps: still planned, in about one step per
+        // recipe (a step records its recipe's whole demand as a long count), so the plan's length
+        // tracks the tree's shape, not its quantities.
+        TestRecipe target = quantityChain(17);
+        int unbounded = Integer.MAX_VALUE;
+        RecipeGraphSolver<String, String> small = new RecipeGraphSolver<>(
+                item -> recipes.stream().filter(r -> r.result().equals(item)).collect(Collectors.toList()),
+                remainders::get, 32, 4096, 64);
+        Result<String, String> result = small.solve(target, inv("a", unbounded, "b", unbounded, "d", unbounded));
+        Result.Success<String, String> success = assertInstanceOf(Result.Success.class, result);
+        Set<String> distinct = new HashSet<>();
+        for (PlannedStep<String> step : success.steps()) {
+            distinct.add(step.recipeId());
+        }
+        assertTrue(success.steps().size() <= 2 * distinct.size(),
+                "about one step per recipe expected, got " + success.steps());
+        long leafCrafts = 0;
+        for (PlannedStep<String> step : success.steps()) {
+            if (step.recipeId().equals("leaf")) {
+                leafCrafts += step.crafts();
+            }
+        }
+        assertEquals(16_926_659_444_736L, leafCrafts);
+    }
+
+    @Test
+    void intSizedPlanLongerThanTheStepCapIsReportedTooLarge() {
+        // The depth-first int-sized plan of the same makeable tree with room for 64 steps: refused, and
+        // said to be too large rather than short of anything. budgetExceeded stays set for callers that
+        // only read that.
         TestRecipe target = quantityChain(17);
         int unbounded = Integer.MAX_VALUE;
         RecipeGraphSolver<String, String> small = new RecipeGraphSolver<>(
                 item -> recipes.stream().filter(r -> r.result().equals(item)).collect(Collectors.toList()),
                 remainders::get, 32, 4096, 64);
         Result.Failure<String, String> failure = assertInstanceOf(Result.Failure.class,
-                small.solve(target, inv("a", unbounded, "b", unbounded, "d", unbounded)));
+                small.solveIntSized(target, inv("a", unbounded, "b", unbounded, "d", unbounded)));
         assertTrue(failure.tooLarge(), "makeable, but longer than the step cap");
         assertTrue(failure.budgetExceeded());
     }

@@ -61,6 +61,10 @@ import net.minecraft.item.Items;
  *       can only read the synced flag.</li>
  *   <li>{@code Platform.poweredExtraction/poweredInsert} copy the request and cap the move at what the
  *       energy source can pay for, so a powered but starved network delivers less than it stores.</li>
+ *   <li>{@code IMEMonitor.extractItems(request, Actionable.SIMULATE, source)} — the {@code IMEInventory}
+ *       method under {@code Platform.poweredExtraction} — simulates with no energy cap: a creative cell
+ *       answers any amount, a real network at most what it holds. That probe is what tells an infinite
+ *       source from a merely huge one ({@code NetworkStorage#unboundedIfProbed}, #47).</li>
  *   <li>View cells: AE2 filters the client repo in the screen, and its own crafting and JEI flows apply
  *       {@code ViewCellItem.createFilter(getViewCells())} (null for no cells); both sides here apply it, so
  *       only items the screen can show ever count.</li>
@@ -197,6 +201,14 @@ public final class Ae2Station implements StationStorages.Provider {
                 menu.getStorageChannel(), viewFilter(menu));
     }
 
+    /**
+     * Client-side counts from the server-synced repo, for colouring only (yellow outlines, click
+     * previews): the server's own plan — which can probe the network (see
+     * {@code NetworkStorage#unboundedIfProbed}) — decides what a job may really consume (#47). This
+     * side has no monitor to probe, so a stored amount at or above {@link Integer#MAX_VALUE} keeps the
+     * old listing rule: unbounded ({@link Long#MAX_VALUE}), exactly what an AE2 creative cell or a
+     * Sophisticated Storage infinity upgrade lists.
+     */
     @Override
     public Map<Item, Long> clientCounts(Container menu) {
         // The client only has the synced power flag; an unpowered terminal has no counts.
@@ -215,7 +227,9 @@ public final class Ae2Station implements StationStorages.Provider {
             IAEItemStack stack = entry.getStack();
             if (stack != null && entry.getStoredAmount() > 0 && plain(channel, stack) && shown(filter, stack)
                     && CraftExecutor.usableAsIngredient(stack.getDefinition())) {
-                counts.merge(stack.getItem(), entry.getStoredAmount(), Ae2Station::saturatingAdd);
+                long stored = entry.getStoredAmount();
+                counts.merge(stack.getItem(), stored >= Integer.MAX_VALUE ? Long.MAX_VALUE : stored,
+                        Ae2Station::saturatingAdd);
             }
         }
         return counts;
@@ -311,18 +325,11 @@ public final class Ae2Station implements StationStorages.Provider {
     }
 
     /**
-     * A stored count at or above {@link Integer#MAX_VALUE} is reported as unbounded ({@link Long#MAX_VALUE}),
-     * whatever the energy-capped simulated extraction said. Verified sources: an AE2 creative cell lists
-     * every item at exactly Integer.MAX_VALUE and extracts any amount; a Sophisticated Storage infinity
-     * upgrade (seen through a storage bus) lists Integer.MAX_VALUE per slot and extracts any amount. The
-     * energy cap would otherwise shrink the count to what one extraction could power right now, though
-     * crafts draw a few items at a time and re-check power then. The planner reads Integer.MAX_VALUE as
-     * unbounded ({@code RecipeGraphSolver.stockCount}); a real network this full is over-trusted and the
-     * job pauses or cancels mid-way if it runs dry.
+     * The probe amount for {@code NetworkStorage#unboundedIfProbed}: a quarter of the long range, far
+     * above any real stock — even a network holding billions of one item (issue #47) — so only a source
+     * that hands out any amount can supply the whole request.
      */
-    static long unboundedIfSaturated(long stored, long deliverable) {
-        return stored >= Integer.MAX_VALUE ? Long.MAX_VALUE : deliverable;
-    }
+    private static final long PROBE = Long.MAX_VALUE / 4;
 
     private static long saturatingAdd(long a, long b) {
         long sum = a + b;
@@ -379,14 +386,49 @@ public final class Ae2Station implements StationStorages.Provider {
             for (IAEItemStack stack : monitor.getStorageList()) {
                 if (stack != null && stack.getStackSize() > 0 && plain(channel, stack) && shown(filter, stack)
                         && CraftExecutor.usableAsIngredient(stack.getDefinition())) {
-                    long deliverable = deliverable(stack.getItem(), stack.getStackSize());
-                    if (deliverable > 0) {
-                        deliverable = unboundedIfSaturated(stack.getStackSize(), deliverable);
-                        counts.merge(stack.getItem(), deliverable, Ae2Station::saturatingAdd);
+                    long count = count(stack);
+                    if (count > 0) {
+                        counts.merge(stack.getItem(), count, Ae2Station::saturatingAdd);
                     }
                 }
             }
             return counts;
+        }
+
+        /**
+         * The count one stored stack plans as: the energy-capped {@link #deliverable} as a finite long
+         * (no int clamp — a real network can hold billions of one item, #47), or unbounded
+         * ({@link Long#MAX_VALUE}) when a probe proves the source behind the stack hands out any
+         * amount of it.
+         */
+        private long count(IAEItemStack stack) {
+            long deliverable = deliverable(stack.getItem(), stack.getStackSize());
+            if (deliverable > 0 && stack.getStackSize() >= Integer.MAX_VALUE
+                    && unboundedIfProbed(stack.getItem())) {
+                return Long.MAX_VALUE;
+            }
+            return deliverable;
+        }
+
+        /**
+         * Whether the network hands out any amount of {@code item}: an UNPOWERED simulated extraction of
+         * {@link Ae2Station#PROBE} returns at least {@code PROBE}. The call is
+         * {@code monitor.extractItems(request, Actionable.SIMULATE, source)} — the {@code IMEInventory}
+         * API under {@code Platform.poweredExtraction}, which {@link #deliverable} wraps — because the
+         * energy cap would starve even a creative cell. A creative cell (or a Sophisticated Storage
+         * infinity upgrade seen through a storage bus) hands back the whole request; a real network at
+         * most what it holds, and {@code PROBE} is far over any real stock. Asked only for a listing at
+         * or above {@link Integer#MAX_VALUE}, which those sources report exactly — and which no longer
+         * alone means unbounded, because a real network CAN hold that many (#47): without the probe the
+         * plan would treat it as infinite, consume the real stock and cancel "went missing".
+         */
+        private boolean unboundedIfProbed(Item item) {
+            IAEItemStack request = request(item, PROBE);
+            if (request == null) {
+                return false;
+            }
+            IAEItemStack got = monitor.extractItems(request, Actionable.SIMULATE, source);
+            return got != null && got.getStackSize() >= PROBE;
         }
 
         @Override

@@ -1,10 +1,13 @@
 package com.legoj15.sprawlcrafting.forge.craft;
 
+import java.util.Collections;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.IntSupplier;
+
+import org.apache.logging.log4j.LogManager;
 
 import com.legoj15.sprawlcrafting.forge.network.CraftProgressCountsMessage;
 import com.legoj15.sprawlcrafting.forge.network.CraftProgressMessage;
@@ -97,7 +100,8 @@ public final class CraftQueueManager {
      * its share of the {@link CraftJob#SERVER_TICK_BURST_BUDGET_NANOS} all players split, see
      * {@link BurstBudget}) every tick until it is done. Each craft is validated and applied by
      * {@link CraftExecutor#craftOnce} against the live inventory, exactly as a lone craft is. A burst ends
-     * at a step boundary so the next step still waits its half second.
+     * at a step boundary so the next step still waits its half second. An interleaved job runs the
+     * same burst loop batch by batch across step boundaries (see {@link CraftJob#isInterleaved()}).
      */
     public static void tick(EntityPlayerMP player) {
         CraftJob job = ACTIVE.get(player.getUniqueID());
@@ -161,7 +165,10 @@ public final class CraftQueueManager {
      * Performs the crafts due this tick: one for a paced step; for a bulk one, as many as fit before
      * {@code deadline} or the step boundary (there is no count cap: the time budget alone bounds the
      * tick). The clock is checked after a craft, never before, so a job always makes at least one
-     * craft of progress even when its {@code deadline} (nanoTime) has already passed.
+     * craft of progress even when its {@code deadline} (nanoTime) has already passed. An interleaved
+     * job's crafts each re-derive the schedule's next batch, so one burst spans batches and steps
+     * alike; its crafts also pass the no-room gate below, which a sequential job's never do (they
+     * keep the spill-at-the-feet rule this tree has always had).
      */
     private static void craftBurst(EntityPlayerMP player, CraftJob job, boolean bulk, long deadline) {
         ItemStack lastCrafted = ItemStack.EMPTY;
@@ -179,6 +186,33 @@ public final class CraftQueueManager {
                 sync(player, job, CraftProgressMessage.State.READY_IN_GRID, job.targetResult());
                 notify(player, message("sprawlcrafting.craft.ready_in_grid", TextFormatting.GREEN,
                         job.targetResult().getDisplayName()));
+                return;
+            }
+            // The interleaved path's no-room gate, before anything moves: a craft whose output has
+            // nowhere to go would drop at the player's feet every craft of the burst, so it is
+            // refused up front and the schedule shrinks (see below) instead of spilling.
+            if (bulk && job.isInterleaved() && !hasRoomFor(player, job.currentStep())) {
+                // The batch's output had nowhere to go: shrink the schedule's batch cap and let it
+                // re-derive the next batch from the model — a smaller batch fits a tighter network,
+                // and a network only full of intermediates is drained by the consuming steps the
+                // re-derivation picks next. A batch already at the per-craft floor cannot shrink:
+                // that storage is genuinely full.
+                if (job.shrinkForRoom()) {
+                    if (System.nanoTime() - deadline >= 0) {
+                        break; // time budget spent; the smaller batch is due next tick
+                    }
+                    continue;
+                }
+                // No branch the target needs can run: continuing would drop every craft's result at
+                // the player's feet thousands of times per tick, so the job stops for the player to
+                // make room instead of spilling.
+                ItemStack output = stepOutput(job.currentStep());
+                logNoRoom(player, job, output);
+                ACTIVE.remove(player.getUniqueID());
+                sync(player, job, CraftProgressMessage.State.CANCELLED, ItemStack.EMPTY);
+                notify(player, message("sprawlcrafting.craft.no_room", TextFormatting.RED,
+                        job.targetResult().getDisplayName(),
+                        output.isEmpty() ? job.currentStep().recipeId().toString() : output.getDisplayName()));
                 return;
             }
             CraftExecutor.CraftResult result = CraftExecutor.craftOnce(player, job.currentStep().recipeId(),
@@ -202,7 +236,11 @@ public final class CraftQueueManager {
                             job.targetResult().getDisplayName()));
                     return;
                 }
-                if (stepDone || !bulk) {
+                // An interleaved job's craft boundaries are not step boundaries: the schedule
+                // interleaves the steps, so ending the burst at each one would cap the job at one
+                // craft per tick. Its bursts run to the time budget across crafts and report on the
+                // half-second cadence.
+                if ((stepDone && !job.isInterleaved()) || !bulk) {
                     // A step boundary, or the one craft a paced step does per due tick: report it now
                     // (progress bar + step sound), exactly as every craft was reported before bursts.
                     sync(player, job, CraftProgressMessage.State.CRAFTING, lastCrafted);
@@ -228,6 +266,9 @@ public final class CraftQueueManager {
                     sync(player, job, CraftProgressMessage.State.PAUSED_STATION, ItemStack.EMPTY);
                     return;
                 }
+                // An interleaved job's schedule model already ran every producer this step needed
+                // ahead of it, so a shortage the model did not foresee is real — the player spent,
+                // moved or lost the material — and no reordering can recover it: cancel like any job.
                 ACTIVE.remove(player.getUniqueID());
                 sync(player, job, CraftProgressMessage.State.CANCELLED, ItemStack.EMPTY);
                 notify(player, message("sprawlcrafting.craft.missing", TextFormatting.RED,
@@ -246,6 +287,74 @@ public final class CraftQueueManager {
         if (job.progressSyncDue()) {
             sync(player, job, CraftProgressMessage.State.CRAFTING, lastCrafted);
         }
+    }
+
+    /**
+     * Whether one craft of {@code step} still has somewhere to put its output: the 36 main slots
+     * ({@link CraftExecutor#fitsInMainInventory}'s rule — merge room, then empty slots; slots the
+     * craft's own consumption would free are not counted, the executor's assignment is not visible
+     * here), and with a usable network terminal open, the network for the share the slots cannot
+     * take (the executor's own order), when a simulated insert says it takes that share. Asked only
+     * of an interleaved job's crafts: the refusal is what lets the schedule shrink its batch around
+     * a full store instead of spilling the output at the player's feet. A failing probe counts as
+     * no room (the job shrinks or stops; nothing is lost).
+     */
+    private static boolean hasRoomFor(EntityPlayerMP player, CraftStep step) {
+        ItemStack output = stepOutput(step);
+        if (output.isEmpty() || CraftExecutor.fitsInMainInventory(player.inventory,
+                Collections.singletonList(output))) {
+            return true;
+        }
+        if (!NetworkTerminals.usable(player)) {
+            return false;
+        }
+        NetworkTerminals.View network = NetworkTerminals.view(player);
+        if (network == null) {
+            return false;
+        }
+        ItemStack overflow = output.copy();
+        overflow.shrink(CraftExecutor.mainInventoryRoom(player.inventory, output));
+        try {
+            return network.accepts(overflow);
+        } catch (RuntimeException | LinkageError e) {
+            LogManager.getLogger("SprawlCrafting").warn("SprawlCrafting: network room probe failed", e);
+            return false;
+        }
+    }
+
+    /**
+     * One craft's declared output — the recipe's own stack (NBT intact) at the plan's
+     * {@link CraftStep#resultCount()} — or {@link ItemStack#EMPTY} when the step's recipe or result
+     * is no longer known (the craft itself then reports {@code RecipeGone}).
+     */
+    private static ItemStack stepOutput(CraftStep step) {
+        if (step.result() == null || step.resultCount() < 1) {
+            return ItemStack.EMPTY;
+        }
+        IRecipe recipe = CraftingManager.getRecipe(step.recipeId());
+        ItemStack output = recipe == null ? ItemStack.EMPTY : recipe.getRecipeOutput().copy();
+        if (output.isEmpty()) {
+            return ItemStack.EMPTY;
+        }
+        output.setCount(Math.max(1, step.resultCount()));
+        return output;
+    }
+
+    /**
+     * The log line behind a no-room stop: what the step was making, whether a network terminal is
+     * open to take the overflow, and how many of the 36 main slots are free — enough to tell a full
+     * store from one that refuses — plus the schedule's own view of every step.
+     */
+    private static void logNoRoom(EntityPlayerMP player, CraftJob job, ItemStack output) {
+        int free = 0;
+        for (int i = 0; i < CraftPlanner.MAIN_INVENTORY_SIZE; i++) {
+            if (player.inventory.mainInventory.get(i).isEmpty()) {
+                free++;
+            }
+        }
+        LogManager.getLogger("SprawlCrafting").warn("SprawlCrafting: no room for {} (terminal open: {});"
+                        + " free main slots {}; schedule:{}", output.isEmpty() ? "?" : output.getDisplayName(),
+                Boolean.valueOf(NetworkTerminals.isOpen(player)), Integer.valueOf(free), job.scheduleReport());
     }
 
     /**

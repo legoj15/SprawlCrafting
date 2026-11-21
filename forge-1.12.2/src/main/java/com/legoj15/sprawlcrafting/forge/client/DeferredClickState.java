@@ -59,7 +59,7 @@ public final class DeferredClickState {
      * rebuild — the cadence at which the session itself already decided the pool changed.
      */
     private static CraftPlanner.Session countedSession;
-    private static Map<ItemKey, Integer> externalCounts;
+    private static Map<ItemKey, Long> externalCounts;
 
     private static boolean overlayHover;
 
@@ -209,7 +209,7 @@ public final class DeferredClickState {
      * pool always includes an open terminal's network ({@code CraftPlanner.session}), so the counts
      * mirror that pool exactly: network included, empty when no terminal is open.
      */
-    private static Map<ItemKey, Integer> externalPlainCounts(EntityPlayer player, GridContext grid) {
+    private static Map<ItemKey, Long> externalPlainCounts(EntityPlayer player, GridContext grid) {
         CraftPlanner.Session session = ClientPlanCache.get(player, grid);
         if (countedSession != session) {
             externalCounts = CraftPlanner.plainExternalCounts(player, true);

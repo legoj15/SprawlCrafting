@@ -20,17 +20,29 @@ import net.minecraft.world.item.Item;
  * the live pool no longer matches. Empty means no layout — the executor decides each craft with
  * {@code SlotAssignment} itself, as every step did before plans carried one.
  *
+ * <p>{@code result}/{@code resultCount} name the recipe's output, what one craft of the step
+ * produces; the depth-first schedule of an over-int job sizes and interleaves its batches from
+ * them (a step is over-int when {@code crafts * max(resultCount, slots)} exceeds an int).
+ *
  * @param needsFullGrid true if the recipe does not fit a 2×2 grid; such steps only
  *                      execute while a crafting table is within the player's reach
  * @param layouts       the plan's {@link SlotLayout} runs for this step's crafts, in order (empty: none)
+ * @param result        the recipe's output item (null when the recipe is no longer resolvable)
+ * @param resultCount   how many of {@code result} one craft produces (0 when the recipe is no longer
+ *                      resolvable)
  */
-public record CraftStep(ResourceLocation recipeId, int crafts, boolean needsFullGrid,
-                        List<SlotLayout<Item>> layouts) {
+public record CraftStep(ResourceLocation recipeId, long crafts, boolean needsFullGrid,
+                        List<SlotLayout<Item>> layouts, Item result, int resultCount) {
 
     public CraftStep {
         if (crafts < 1) {
             throw new IllegalArgumentException("crafts must be >= 1, got " + crafts);
         }
         layouts = layouts == null ? List.of() : List.copyOf(layouts);
+    }
+
+    /** The step's slot count: every run of its layout lists the same number of slots. */
+    public int slotCount() {
+        return layouts.isEmpty() ? 0 : layouts.get(0).items().size();
     }
 }

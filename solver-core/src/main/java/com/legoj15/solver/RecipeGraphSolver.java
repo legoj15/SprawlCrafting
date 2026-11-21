@@ -72,8 +72,10 @@ import java.util.function.UnaryOperator;
  *       under the wrong inventory, or hostile datapacks) would otherwise explore a
  *       factorial number of branches on the server thread. Exhausting the budget yields
  *       a {@link Result.Failure} with {@code budgetExceeded} set.</li>
- *   <li>Quantities are {@code long} with saturating arithmetic: they never wrap. A batch above
- *       {@link Integer#MAX_VALUE} crafts (unexecutable as a {@link PlannedStep}) fails cleanly.</li>
+ *   <li>Quantities are {@code long} with saturating arithmetic: they never wrap, and a
+ *       {@link PlannedStep} records a long batch. The budgeted passes still cap a recorded batch
+ *       at {@link Integer#MAX_VALUE} crafts — the trigger that hands an int-scale tree to the
+ *       quantity path (see {@code planByQuantity}), whose own batches are uncapped.</li>
  * </ul>
  *
  * @param <R> recipe identifier type
@@ -206,8 +208,8 @@ public final class RecipeGraphSolver<R, K> {
             }
 
             /**
-             * @param tooLarge true if a plan exists but is longer than {@code maxSteps} int-sized
-             *                 batches (implies {@code budgetExceeded}, which older callers read)
+             * @param tooLarge true if a plan exists but is longer than {@code maxSteps} steps
+             *                 (implies {@code budgetExceeded}, which older callers read)
              */
             public Failure(Set<K> missing, boolean budgetExceeded, boolean tooLarge) {
                 this.tooLarge = tooLarge;
@@ -326,9 +328,9 @@ public final class RecipeGraphSolver<R, K> {
     }
 
     /**
-     * @param maxSteps longest plan (in batches of at most {@link Integer#MAX_VALUE} crafts) a quantity-
-     *                 driven tree may be given; see {@link Result.Failure#tooLarge()}. It bounds the
-     *                 time and size of the guided pass, whose kept steps cost no attempts.
+     * @param maxSteps longest plan (in steps) a quantity-driven tree may be given; see
+     *                 {@link Result.Failure#tooLarge()}. It bounds the time and size of the guided
+     *                 pass, whose kept steps cost no attempts.
      */
     public RecipeGraphSolver(Function<K, List<? extends RecipeInfo<R, K>>> producers,
                              UnaryOperator<K> remainder,
@@ -342,34 +344,77 @@ public final class RecipeGraphSolver<R, K> {
         this.maxAttempts = maxAttempts;
     }
 
-    /** Default {@code maxSteps}: about 3.5e13 crafts of one recipe. */
+    /** Default {@code maxSteps}: 16384 steps. */
     public static final int DEFAULT_MAX_STEPS = 16384;
     private final int maxSteps;
 
+    /**
+     * A plan whose steps may hold more than {@link Integer#MAX_VALUE} crafts: a tree driven by quantity
+     * is planned in about one step per recipe, whatever its counts. Executing it in plan order would
+     * make each intermediate in full before anything consumes it, so an executor of such a plan must
+     * interleave the steps itself. An int stock snapshot: {@link Integer#MAX_VALUE} means unbounded
+     * ({@link #stockCount}); a real count that high needs {@link #solveLong}.
+     */
     public Result<R, K> solve(RecipeInfo<R, K> target, Map<K, Integer> inventory) {
-        Plan<R, K> plan = plan(target, toLong(inventory), true);
-        if (plan.steps == null) {
-            return new Result.Failure<>(plan.missing, plan.budgetExceeded, plan.tooLarge);
-        }
-        return mergeAdjacent(plan.steps);
+        return solveLong(target, toLong(inventory));
     }
 
     /**
-     * Collapses consecutive identical recipe ids into one step (a {@link PlannedStep} holds an int,
-     * so a pair whose sum overflows stays two steps), concatenating their layout runs — a boundary
-     * pair that lists equal items is one run, or {@link Result.Success} would reject the merge.
+     * A plan of int-sized steps, recorded depth first: a quantity-driven tree becomes batches of at most
+     * {@link Integer#MAX_VALUE} crafts, each followed by the steps that consume it, so plan order already
+     * holds no more than about one batch of any intermediate. At most {@code maxSteps} steps; past that
+     * the answer is {@link Result.Failure#tooLarge()}. An int stock snapshot: {@link Integer#MAX_VALUE}
+     * means unbounded ({@link #stockCount}); a real count that high needs {@link #solveIntSizedLong}.
      */
-    private static <R, K> Result<R, K> mergeAdjacent(List<Step<R, K>> plan) {
+    public Result<R, K> solveIntSized(RecipeInfo<R, K> target, Map<K, Integer> inventory) {
+        return solveIntSizedLong(target, toLong(inventory));
+    }
+
+    /**
+     * {@link #solve} over long stock counts: {@link Long#MAX_VALUE} is the unbounded sentinel — a source
+     * that behaves as infinite (an AE2 creative cell) — and every other value is that finite count, so a
+     * real stock above {@link Integer#MAX_VALUE} is planned as exactly what it holds, never as
+     * infinite (#47).
+     */
+    public Result<R, K> solveLong(RecipeInfo<R, K> target, Map<K, Long> inventory) {
+        return solve(target, sanitizeLong(inventory), true);
+    }
+
+    /**
+     * {@link #solveIntSized} over long stock counts: {@link Long#MAX_VALUE} is the unbounded sentinel —
+     * a source that behaves as infinite (an AE2 creative cell) — and every other value is that finite
+     * count, so a real stock above {@link Integer#MAX_VALUE} is planned as exactly what it holds, never
+     * as infinite (#47).
+     */
+    public Result<R, K> solveIntSizedLong(RecipeInfo<R, K> target, Map<K, Long> inventory) {
+        return solve(target, sanitizeLong(inventory), false);
+    }
+
+    private Result<R, K> solve(RecipeInfo<R, K> target, Map<K, Long> inventory, boolean longSteps) {
+        Plan<R, K> plan = plan(target, inventory, true, longSteps);
+        if (plan.steps == null) {
+            return new Result.Failure<>(plan.missing, plan.budgetExceeded, plan.tooLarge);
+        }
+        return mergeAdjacent(plan.steps, longSteps ? Long.MAX_VALUE : Integer.MAX_VALUE);
+    }
+
+    /**
+     * Collapses consecutive identical recipe ids into one step (a {@link PlannedStep} holds a long,
+     * so only a pair whose sum overflows stays two steps), concatenating their layout runs — a
+     * boundary pair that lists equal items is one run, or {@link Result.Success} would reject the
+     * merge.
+     */
+    private static <R, K> Result<R, K> mergeAdjacent(List<Step<R, K>> plan, long cap) {
         List<PlannedStep<R>> steps = new ArrayList<>(plan.size());
         List<List<SlotLayout<K>>> layouts = new ArrayList<>(plan.size());
         for (Step<R, K> step : plan) {
             int last = steps.size() - 1;
             if (last >= 0 && steps.get(last).recipeId().equals(step.recipe.id())
-                    && (long) steps.get(last).crafts() + step.crafts <= Integer.MAX_VALUE) {
-                steps.set(last, steps.get(last).withCrafts(steps.get(last).crafts() + (int) step.crafts));
-                layouts.set(last, concatRuns(layouts.get(last), step.runs));
+                    && steps.get(last).crafts() <= cap - step.crafts) {
+                steps.set(last, steps.get(last).withCrafts(steps.get(last).crafts() + step.crafts));
+                layouts.set(last, concatRuns(layouts.get(last), step.runs, cap));
             } else {
-                steps.add(new PlannedStep<>(step.recipe.id(), (int) step.crafts));
+                steps.add(new PlannedStep<>(step.recipe.id(), step.crafts));
                 layouts.add(step.runs);
             }
         }
@@ -377,7 +422,8 @@ public final class RecipeGraphSolver<R, K> {
     }
 
     /** Two steps' runs concatenated, merging a boundary pair that lists equal items. */
-    private static <K> List<SlotLayout<K>> concatRuns(List<SlotLayout<K>> first, List<SlotLayout<K>> second) {
+    private static <K> List<SlotLayout<K>> concatRuns(List<SlotLayout<K>> first, List<SlotLayout<K>> second,
+                                                      long cap) {
         if (first.isEmpty()) {
             return second;
         }
@@ -388,7 +434,7 @@ public final class RecipeGraphSolver<R, K> {
         out.addAll(first);
         SlotLayout<K> boundary = second.get(0);
         SlotLayout<K> tail = out.get(out.size() - 1);
-        if (tail.items().equals(boundary.items())) {
+        if (tail.items().equals(boundary.items()) && tail.crafts() <= cap - boundary.crafts()) {
             out.set(out.size() - 1, new SlotLayout<>(tail.crafts() + boundary.crafts(), boundary.items()));
             out.addAll(second.subList(1, second.size()));
         } else {
@@ -405,10 +451,6 @@ public final class RecipeGraphSolver<R, K> {
      * full layouts compress into one run.
      */
     private static <K> List<SlotLayout<K>> layoutRuns(long crafts, List<Group<K>> groups, List<Map<K, Long>> use) {
-        // Only recorded steps get layouts, and craft() caps a recorded batch at an int (capInt).
-        if (crafts > Integer.MAX_VALUE) {
-            throw new IllegalStateException("a recorded step holds " + crafts + " crafts, above an int");
-        }
         int slotCount = 0;
         for (Group<K> group : groups) {
             slotCount += group.slotIndexes.size();
@@ -461,12 +503,12 @@ public final class RecipeGraphSolver<R, K> {
             }
             List<K> at = layoutAt(c, groups, segmentItems, segmentEnds, slotCount);
             if (!at.equals(layout)) {
-                runs.add(new SlotLayout<>((int) (c - start), layout));
+                runs.add(new SlotLayout<>(c - start, layout));
                 start = c;
                 layout = at;
             }
         }
-        runs.add(new SlotLayout<>((int) (crafts - start), layout));
+        runs.add(new SlotLayout<>(crafts - start, layout));
         return runs;
     }
 
@@ -500,10 +542,7 @@ public final class RecipeGraphSolver<R, K> {
     private static <K> List<SlotLayout<K>> chunkRuns(List<PlanSimulator.Chunk<K>> chunks) {
         List<SlotLayout<K>> runs = new ArrayList<>(chunks.size());
         for (PlanSimulator.Chunk<K> chunk : chunks) {
-            if (chunk.repeat > Integer.MAX_VALUE) { // a recorded batch is capped at an int (capInt)
-                throw new IllegalStateException("a recorded chunk holds " + chunk.repeat + " crafts, above an int");
-            }
-            int repeat = (int) chunk.repeat;
+            long repeat = chunk.repeat;
             List<K> items = new ArrayList<>(chunk.chosen.length);
             for (Object item : chunk.chosen) {
                 items.add((K) item);
@@ -536,9 +575,11 @@ public final class RecipeGraphSolver<R, K> {
      *       {@link SlotAssignment}, which cannot look ahead — the layouts carry its choice.</li>
      * </ol>
      *
-     * @param capInt cap a batch at {@link Integer#MAX_VALUE} crafts (what a {@link PlannedStep} holds)
+     * @param capInt cap a recorded batch at {@link Integer#MAX_VALUE} crafts, the trigger that
+     *               routes an int-scale tree to the quantity path (see {@code planByQuantity});
+     *               the quantity path's own passes record their batches uncapped
      */
-    private Plan<R, K> plan(RecipeInfo<R, K> target, Map<K, Long> held, boolean capInt) {
+    private Plan<R, K> plan(RecipeInfo<R, K> target, Map<K, Long> held, boolean capInt, boolean longSteps) {
         List<Step<R, K>> steps = new ArrayList<>();
         Solve batched = new Solve(true, true, false, capInt);
         boolean batchedRejected = false;
@@ -582,7 +623,7 @@ public final class RecipeGraphSolver<R, K> {
         }
         boolean budgetExceeded = noCleanFailure && anyBudget;
         if (capInt && (budgetExceeded || clipped)) {
-            return planByQuantity(target, held, missing);
+            return planByQuantity(target, held, missing, longSteps);
         }
         return new Plan<>(null, missing, budgetExceeded);
     }
@@ -597,14 +638,16 @@ public final class RecipeGraphSolver<R, K> {
      * whatever the counts. A clean probe failure is a real shortfall. A probe success names the
      * recipes a plan uses, and the batched pass is run again over just those, so no dead-end
      * candidate is retried per batch; its kept steps cost no attempts, and {@code maxSteps} bounds
-     * it instead.
+     * it instead. Neither pass caps a batch: a step records its recipe's whole demand (a long
+     * count), so the plan's length tracks the tree's shape, not its quantities.
      *
      * <p>A pass that split a batch can fail cleanly on a makeable tree, so its own verdict is not
      * kept: the probe's is, and where the probe proves nothing the answer is "budget exceeded".
      *
      * @param missing the budgeted passes' missing set, kept when the probe has nothing better
      */
-    private Plan<R, K> planByQuantity(RecipeInfo<R, K> target, Map<K, Long> held, Set<K> missing) {
+    private Plan<R, K> planByQuantity(RecipeInfo<R, K> target, Map<K, Long> held, Set<K> missing,
+                                      boolean longSteps) {
         // First with every re-ask: a generating cycle (one i1 makes three i0, one i0 makes one i1)
         // only reaches its count by asking again after a batch that shrank. Where that probe runs
         // out of budget chasing leftovers, the one that skips futile re-asks answers instead.
@@ -625,7 +668,7 @@ public final class RecipeGraphSolver<R, K> {
                     : new Plan<>(null, new LinkedHashSet<>(probe.missing), false);
         }
         List<Step<R, K>> steps = new ArrayList<>();
-        Solve guided = new Solve(true, true, false, true);
+        Solve guided = new Solve(true, true, false, !longSteps);
         guided.quantityFree = true;
         guided.allowed = Collections.newSetFromMap(new IdentityHashMap<RecipeInfo<R, K>, Boolean>());
         guided.allowed.addAll(probe.used);
@@ -774,11 +817,31 @@ public final class RecipeGraphSolver<R, K> {
 
     /** True if the target could be crafted right now, possibly via sub-crafts. */
     public boolean isSolvable(RecipeInfo<R, K> target, Map<K, Integer> inventory) {
-        return solve(target, inventory) instanceof Result.Success;
+        return isSolvableLong(target, toLong(inventory));
     }
 
     /**
-     * Net raw-gatherable demand to perform one craft of {@code target}: the leaf items — those
+     * {@link #isSolvable} over long stock counts: {@link Long#MAX_VALUE} is the unbounded sentinel — a
+     * source that behaves as infinite — and every other value is that finite count (#47).
+     */
+    public boolean isSolvableLong(RecipeInfo<R, K> target, Map<K, Long> inventory) {
+        return solveLong(target, inventory) instanceof Result.Success;
+    }
+
+    /**
+     * {@link #shortfallLong} over an int stock snapshot: {@link Integer#MAX_VALUE} means unbounded
+     * ({@link #stockCount}); a real count that high needs the long form.
+     */
+    public ShortfallResult<K> shortfall(RecipeInfo<R, K> target, Map<K, Integer> inventory) {
+        return shortfallLong(target, toLong(inventory));
+    }
+
+    /**
+     * {@link #shortfall} over long stock counts: {@link Long#MAX_VALUE} is the unbounded sentinel — a
+     * source that behaves as infinite (an AE2 creative cell) — and every other value is that finite
+     * count, so a real stock above {@link Integer#MAX_VALUE} covers only what it really holds (#47).
+     *
+     * <p>Net raw-gatherable demand to perform one craft of {@code target}: the leaf items — those
      * with no usable producer recipe (ore, logs, smelt-only or trade-only items) — that the player
      * must acquire, with counts, after consuming what's in {@code inventory} and crediting the
      * overproduction of any intermediates the chain would make along the way.
@@ -795,8 +858,8 @@ public final class RecipeGraphSolver<R, K> {
      * {@link ShortfallResult#approximate()}. Crafting remainders are intentionally ignored by the
      * walk: a byproduct (an empty bucket) is never a gatherable input.
      */
-    public ShortfallResult<K> shortfall(RecipeInfo<R, K> target, Map<K, Integer> inventory) {
-        Map<K, Long> held = toLong(inventory);
+    public ShortfallResult<K> shortfallLong(RecipeInfo<R, K> target, Map<K, Long> inventory) {
+        Map<K, Long> held = sanitizeLong(inventory);
         Walk<K> walk = walk(target, held);
         Map<K, Long> demands = walk.demands;
         Map<K, List<K>> alternatives = walk.alternatives;
@@ -865,11 +928,11 @@ public final class RecipeGraphSolver<R, K> {
 
     /**
      * Whether {@link #solve} would succeed holding {@code held} (long counts): the same validated
-     * {@code plan} path, with the same {@link Integer#MAX_VALUE} per-step batch cap, so a gather list is
-     * never verified by a plan {@link #solve} could not emit.
+     * {@code plan} path with long steps, so a gather list is never verified by a plan {@link #solve}
+     * could not emit.
      */
     private boolean feasible(RecipeInfo<R, K> target, Map<K, Long> held) {
-        return plan(target, held, true).steps != null;
+        return plan(target, held, true, true).steps != null;
     }
 
     private static final class Walk<T> {
@@ -913,7 +976,7 @@ public final class RecipeGraphSolver<R, K> {
         final boolean creditRemainders;
         /** Plan every step by replaying it against the stock as it stands (see #plan, pass 3). */
         final boolean exact;
-        /** Cap a recorded batch at Integer.MAX_VALUE crafts (a PlannedStep's int). */
+        /** Cap a recorded batch at Integer.MAX_VALUE crafts; see {@link #plan}'s {@code capInt}. */
         final boolean capInt;
         /**
          * Set when a slot group came up short on an item a different group had taken this pass: the
@@ -941,7 +1004,8 @@ public final class RecipeGraphSolver<R, K> {
         Set<RecipeInfo<R, K>> allowed;
         /** Every recipe whose batch is in the current result, in order (probe only; else null). */
         List<RecipeInfo<R, K>> used;
-        /** Set when a recorded batch was cut down to {@link Integer#MAX_VALUE} crafts. */
+        /** Set when a recorded batch was cut down to {@link Integer#MAX_VALUE} crafts; a clipped
+         *  budgeted pass is handed to the quantity path (see #planByQuantity). */
         boolean clipped = false;
         /** Set when the recorded plan reached {@code maxSteps}. */
         boolean tooLong = false;
@@ -1042,7 +1106,7 @@ public final class RecipeGraphSolver<R, K> {
          * have taken what the short one needed — at a single craft, the per-unit planner's step.
          * The caller asks again for whatever is still missing.
          *
-         * @param steps the plan to append to, or null to search without recording (no int cap)
+         * @param steps the plan to append to, or null to search without recording (uncapped)
          * @return crafts actually applied (0 leaves {@code inv}/{@code steps} untouched)
          */
         long craft(RecipeInfo<R, K> recipe,
@@ -1051,8 +1115,8 @@ public final class RecipeGraphSolver<R, K> {
                    List<Step<R, K>> steps,
                    Set<K> crafting,
                    int depth) {
-            // A PlannedStep holds an int: a larger batch is not executable, so it is capped here and
-            // the shortfall surfaces as a clean failure upstream.
+            // A budgeted pass caps a recorded batch at Integer.MAX_VALUE crafts so an int-scale tree
+            // reaches the quantity path (see #planByQuantity); its passes record the batch whole.
             long size = capInt && steps != null ? Math.min(want, Integer.MAX_VALUE) : want;
             if (size <= 0) {
                 return 0;
@@ -1657,6 +1721,22 @@ public final class RecipeGraphSolver<R, K> {
             Integer count = entry.getValue();
             if (count != null && count > 0) {
                 out.put(entry.getKey(), stockCount(count));
+            }
+        }
+        return out;
+    }
+
+    /**
+     * A long stock map as planning uses it: null and non-positive entries dropped, the unbounded
+     * sentinel ({@link Long#MAX_VALUE}) and every finite count kept as-is. A copy, like {@link #toLong},
+     * so a caller-held map cannot change mid-solve.
+     */
+    private static <T> Map<T, Long> sanitizeLong(Map<T, Long> inventory) {
+        Map<T, Long> out = new HashMap<>();
+        for (Map.Entry<T, Long> entry : inventory.entrySet()) {
+            Long count = entry.getValue();
+            if (count != null && count > 0) {
+                out.put(entry.getKey(), count);
             }
         }
         return out;
