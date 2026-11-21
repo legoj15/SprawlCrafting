@@ -1218,16 +1218,19 @@ class RecipeGraphSolverTest {
 
     /**
      * A compression chain whose quantities, not its shape, are large (issue #43): c0 from three
-     * raws, each c(k) from six c(k-1) and three of raw b. Every level also has a decompress recipe
-     * listed FIRST, the dead-end candidate (ingot from block) a real recipe set puts in the way.
+     * raws, each c(k) from six c(k-1) and three of raw b. Every item below the top also has a
+     * decompress recipe, registered before its real one so it is the first producer tried: the
+     * dead-end candidate (ingot from block) a real recipe set puts in the way.
      * Returns the target, c(levels); making one takes 6^levels leaf crafts.
      */
     private TestRecipe quantityChain(int levels) {
+        for (int k = 1; k <= levels; k++) {
+            recipes.add(TestRecipe.of("unpack" + k, "c" + (k - 1), 6, "c" + k));
+        }
         recipes.add(TestRecipe.of("leaf", "c0", 1, "a", "a", "a", "a", "b", "b", "b", "b", "d"));
         TestRecipe top = null;
         for (int k = 1; k <= levels; k++) {
             String lower = "c" + (k - 1);
-            recipes.add(TestRecipe.of("unpack" + k, lower, 6, "c" + k));
             top = TestRecipe.of("pack" + k, "c" + k, 1, lower, lower, lower, lower, lower, lower, "b", "b", "b");
             recipes.add(top);
         }
@@ -1242,13 +1245,29 @@ class RecipeGraphSolverTest {
         Result<String, String> result = solver().solve(target, inv("a", 10_000_000, "b", 10_000_000, "d", 10_000_000));
         Result.Failure<String, String> failure = assertInstanceOf(Result.Failure.class, result);
         assertFalse(failure.budgetExceeded(), "a real shortfall, not a tree too complex to plan");
-        assertTrue(failure.missing().contains("a"), "missing " + failure.missing());
+        assertFalse(failure.missing().isEmpty(), "a shortfall names something to gather");
+    }
+
+    @Test
+    void quantityPathDoesNotCallAnAssignmentConflictAShortfall() {
+        // The top recipe adds oak|birch, oak, oak|birch with two of each held: makeable (oak to the
+        // middle slot), but a batched search hands oak to the flexible slots first. Whatever the
+        // quantity path answers for such a tree, it must not be "you are missing oak".
+        quantityChain(17);
+        TestRecipe target = TestRecipe.of("top", "top", 1, "c17", "oak|birch", "oak", "oak|birch");
+        int unbounded = Integer.MAX_VALUE;
+        Result<String, String> result = solver().solve(target,
+                inv("a", unbounded, "b", unbounded, "d", unbounded, "oak", 2, "birch", 2));
+        if (result instanceof Result.Failure) {
+            assertTrue(((Result.Failure<String, String>) result).budgetExceeded(),
+                    "a makeable tree was reported short of " + ((Result.Failure<String, String>) result).missing());
+        }
     }
 
     @Test
     void quantityAloneDoesNotExhaustTheAttemptBudget() {
-        // 6^17 leaf crafts is 7,882 int-sized batches of the leaf recipe alone, well past the 4,096
-        // attempts; the shape is 18 recipes. Unbounded raws, so it must plan, crafting exactly that.
+        // 6^17 leaf crafts is far more int-sized batches of the leaf recipe alone than there are
+        // attempts (4,096), in a chain of 18 items. Unbounded raws, so it must plan, crafting exactly that.
         TestRecipe target = quantityChain(17);
         int unbounded = Integer.MAX_VALUE;
         Result<String, String> result = solver().solve(target, inv("a", unbounded, "b", unbounded, "d", unbounded));

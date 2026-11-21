@@ -277,3 +277,10 @@ Unbound "Cancel deferred craft" keybind on every tree. The server's `CraftQueueM
 - deepseek-flash final on d69f820 approved: one low and two notes, all stale docs or dead code left by that removal. Past round three, so the orchestrator adjudicated and fixed them itself (doc-only plus deleting the unused overload and constructor). The 1.12.2 build is green. Not merged, not yet playtested.
 - Merged to main (634ee13). Conflicts with the #35 spill fix were in both CraftQueueManagers: kept the drop tripwire and passed usesProtected through. All trees built green on the merge. review_final (dgx + glm-5.3) launched on 6897bf9..634ee13.
 - review_final on 634ee13: dgx and glm-5.3 both approved (GLM leg discounted, since GLM wrote most of #40). dgx noted that 1.12.2 never got the #35 spill guard. That predates this merge and is filed as #45.
+
+## #43 quantity is not complexity (2026-11-20)
+- Orchestrator (Fable) wrote the solver change itself, not `implement_single`: the design was only found by prototyping against the reporter's world (recipes from the mod jar, stock read from the save's ME drives) and measuring visit counts, so the validated prototype was the implementation. Adapters and lang (about 30 lines) done in the same pass.
+- Cause of the report: the creative cell holds diamonds, nuggets, scrap and stars, so blocks are crafted too; one Evolved Divine Crystal is 1.7e13 crafts, about 8,100 int-sized steps against 4,096 attempts.
+- reviewer (Haiku): PASS WITH NITS, ran the suite and a 7,500-instance differential harness. Its note that the test fixture never put the unpack recipe first exposed a second bug once fixed: a split batch taken apart again gives a clean false shortfall (pre-existing). Fixed by routing split-batch failures through the probe.
+- review_fast (shop26 + glm-flash): both ran repros and agreed on one medium: a probe failure caused by item-assignment order was reported as "missing oak". Fixed: such a failure (contention involving a group with a choice of items) stays "too complex"; their repro is now a test.
+- Follow-up filed: #44 (plans whose length does not grow with quantity).

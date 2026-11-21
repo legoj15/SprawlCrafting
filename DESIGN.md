@@ -614,11 +614,16 @@ compression mods saturate at `Long.MAX_VALUE`. Counts are therefore `long` from 
   rather than hanging the server thread.
 - **Quantity is not complexity (#43).** A step holds at most `Integer.MAX_VALUE` crafts, so a
   deep compression chain needs one visit per int-sized batch, and a large stock that runs short
-  costs more still (each level chases the leftovers). Both used to end in "too complex". When the
-  budgeted passes give up, `planByQuantity` now runs a probe: the batched search with `long`
+  costs more still (each level chases the leftovers). Both used to end in "too complex". Worse,
+  between two int-sized batches of one item an unpacking recipe tried first (ingot from block)
+  takes the first batch apart again, which ended in a clean "missing X" for a makeable tree. When
+  the budgeted passes give up, or fail after splitting a batch at the int cap, `planByQuantity`
+  now runs a probe: the batched search with `long`
   batches, nothing recorded, and no re-ask after a batch that shrank on a shortage without
   freeing a remainder. It needs a few hundred visits whatever the counts (measured: 667 for a
-  1e15-craft tree). A clean probe failure is a shortfall (Unsolvable, naming what is missing). A
+  1e15-craft tree). A clean probe failure is a shortfall (Unsolvable, naming what is missing),
+  unless it came up short on an item that a slot group with a choice of items had taken: the
+  probe is the batched strategy alone, so that proves nothing and the answer stays "too complex". A
   probe success names the recipes a plan uses, and a guided batched pass plans over only those
   (no dead-end candidate such as ingot-from-block retried per batch); its kept steps cost no
   attempts and `maxSteps` (default 16,384, about 3.5e13 crafts of one recipe) bounds it. Past

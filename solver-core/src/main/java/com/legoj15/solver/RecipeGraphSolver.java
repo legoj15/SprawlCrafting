@@ -564,6 +564,7 @@ public final class RecipeGraphSolver<R, K> {
         // ran out of budget on the same (large) tree.
         boolean noCleanFailure = (batched.budgetHit || batchedRejected) && (unitwise.budgetHit || unitwiseRejected);
         boolean anyBudget = batched.budgetHit || unitwise.budgetHit;
+        boolean clipped = batched.clipped || unitwise.clipped;
         if (batchedRejected || unitwiseRejected || batched.contention || unitwise.contention) {
             steps.clear();
             Solve exact = new Solve(false, true, true, capInt);
@@ -577,22 +578,29 @@ public final class RecipeGraphSolver<R, K> {
             missing.addAll(exact.missing);
             noCleanFailure &= exact.budgetHit || exactRejected;
             anyBudget |= exact.budgetHit;
+            clipped |= exact.clipped;
         }
-        if (noCleanFailure && anyBudget && capInt) {
+        boolean budgetExceeded = noCleanFailure && anyBudget;
+        if (capInt && (budgetExceeded || clipped)) {
             return planByQuantity(target, held, missing);
         }
-        return new Plan<>(null, missing, noCleanFailure && anyBudget);
+        return new Plan<>(null, missing, budgetExceeded);
     }
 
     /**
-     * The answer for a tree the budgeted passes gave up on. Their visits grow with the quantities
-     * (one per int-sized batch, more when a large stock runs short part-way), so running out says
-     * nothing about the tree. A probe first decides it without that: the batched search with long
+     * The answer for a tree the budgeted passes gave up on, or failed on after splitting a batch at
+     * the int cap. Their visits grow with the quantities (one per int-sized batch, more when a
+     * large stock runs short part-way), so running out says nothing about the tree; and between
+     * two int-sized batches of one item, an unpacking recipe tried first can take the first batch
+     * apart again, which ends in a clean failure for a tree that is makeable. A probe first decides it without that: the batched search with long
      * batches, nothing recorded and no futile re-asks visits each recipe a handful of times
      * whatever the counts. A clean probe failure is a real shortfall. A probe success names the
      * recipes a plan uses, and the batched pass is run again over just those, so no dead-end
      * candidate is retried per batch; its kept steps cost no attempts, and {@code maxSteps} bounds
      * it instead.
+     *
+     * <p>A pass that split a batch can fail cleanly on a makeable tree, so its own verdict is not
+     * kept: the probe's is, and where the probe proves nothing the answer is "budget exceeded".
      *
      * @param missing the budgeted passes' missing set, kept when the probe has nothing better
      */
@@ -601,7 +609,11 @@ public final class RecipeGraphSolver<R, K> {
         probe.quantityFree = true;
         probe.used = new ArrayList<>();
         if (probe.craft(target, 1, new UndoMap<>(held), null, new HashSet<K>(), 0) != 1) {
-            return probe.budgetHit
+            // The probe is the batched strategy alone: where it came up short on an item that a
+            // slot group with a choice of items had taken (or the short group has such a choice), a
+            // different assignment might have worked, and its failure proves nothing. Groups that
+            // each accept one item demand the same total in any order.
+            return probe.budgetHit || probe.choiceContention
                     ? new Plan<>(null, missing, true)
                     : new Plan<>(null, new LinkedHashSet<>(probe.missing), false);
         }
@@ -885,6 +897,8 @@ public final class RecipeGraphSolver<R, K> {
          * failure may be an artifact of which group took it first, so the exact pass is worth a try.
          */
         boolean contention = false;
+        /** A {@link #contention} in which the taker or the short group accepts more than one item. */
+        boolean choiceContention = false;
         /** The first group that took each item this pass (a hint only; never rolled back). */
         private final Map<K, Group<K>> firstTaker = new HashMap<>();
         /** Resolver (craft) node visits left; shared by the plan search and the walk's stock search. */
@@ -902,6 +916,8 @@ public final class RecipeGraphSolver<R, K> {
         Set<RecipeInfo<R, K>> allowed;
         /** Every recipe whose batch is in the current result, in order (probe only; else null). */
         List<RecipeInfo<R, K>> used;
+        /** Set when a recorded batch was cut down to {@link Integer#MAX_VALUE} crafts. */
+        boolean clipped = false;
         /** Set when the recorded plan reached {@code maxSteps}. */
         boolean tooLong = false;
         /** The batch {@link #craft} last returned shrank on a shortage and freed no remainder. */
@@ -1016,6 +1032,8 @@ public final class RecipeGraphSolver<R, K> {
             if (size <= 0) {
                 return 0;
             }
+            clipped |= size < want;
+            exhausted = false; // only the batched path below sets it; never leave a stale value
             if (exact) {
                 return craftExact(recipe, size, inv, steps, crafting, depth);
             }
@@ -1047,12 +1065,12 @@ public final class RecipeGraphSolver<R, K> {
                     long got = satisfySlot(group, need, inv, steps, crafting, depth, consumed, groupUse.get(i));
                     if (got < need) {
                         missing.add(group.alternatives.get(0));
-                        if (!contention) {
-                            for (K item : group.alternatives) {
-                                Group<K> taker = firstTaker.get(item);
-                                if (taker != null && taker != group) {
-                                    contention = true;
-                                    break;
+                        for (K item : group.alternatives) {
+                            Group<K> taker = firstTaker.get(item);
+                            if (taker != null && taker != group) {
+                                contention = true;
+                                if (taker.alternatives.size() > 1 || group.alternatives.size() > 1) {
+                                    choiceContention = true;
                                 }
                             }
                         }
@@ -1329,9 +1347,11 @@ public final class RecipeGraphSolver<R, K> {
                         if (done <= 0) {
                             break;
                         }
-                        // Read now: a later craft overwrites it. Only the probe stops on it; the
-                        // leftovers a re-ask would scrape together never complete a batch that is
-                        // short, and chasing them at every level is what exhausts the budget.
+                        // Read now: a later craft overwrites it. Only the probe stops on it:
+                        // chasing a short batch's leftovers at every level is what exhausts the
+                        // budget. A heuristic, so the probe can call a tree short that the leftovers
+                        // would have completed; it only ever answers for a tree the budgeted passes
+                        // had already given up on.
                         boolean spent = quantityFree && steps == null && exhausted;
                         long net = count(inv, item) - start;
                         if (net <= produced) {
