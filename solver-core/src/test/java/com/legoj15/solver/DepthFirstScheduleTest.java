@@ -386,6 +386,45 @@ class DepthFirstScheduleTest {
         assertEquals(CHAIN_LEVELS - 1, schedule.current(), "the refused step stays current");
     }
 
+    /**
+     * A refusal sequence (found in review) where halving the cap, with a branch already blocked, lets
+     * the target's other inputs read as held and leaves no runnable branch: an unfinished schedule
+     * must always name a current step — a caller indexes its steps with it.
+     */
+    @Test
+    void anUnfinishedScheduleAlwaysHasACurrentStepAcrossRefusals() {
+        Plan plan = new Plan(
+                new long[] {3, 2, 2, 3, 3},
+                Arrays.asList(
+                        runs(new SlotLayout<>(2, items("raw2", "raw1", "raw2")), new SlotLayout<>(1, items("raw2"))),
+                        runs(new SlotLayout<>(2, items("raw2", "raw0", "raw1", "raw2"))),
+                        runs(new SlotLayout<>(2, items("r1", "r1", "r0", "r0"))),
+                        runs(new SlotLayout<>(2, items("raw0", "raw1")), new SlotLayout<>(1, items("raw1"))),
+                        runs(new SlotLayout<>(1, items("raw2")), new SlotLayout<>(2, items("r1", "r3")))),
+                Arrays.asList("r0", "r1", "r2", "r3", "r4"),
+                new int[] {2, 2, 3, 1, 1});
+        DepthFirstSchedule<String> schedule = new DepthFirstSchedule<>(
+                plan.crafts, plan.layouts, plan.results, plan.resultCounts, plan.held);
+        String[] script = {"performed", "noRoom", "noRoom", "performed", "noRoom", "noRoom", "noRoom", "noRoom"};
+        for (String call : script) {
+            if (schedule.finished()) {
+                break;
+            }
+            boolean room = true;
+            if (call.equals("performed")) {
+                schedule.performed(1);
+            } else {
+                room = schedule.noRoom();
+            }
+            if (!schedule.finished()) {
+                assertTrue(schedule.current() >= 0, "no current step after " + call + " (room " + room + ")");
+            }
+            if (!room) {
+                break;
+            }
+        }
+    }
+
     private static List<SlotLayout<String>> runs(SlotLayout<String>... runList) {
         return new ArrayList<>(Arrays.asList(runList));
     }

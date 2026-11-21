@@ -62,7 +62,8 @@ public final class DepthFirstSchedule<K> {
     private long cap = MAX_CAP;
     /**
      * Steps refused a single craft for want of room ({@link #noRoom}); {@link #demand} routes around
-     * them, so another branch can run and free space. Cleared by any {@link #performed}.
+     * them, so another branch can run and free space. Cleared by any {@link #performed}, and when no
+     * branch can run ({@link #rechoose}).
      */
     private final Set<Integer> blocked = new HashSet<>();
     /** The cached current batch, computed lazily and cleared by {@link #performed}/{@link #noRoom}. */
@@ -252,18 +253,29 @@ public final class DepthFirstSchedule<K> {
             // Not even one craft of this step fits: try every other branch before calling the storage
             // full, since one that consumes held stock frees the room this step needs.
             blocked.add(step);
-            haveBatch = false;
-            if (current() >= 0) {
-                return true;
-            }
-            blocked.clear(); // nothing can run: restore the refused step as current
-            haveBatch = false;
-            current();
-            return false;
+            return rechoose(step, currentBatch);
         }
-        cap = Math.max(1L, Math.min(cap, saturate(currentBatch, volume)) / 2);
+        long refused = currentBatch;
+        cap = Math.max(1L, Math.min(cap, saturate(refused, volume)) / 2);
+        // A smaller cap can make the target's other inputs read as held, leaving only blocked branches.
+        return rechoose(step, Math.min(refused, Math.max(1L, cap / volume)));
+    }
+
+    /**
+     * Picks the next batch after a refusal. When no branch can run, the refused {@code step} goes back
+     * in as the current batch (blocks cleared) so the caller can report it, and the answer is false: an
+     * unfinished schedule always has a current step.
+     */
+    private boolean rechoose(int step, long batch) {
         haveBatch = false;
-        return true;
+        if (current() >= 0) {
+            return true;
+        }
+        blocked.clear();
+        currentStep = step;
+        currentBatch = Math.max(1L, batch);
+        haveBatch = true;
+        return false;
     }
 
     public boolean finished() {
