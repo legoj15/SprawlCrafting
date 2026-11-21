@@ -41,7 +41,9 @@ import net.minecraft.util.ResourceLocation;
  *   <li><b>Deferred</b> (yellow): two-click — the first click arms the recipe
  *       ({@link DeferredClickState}) and ghosts it into the grid; the second click confirms and
  *       starts it. Vanilla's own ghost guard would swallow that second click, so it is bypassed
- *       ({@link #sprawlcrafting$deferredPassesGhostGuard}).</li>
+ *       ({@link #sprawlcrafting$deferredPassesGhostGuard}). A recipe only the protected tier can
+ *       make (issue #40) is deferred too: its preview warns which special items the plan consumes
+ *       and its confirm sends the protected start packet.</li>
  *   <li><b>Unsolvable</b> (red): opens the {@link GuiMissingResources} gather screen for it.</li>
  *   <li><b>Direct</b> (white): laid into the grid by the mod's server-side placer when the
  *       server runs the mod (NBT- and station-chest-capable); vanilla placement on modless
@@ -71,12 +73,21 @@ public class GuiRecipeBookMixin {
             if (recipe != null && recipe.getRegistryName() != null) {
                 ResourceLocation id = recipe.getRegistryName();
                 GridContext grid = GridContext.current(player);
-                CraftPlanner.Session session = ClientPlanCache.get(player, grid);
-                CraftPlanner.Craftability craftability = session.classify(recipe);
+                // Protected-aware classification (issue #40): a recipe only the protected tier can
+                // make reads DEFERRED here too, so the first click arms it and the preview tooltip
+                // carries the special-items warning.
+                CraftPlanner.Craftability craftability = ClientPlanCache.classify(player, grid, recipe);
 
                 if (craftability == CraftPlanner.Craftability.DEFERRED) {
                     if (DeferredClickState.isArmedFor(recipe)) {
-                        SprawlNetwork.startByRecipe(id);
+                        if (ClientPlanCache.isProtectedOnly(recipe)) {
+                            // The confirmed plan consumed protected stacks (#40): the protected
+                            // start packet, which only a server that advertised the capability is
+                            // ever sent one (isProtectedOnly implies the offer was on).
+                            SprawlNetwork.startProtectedByRecipe(id);
+                        } else {
+                            SprawlNetwork.startByRecipe(id);
+                        }
                         DeferredClickState.disarm();
                     } else {
                         DeferredClickState.arm(recipe);

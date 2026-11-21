@@ -102,6 +102,15 @@ public final class CraftJob {
      * parks an item there.
      */
     private boolean networkDependent;
+    /**
+     * Whether this job's plan counted the player's protected stacks (enchanted and/or renamed,
+     * never damaged; {@code CraftExecutor#isProtected}) as material — set by the caller that
+     * planned it that way (issue #40), after the plain pool fell short and the player confirmed.
+     * Such a job may pick protected stacks from the 36 main slots, always after every plain stack
+     * in the pool; every other job keeps the plain rule exactly. Damaged stacks are never
+     * protected material, on any job.
+     */
+    private boolean usesProtected;
 
     public CraftJob(ResourceLocation targetRecipe, ItemStack targetResult, List<CraftStep> steps) {
         if (steps.isEmpty()) {
@@ -140,6 +149,15 @@ public final class CraftJob {
 
     public void setNetworkDependent(boolean networkDependent) {
         this.networkDependent = networkDependent;
+    }
+
+    /** See {@link #usesProtected}. */
+    public boolean usesProtected() {
+        return usesProtected;
+    }
+
+    public void setUsesProtected(boolean usesProtected) {
+        this.usesProtected = usesProtected;
     }
 
     /** Whether the job relies on any station-side source, i.e. its pauses point the player back to a station. */

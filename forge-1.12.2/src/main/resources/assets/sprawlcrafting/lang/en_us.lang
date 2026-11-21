@@ -36,11 +36,20 @@ sprawlcrafting.toast.click_to_cancel=Click to cancel
 
 # --- Recipe book / deferred-craft preview ---
 sprawlcrafting.recipe.deferred=Craftable from raw resources!
+# recipe.deferred.click is only shown on the JEI protected-craft tooltip today (the recipe book's
+# preview has its own confirm line below); wording matches the modern nodes' twin key exactly.
+sprawlcrafting.recipe.deferred.click=Click to queue the deferred craft
 sprawlcrafting.preview.header=Craft %s from raw resources:
 # preview.steps is 1.12.2-only (the modern preview has no per-count header line).
 sprawlcrafting.preview.steps=%s component craft(s):
 sprawlcrafting.preview.step=%s× %s
 sprawlcrafting.preview.confirm=Click again to start
+# Protected-stack warning (issue #40): a gold header plus one line per enchanted/renamed item the
+# confirmed plan will consume. Wording matches the modern nodes' en_us.json twins.
+sprawlcrafting.preview.protected_header=Will use your special items:
+sprawlcrafting.preview.protected_enchanted=%s (enchanted)
+sprawlcrafting.preview.protected_renamed=%s (renamed)
+sprawlcrafting.preview.protected_both=%s (enchanted, renamed)
 
 # --- Gather list: JEI tooltip (MissingResourcesError) + missing-resources screen ---
 sprawlcrafting.gather.click=Click to see the full gather list

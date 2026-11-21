@@ -44,13 +44,24 @@ public final class RecipeBookHighlight {
         }
     }
 
-    /** {@link #isDeferred(IRecipe)} against an already-fetched session (null means "no"). */
+    /**
+     * {@link #isDeferred(IRecipe)} against an already-fetched session (null means "no"). Also
+     * yellow for a recipe only the protected tier can make (issue #40): the plain session the
+     * caller fetched classifies those unsolvable, so the protected consult is folded in here —
+     * cheap when the offer is off (no protected session exists) and cached per recipe when on.
+     */
     public static boolean isDeferred(CraftPlanner.Session session, IRecipe recipe) {
         try {
             if (session == null || recipe == null || recipe.getRegistryName() == null) {
                 return false;
             }
-            return session.classify(recipe) == CraftPlanner.Craftability.DEFERRED;
+            if (session.classify(recipe) == CraftPlanner.Craftability.DEFERRED) {
+                return true;
+            }
+            Minecraft mc = Minecraft.getMinecraft();
+            return mc.player != null
+                    && ClientPlanCache.classify(mc.player, session.grid(), recipe)
+                            == CraftPlanner.Craftability.DEFERRED;
         } catch (Throwable ignored) {
             // Never let recipe classification break the recipe-book render.
             return false;

@@ -12,8 +12,8 @@ import net.minecraftforge.fml.relauncher.SideOnly;
 
 /**
  * S2C on the v2 channel: "this server speaks SprawlCrafting v2", plus one optional trailing
- * capability byte (see {@link #CAP_NETWORK_TERMINALS} and {@link #CAP_CANCEL_CRAFT}; absent
- * from a pre-capability server, which
+ * capability byte (see {@link #CAP_NETWORK_TERMINALS}, {@link #CAP_CANCEL_CRAFT} and
+ * {@link #CAP_PROTECTED}; absent from a pre-capability server, which
  * reads as no capabilities). Sent once at login so the client knows it may use server-backed paths
  * (the {@link PlaceRecipeMessage} grid fill) instead of their client-only fallbacks. The mod is
  * deliberately joinable in every mixed setup ({@code acceptableRemoteVersions="*"}), so capability
@@ -42,16 +42,26 @@ public class ServerHelloMessage implements IMessage {
     public static final int CAP_CANCEL_CRAFT = 2;
 
     /**
+     * Capability bit: the server registers the protected-craft start (issue #40), i.e. it can plan
+     * with the player's protected stacks (enchanted and/or renamed, never damaged) after a
+     * confirmed request. A client offers such crafts only after seeing this bit: an older v2
+     * server knows CHANNEL2 without id 5, and an unknown discriminator of a KNOWN channel is a
+     * kick — the same gate the cancel uses.
+     */
+    public static final int CAP_PROTECTED = 4;
+
+    /**
      * Optional trailing capability byte. Backward compatible both ways, verified against FML's
      * decoder ({@code FMLIndexedMessageToMessageCodec.decode} hands {@code fromBytes} a slice and
      * never checks for unread bytes): a pre-capability client ignores the extra byte, and a payload
      * from a pre-capability server is empty, which reads as "no capabilities". The server-side
      * instance advertises what this install can actually do: the network bit is set only when a
      * {@link NetworkTerminals} provider is registered (AE2 present); the cancel bit is always set
-     * (the engine can always cancel a job). A received instance's value is
+     * (the engine can always cancel a job); the protected bit is always set too (planning with the
+     * player's own confirmed stacks needs nothing external). A received instance's value is
      * replaced by {@link #fromBytes}.
      */
-    private int capabilities = CAP_CANCEL_CRAFT
+    private int capabilities = CAP_CANCEL_CRAFT | CAP_PROTECTED
             | (NetworkTerminals.hasProvider() ? CAP_NETWORK_TERMINALS : 0);
 
     @Override
@@ -69,7 +79,8 @@ public class ServerHelloMessage implements IMessage {
         @SideOnly(Side.CLIENT)
         public IMessage onMessage(ServerHelloMessage message, MessageContext ctx) {
             ServerPresence.markPresent((message.capabilities & CAP_NETWORK_TERMINALS) != 0,
-                    (message.capabilities & CAP_CANCEL_CRAFT) != 0);
+                    (message.capabilities & CAP_CANCEL_CRAFT) != 0,
+                    (message.capabilities & CAP_PROTECTED) != 0);
             return new ClientHelloMessage();
         }
     }

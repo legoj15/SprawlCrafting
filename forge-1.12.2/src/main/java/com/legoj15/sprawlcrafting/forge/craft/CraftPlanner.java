@@ -4,12 +4,16 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import com.legoj15.solver.PlannedStep;
 import com.legoj15.solver.RecipeGraphSolver;
 import com.legoj15.solver.RecipeGraphSolver.Result;
+import com.legoj15.solver.SlotLayout;
 
 import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.entity.player.InventoryPlayer;
@@ -101,12 +105,31 @@ public final class CraftPlanner {
     }
 
     /**
+     * {@link #plan(EntityPlayer, IRecipe, GridContext)} with the 36 main slots' protected stacks
+     * (enchanted and/or renamed, never damaged; {@link CraftExecutor#isProtected}) counted as
+     * material too — the player-confirmed fallback (issue #40) for recipes the plain pool cannot
+     * make. The caller that planned this way must mark the job {@link CraftJob#setUsesProtected},
+     * which is what lets the executor pick those stacks.
+     */
+    public static PlanOutcome plan(EntityPlayer player, IRecipe target, GridContext grid,
+                                   boolean includeProtected) {
+        return session(player, grid, includeProtected).plan(target);
+    }
+
+    /**
      * Plans a deferred craft of {@code result} (item + metadata), picking the first grid-fitting
      * recipe that produces it whose chain resolves. Used by the JEI "+" hook, which recovers the
      * displayed result stack but not the backing recipe object.
      */
     public static PlanOutcome planByResult(EntityPlayer player, ItemStack result, GridContext grid) {
         return session(player, grid).planByResult(result);
+    }
+
+    /** {@link #planByResult(EntityPlayer, ItemStack, GridContext)} with the protected tier (see
+     *  {@link #plan(EntityPlayer, IRecipe, GridContext, boolean)}). */
+    public static PlanOutcome planByResult(EntityPlayer player, ItemStack result, GridContext grid,
+                                           boolean includeProtected) {
+        return session(player, grid, includeProtected).planByResult(result);
     }
 
     /**
@@ -118,7 +141,17 @@ public final class CraftPlanner {
     }
 
     public static Session session(EntityPlayer player, GridContext grid) {
-        return new Session(grid, snapshotMaterials(player, true));
+        return session(player, grid, false);
+    }
+
+    /**
+     * {@link #session(EntityPlayer, GridContext)} with the 36 main slots' protected stacks counted
+     * too ({@code includeProtected}, issue #40). A recipe such a session plans is NOT
+     * plain-craftable: the caller must remember the distinction (the client classifies it deferred,
+     * the confirming packet is the protected one) and mark the job it hands on.
+     */
+    public static Session session(EntityPlayer player, GridContext grid, boolean includeProtected) {
+        return new Session(grid, snapshotMaterials(player, true, includeProtected));
     }
 
     /**
@@ -127,7 +160,14 @@ public final class CraftPlanner {
      * on the network (as in the root tree's inventory-first planning).
      */
     public static Session sessionWithoutNetwork(EntityPlayer player, GridContext grid) {
-        return new Session(grid, snapshotMaterials(player, false));
+        return sessionWithoutNetwork(player, grid, false);
+    }
+
+    /** {@link #sessionWithoutNetwork(EntityPlayer, GridContext)} with the protected tier
+     *  ({@code includeProtected}, issue #40; see {@link #session(EntityPlayer, GridContext, boolean)}). */
+    public static Session sessionWithoutNetwork(EntityPlayer player, GridContext grid,
+                                                boolean includeProtected) {
+        return new Session(grid, snapshotMaterials(player, false, includeProtected));
     }
 
     /**
@@ -142,9 +182,14 @@ public final class CraftPlanner {
      * the network's stock is added too — the live monitor on the server, the terminal screen's own
      * mirror on the client — under the same filter and key; sums saturate at
      * {@link Integer#MAX_VALUE} because a network can hold more than an int of one item.
+     *
+     * <p>{@code includeProtected} widens only the player's own snapshot: protected stacks are a
+     * player-confirmed tier (issue #40), so the external slots (a station's chest, the grid) and the
+     * network stay plain pools for every session.
      */
-    private static Map<ItemKey, Integer> snapshotMaterials(EntityPlayer player, boolean network) {
-        Map<ItemKey, Integer> counts = snapshotInventory(player.inventory);
+    private static Map<ItemKey, Integer> snapshotMaterials(EntityPlayer player, boolean network,
+                                                           boolean includeProtected) {
+        Map<ItemKey, Integer> counts = snapshotInventory(player.inventory, includeProtected);
         for (net.minecraft.inventory.Slot slot : ExternalSlots.materialSlots(player)) {
             addUsable(counts, slot.getStack());
         }
@@ -396,20 +441,122 @@ public final class CraftPlanner {
     /**
      * The 36 main inventory slots as an item-count multiset, keyed by {@link ItemKey}. Armor and
      * offhand are excluded: planning must never consume worn equipment, and execution only pulls
-     * from the main slots. Damaged/enchanted/renamed stacks are skipped with the same predicate
-     * execution uses, so the plan never counts an item {@code CraftExecutor} would refuse.
+     * from the main slots. Damaged stacks are always skipped; enchanted/renamed (protected, issue
+     * #40) stacks are skipped too unless {@code includeProtected} — the player-confirmed tier,
+     * mirroring exactly what the executor may pick for a job planned with it
+     * ({@code CraftExecutor#usableAsIngredient(ItemStack, boolean)}).
      */
-    private static Map<ItemKey, Integer> snapshotInventory(InventoryPlayer inventory) {
+    private static Map<ItemKey, Integer> snapshotInventory(InventoryPlayer inventory,
+                                                           boolean includeProtected) {
         Map<ItemKey, Integer> counts = new HashMap<ItemKey, Integer>();
         for (int i = 0; i < MAIN_INVENTORY_SIZE; i++) {
             ItemStack stack = inventory.mainInventory.get(i);
-            if (!stack.isEmpty() && CraftExecutor.usableAsIngredient(stack)) {
+            if (!stack.isEmpty() && CraftExecutor.usableAsIngredient(stack, includeProtected)) {
                 ItemKey key = ItemKey.of(stack);
                 Integer current = counts.get(key);
                 counts.put(key, (current == null ? 0 : current) + stack.getCount());
             }
         }
         return counts;
+    }
+
+    /**
+     * Whether any of the 36 main slots holds a protected stack (enchanted and/or renamed, never
+     * damaged; {@link CraftExecutor#isProtected}). A cheap gate so callers skip the second,
+     * protected planning pass (issue #40) when there is nothing for it to add.
+     */
+    public static boolean hasProtected(InventoryPlayer inventory) {
+        for (int i = 0; i < MAIN_INVENTORY_SIZE; i++) {
+            if (CraftExecutor.isProtected(inventory.mainInventory.get(i))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * One representative protected stack (count 1, name and enchantments intact) per identity the
+     * plan of {@code job} will consume protected copies of, in slot order: for each identity with
+     * protected copies among the 36 slots, the plan's net consumption — per step, its layouts'
+     * occurrences (any protected alternative, when the step carries no layout: which of them the
+     * executor picks is not decided yet) less what a step produces of it — counted above the plain
+     * copies available. Keyed by {@link ItemKey} (item + metadata), like every other planning
+     * identity on 1.12.2. Display-facing (the click preview and the JEI tooltip); the executor
+     * itself re-decides per craft from the live pool.
+     */
+    public static List<ItemStack> protectedItemsUsed(CraftJob job, InventoryPlayer inventory) {
+        Map<ItemKey, Long> plain = new HashMap<ItemKey, Long>();
+        Map<ItemKey, ItemStack> protectedCopies = new LinkedHashMap<ItemKey, ItemStack>();
+        for (int i = 0; i < MAIN_INVENTORY_SIZE; i++) {
+            ItemStack stack = inventory.mainInventory.get(i);
+            if (stack.isEmpty()) {
+                continue;
+            }
+            if (CraftExecutor.isProtected(stack)) {
+                ItemKey key = ItemKey.of(stack);
+                if (!protectedCopies.containsKey(key)) {
+                    ItemStack copy = stack.copy();
+                    copy.setCount(1);
+                    protectedCopies.put(key, copy);
+                }
+            } else if (CraftExecutor.usableAsIngredient(stack)) {
+                ItemKey key = ItemKey.of(stack);
+                Long current = plain.get(key);
+                plain.put(key, (current == null ? 0L : current.longValue()) + stack.getCount());
+            }
+        }
+        if (protectedCopies.isEmpty()) {
+            return Collections.emptyList();
+        }
+        Map<ItemKey, Long> net = new HashMap<ItemKey, Long>();
+        Set<ItemKey> undetermined = new HashSet<ItemKey>();
+        for (CraftStep step : job.steps()) {
+            IRecipe recipe = CraftingManager.getRecipe(step.recipeId());
+            if (recipe == null) {
+                continue; // a vanished recipe fails the job before any of this matters
+            }
+            if (step.layouts().isEmpty()) {
+                // No layout: the executor decides per cell from the alternatives, so any protected
+                // identity among them may be the one consumed.
+                for (Ingredient ingredient : recipe.getIngredients()) {
+                    if (ingredient == null || ingredient == Ingredient.EMPTY) {
+                        continue;
+                    }
+                    for (ItemKey alternative : slotAlternatives(ingredient)) {
+                        if (protectedCopies.containsKey(alternative)) {
+                            undetermined.add(alternative);
+                        }
+                    }
+                }
+            } else {
+                for (SlotLayout<ItemKey> run : step.layouts()) {
+                    for (ItemKey item : run.items()) {
+                        if (protectedCopies.containsKey(item)) {
+                            Long current = net.get(item);
+                            net.put(item, (current == null ? 0L : current.longValue()) + run.crafts());
+                        }
+                    }
+                }
+            }
+            ItemStack produced = recipe.getRecipeOutput();
+            if (!produced.isEmpty() && protectedCopies.containsKey(ItemKey.of(produced))) {
+                ItemKey key = ItemKey.of(produced);
+                long made = (long) Math.max(1, produced.getCount()) * step.crafts();
+                Long current = net.get(key);
+                net.put(key, (current == null ? 0L : current.longValue()) - made);
+            }
+        }
+        List<ItemStack> used = new ArrayList<ItemStack>();
+        for (Map.Entry<ItemKey, ItemStack> entry : protectedCopies.entrySet()) {
+            Long netNeed = net.get(entry.getKey());
+            Long plainHave = plain.get(entry.getKey());
+            if (undetermined.contains(entry.getKey())
+                    || (netNeed == null ? 0L : netNeed.longValue())
+                            > (plainHave == null ? 0L : plainHave.longValue())) {
+                used.add(entry.getValue());
+            }
+        }
+        return used;
     }
 
     /** What consuming one of {@code key} leaves behind (a bucket from a water bucket), or null. */

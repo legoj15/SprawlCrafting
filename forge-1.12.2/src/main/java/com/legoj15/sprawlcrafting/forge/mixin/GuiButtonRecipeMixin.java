@@ -100,8 +100,10 @@ public class GuiButtonRecipeMixin {
                 }
             }
             GridContext grid = GridContext.current(mc.player);
+            // Protected-aware (issue #40): a recipe only the protected tier can make advertises
+            // the yellow deferred line here too, not the red gather hint, matching its outline.
             CraftPlanner.Craftability craftability =
-                    ClientPlanCache.get(mc.player, grid).classify(recipe);
+                    ClientPlanCache.classify(mc.player, grid, recipe);
             if (craftability == CraftPlanner.Craftability.DEFERRED) {
                 lines.add(net.minecraft.util.text.TextFormatting.YELLOW
                         + net.minecraft.client.resources.I18n.format("sprawlcrafting.recipe.deferred"));
