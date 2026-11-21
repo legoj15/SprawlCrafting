@@ -15,7 +15,9 @@ import net.minecraft.world.item.ItemStack;
  * <p>Only <em>plain</em> items count: one stack identity per {@link Item} with no component patch.
  * A plain stack always passes {@code CraftExecutor.usableAsIngredient} (it carries no damage,
  * enchantment or name), so the planner's snapshot, the executor's draws and the client's mirror all
- * agree on the same pool, keyed by item exactly like the player-inventory snapshot.
+ * agree on the same pool, keyed by item exactly like the player-inventory snapshot — whose protected
+ * tier (issue #40) adds only enchanted/renamed copies the player holds, never anything from here:
+ * the station stays a plain pool even for a job planned with protected stacks.
  *
  * <p>Implementations live in loader/mod compat code ({@code compat/ae2}); shared code only ever
  * sees this interface.

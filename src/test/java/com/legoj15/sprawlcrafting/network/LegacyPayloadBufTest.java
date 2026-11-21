@@ -43,6 +43,9 @@ class LegacyPayloadBufTest {
         StartDeferredCraftPayload start = new StartDeferredCraftPayload(id("chest"));
         assertEquals(start, roundTrip(start, StartDeferredCraftPayload::read));
 
+        StartProtectedCraftPayload startProtected = new StartProtectedCraftPayload(id("chest"));
+        assertEquals(startProtected, roundTrip(startProtected, StartProtectedCraftPayload::read));
+
         CraftingScreenStatePayload state = new CraftingScreenStatePayload(3, 2);
         assertEquals(state, roundTrip(state, CraftingScreenStatePayload::read));
 

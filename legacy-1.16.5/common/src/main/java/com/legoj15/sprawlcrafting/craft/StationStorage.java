@@ -16,7 +16,9 @@ import net.minecraft.item.ItemStack;
  * of it has (see the provider's {@code canonical}). A plain stack always passes
  * {@code CraftExecutor.usableAsIngredient} (no damage, enchantment or name), so the planner's snapshot,
  * the executor's draws and the client's mirror all agree on the same pool, keyed by item exactly like
- * the player-inventory snapshot.
+ * the player-inventory snapshot — whose protected tier (issue #40) adds only enchanted/renamed copies
+ * the player holds, never anything from here: the station stays a plain pool even for a job planned
+ * with protected stacks.
  *
  * <p>Implementations live in loader/mod compat code ({@code compat/ae2}, Forge only); shared code only
  * ever sees this interface.

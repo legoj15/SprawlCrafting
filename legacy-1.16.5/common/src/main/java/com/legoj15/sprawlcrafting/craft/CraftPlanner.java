@@ -5,15 +5,19 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.EnumMap;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.WeakHashMap;
 
 import com.google.common.collect.ImmutableList;
 import com.legoj15.solver.PlannedStep;
 import com.legoj15.solver.RecipeGraphSolver;
+import com.legoj15.solver.SlotLayout;
 
 import net.minecraft.util.registry.Registry;
 import net.minecraft.util.ResourceLocation;
@@ -111,11 +115,24 @@ public final class CraftPlanner {
      */
     public static PlanOutcome plan(ServerPlayerEntity player, IRecipe<?> target, GridContext grid,
                                    Map<Item, Long> station) {
+        return plan(player, target, grid, station, false);
+    }
+
+    /**
+     * {@link #plan(ServerPlayerEntity, IRecipe, GridContext, Map)} with the 36 main slots' protected
+     * stacks (enchanted and/or renamed, never damaged; {@link CraftExecutor#isProtected}) counted as
+     * material too — the player-confirmed fallback (issue #40) for recipes the plain pool cannot make.
+     * The caller that planned this way marks the job {@code CraftJob#setUsesProtected}, which is what
+     * lets the executor pick those stacks.
+     */
+    public static PlanOutcome plan(ServerPlayerEntity player, IRecipe<?> target, GridContext grid,
+                                   Map<Item, Long> station, boolean includeProtected) {
         // Cheap reject before building the producer index, so spammed unplannable requests cost little.
         if (McRecipe.of(target) == null) {
             return PlanOutcome.of(PlanOutcome.Kind.UNSUPPORTED);
         }
-        return session(player.getServer().getRecipeManager(), player.inventory, grid, station).plan(target);
+        return session(player.getServer().getRecipeManager(), player.inventory, grid, station,
+                includeProtected).plan(target);
     }
 
     /**
@@ -147,7 +164,19 @@ public final class CraftPlanner {
      */
     public static Session session(RecipeManager recipes, PlayerInventory inventory, GridContext grid,
                                   Map<Item, Long> station) {
-        return new Session(recipes, grid, ProducerIndex.forGrid(recipes, grid), snapshotInventory(inventory, station));
+        return session(recipes, inventory, grid, station, false);
+    }
+
+    /**
+     * {@link #session(RecipeManager, PlayerInventory, GridContext, Map)} with the 36 main slots'
+     * protected stacks counted too ({@code includeProtected}, issue #40). A recipe such a session
+     * plans is NOT plain-craftable: the caller must remember the distinction (the client classifies
+     * it deferred, the confirming packet is the protected one) and mark the job it hands on.
+     */
+    public static Session session(RecipeManager recipes, PlayerInventory inventory, GridContext grid,
+                                  Map<Item, Long> station, boolean includeProtected) {
+        return new Session(recipes, grid, ProducerIndex.forGrid(recipes, grid),
+                snapshotInventory(inventory, station, includeProtected));
     }
 
     /**
@@ -312,17 +341,20 @@ public final class CraftPlanner {
     /**
      * The 36 main inventory slots as an item-count multiset. Armor and offhand are deliberately
      * excluded: planning must never consume worn equipment, and execution only pulls from the main
-     * slots. Damaged/enchanted/renamed stacks are skipped with the same predicate execution uses.
+     * slots. Damaged stacks are always skipped; enchanted/renamed (protected, issue #40) stacks are
+     * skipped too unless {@code includeProtected} — the player-confirmed tier, mirroring exactly what
+     * the executor may pick for a job planned with it ({@link CraftExecutor#usableAsIngredient}).
      *
      * <p>{@code station} adds an open crafting station's plain-item counts (already usable, see
      * {@link StationStorage}); the solver counts in {@code int}, so each total is clamped at
      * {@link Integer#MAX_VALUE} (an ME network can hold far more).
      */
-    private static Map<Item, Integer> snapshotInventory(PlayerInventory inventory, Map<Item, Long> station) {
+    private static Map<Item, Integer> snapshotInventory(PlayerInventory inventory, Map<Item, Long> station,
+                                                        boolean includeProtected) {
         Map<Item, Integer> counts = new HashMap<>();
         for (int i = 0; i < MAIN_SLOTS; i++) {
             ItemStack stack = inventory.getItem(i);
-            if (!stack.isEmpty() && CraftExecutor.usableAsIngredient(stack)) {
+            if (!stack.isEmpty() && CraftExecutor.usableAsIngredient(stack, includeProtected)) {
                 counts.merge(stack.getItem(), stack.getCount(), Integer::sum);
             }
         }
@@ -334,6 +366,107 @@ public final class CraftPlanner {
             }
         }
         return counts;
+    }
+
+    /**
+     * Whether any of the 36 main slots holds a protected stack (enchanted and/or renamed, never
+     * damaged; {@link CraftExecutor#isProtected}). A cheap gate so callers skip the second,
+     * protected planning pass (issue #40) when there is nothing for it to add.
+     */
+    public static boolean hasProtected(PlayerInventory inventory) {
+        for (int i = 0; i < MAIN_SLOTS; i++) {
+            if (CraftExecutor.isProtected(inventory.getItem(i))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * One representative protected stack (count 1, hover name and enchantments intact) per item the
+     * plan of {@code job} will consume protected copies of, in slot order: for each item with
+     * protected copies among the 36 slots, the plan's net consumption — per step, its layouts'
+     * occurrences (any protected alternative, when the step carries no layout: which of them the
+     * executor picks is not decided yet) less what a step produces of it — counted above the plain
+     * copies available. {@code station} adds the plain counts of the other sources the plan used
+     * (an open crafting station's storage; empty for none): the executor draws those before any
+     * protected copy, so without them an item the station supplies anyway would be over-warned.
+     * Display-facing (the click preview and the JEI tooltip); the executor itself
+     * re-decides per craft from the live pool.
+     */
+    public static List<ItemStack> protectedItemsUsed(CraftJob job, RecipeManager recipes,
+                                                     PlayerInventory inventory,
+                                                     Map<Item, Long> station) {
+        Map<Item, Long> plain = new HashMap<>();
+        Map<Item, ItemStack> protectedCopies = new LinkedHashMap<>();
+        for (int i = 0; i < MAIN_SLOTS; i++) {
+            ItemStack stack = inventory.getItem(i);
+            if (stack.isEmpty()) {
+                continue;
+            }
+            if (CraftExecutor.isProtected(stack)) {
+                protectedCopies.putIfAbsent(stack.getItem(), copyOfOne(stack));
+            } else if (CraftExecutor.usableAsIngredient(stack)) {
+                plain.merge(stack.getItem(), (long) stack.getCount(), Long::sum);
+            }
+        }
+        if (protectedCopies.isEmpty()) {
+            return ImmutableList.of();
+        }
+        for (Map.Entry<Item, Long> entry : station.entrySet()) {
+            if (entry.getValue() > 0) {
+                plain.merge(entry.getKey(), entry.getValue(), Long::sum);
+            }
+        }
+        Map<Item, Long> net = new HashMap<>();
+        Set<Item> undetermined = new HashSet<>();
+        for (CraftStep step : job.steps()) {
+            IRecipe<?> recipe = RecipeIds.byId(recipes, step.recipeId()).orElse(null);
+            if (recipe == null) {
+                continue; // a vanished recipe fails the job before any of this matters
+            }
+            if (step.layouts().isEmpty()) {
+                // No layout: the executor decides per cell from the alternatives, so any protected
+                // item among them may be the one consumed.
+                for (Ingredient ingredient : recipe.getIngredients()) {
+                    if (ingredient == null || ingredient.isEmpty()) {
+                        continue;
+                    }
+                    for (Item alternative : slotAlternatives(ingredient)) {
+                        if (protectedCopies.containsKey(alternative)) {
+                            undetermined.add(alternative);
+                        }
+                    }
+                }
+            } else {
+                for (SlotLayout<Item> run : step.layouts()) {
+                    for (Item item : run.items()) {
+                        if (item != null && protectedCopies.containsKey(item)) {
+                            net.merge(item, (long) run.crafts(), Long::sum);
+                        }
+                    }
+                }
+            }
+            ItemStack produced = RecipeIds.resultOf(recipe);
+            if (!produced.isEmpty() && protectedCopies.containsKey(produced.getItem())) {
+                net.merge(produced.getItem(), -((long) Math.max(1, produced.getCount()) * step.crafts()),
+                        Long::sum);
+            }
+        }
+        List<ItemStack> used = new ArrayList<>();
+        for (Map.Entry<Item, ItemStack> entry : protectedCopies.entrySet()) {
+            if (undetermined.contains(entry.getKey())
+                    || net.getOrDefault(entry.getKey(), 0L) > plain.getOrDefault(entry.getKey(), 0L)) {
+                used.add(entry.getValue());
+            }
+        }
+        return used;
+    }
+
+    private static ItemStack copyOfOne(ItemStack stack) {
+        ItemStack copy = stack.copy();
+        copy.setCount(1);
+        return copy;
     }
 
     /**

@@ -63,6 +63,20 @@ public interface IPlatformHelper {
     /** C2S: confirm a deferred craft of {@code recipeId}. No-op unless {@link #serverHasMod()}. */
     void sendStartCraft(net.minecraft.util.ResourceLocation recipeId);
 
+    /**
+     * Whether the connected server has the protected-craft channel (issue #40), i.e. a SprawlCrafting
+     * build that can plan with the player's protected stacks (enchanted and/or renamed, never
+     * damaged). Without it the client must not offer such crafts at all: the server would plan the
+     * plain pool only and refuse the request.
+     */
+    boolean canStartProtectedCraft();
+
+    /**
+     * C2S: confirm a deferred craft that needs the player's protected stacks. No-op unless
+     * {@link #canStartProtectedCraft()}.
+     */
+    void sendStartProtectedCraft(net.minecraft.util.ResourceLocation recipeId);
+
     /** C2S: the dimensions of the crafting grid on screen (0×0 = none). No-op unless {@link #serverHasMod()}. */
     void sendScreenState(int gridWidth, int gridHeight);
 

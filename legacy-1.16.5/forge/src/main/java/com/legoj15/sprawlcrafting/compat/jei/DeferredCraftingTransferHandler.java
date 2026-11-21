@@ -1,6 +1,7 @@
 package com.legoj15.sprawlcrafting.compat.jei;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 import com.legoj15.sprawlcrafting.client.ClientJobTracker;
@@ -10,7 +11,9 @@ import com.legoj15.sprawlcrafting.client.GatherTooltip;
 import com.legoj15.sprawlcrafting.client.MissingIngredients;
 import com.legoj15.sprawlcrafting.client.MissingIngredientsView;
 import com.legoj15.sprawlcrafting.config.SprawlConfig;
+import com.legoj15.sprawlcrafting.craft.CraftPlanner;
 import com.legoj15.sprawlcrafting.craft.CraftPlanner.Craftability;
+import com.legoj15.sprawlcrafting.craft.CraftPreview;
 import com.legoj15.sprawlcrafting.craft.GridContext;
 import com.legoj15.sprawlcrafting.craft.ShortfallView;
 import com.mojang.blaze3d.matrix.MatrixStack;
@@ -53,6 +56,15 @@ public class DeferredCraftingTransferHandler implements IRecipeTransferHandler<W
     }
 
     /**
+     * The same yellow state for a recipe only a protected-including plan can make (issue #40): the
+     * tooltip adds which special items would be consumed, and a click sends the protected start.
+     * Shared with {@link StationTransferHandler}.
+     */
+    static IRecipeTransferError protectedDeferredAvailable(IRecipe<?> recipe, GridContext grid) {
+        return new ProtectedDeferredError(recipe, grid);
+    }
+
+    /**
      * The orange "open the gather list" state for {@code recipe}, its tooltip costed for {@code grid}; shared
      * with {@link StationTransferHandler}.
      */
@@ -90,11 +102,19 @@ public class DeferredCraftingTransferHandler implements IRecipeTransferHandler<W
             if (ClientJobTracker.hasActiveJob()) {
                 return vanillaError; // busy: don't offer to queue another deferred craft
             }
+            // A recipe only the protected tier can make (issue #40) confirms through the protected
+            // start packet, and its tooltip says which special items the plan would consume.
+            boolean protectedCraft = DeferredCraftableCache.isProtectedOnly(craft);
             if (doTransfer) {
-                DeferredClickState.sendStartPacket(craft);
+                if (protectedCraft) {
+                    DeferredClickState.sendProtectedStartPacket(craft);
+                } else {
+                    DeferredClickState.sendStartPacket(craft);
+                }
                 return null;
             }
-            return DEFERRED_AVAILABLE;
+            return protectedCraft ? protectedDeferredAvailable(craft, GridContext.CRAFTING_TABLE)
+                    : DEFERRED_AVAILABLE;
         }
         if (craftability == Craftability.UNSOLVABLE && SprawlConfig.get().needsSystem()) {
             if (doTransfer) {
@@ -149,6 +169,52 @@ public class DeferredCraftingTransferHandler implements IRecipeTransferHandler<W
             lines.add(new TranslationTextComponent("sprawlcrafting.recipe.deferred.click").withStyle(TextFormatting.GRAY));
             return lines;
         }
+    }
+
+    /** Yellow state for a protected-only recipe: the deferred invite plus the special-items warning. */
+    private static final class ProtectedDeferredError extends ColoredError {
+
+        private final IRecipe<?> recipe;
+        private final GridContext grid;
+
+        ProtectedDeferredError(IRecipe<?> recipe, GridContext grid) {
+            this.recipe = recipe;
+            this.grid = grid;
+        }
+
+        @Override
+        int color() {
+            return DeferredCraftError.TRANSLUCENT_YELLOW;
+        }
+
+        @Override
+        List<ITextComponent> tooltip() {
+            List<ITextComponent> lines = new ArrayList<>();
+            lines.add(new TranslationTextComponent("sprawlcrafting.recipe.deferred").withStyle(TextFormatting.YELLOW));
+            lines.add(new TranslationTextComponent("sprawlcrafting.recipe.deferred.click").withStyle(TextFormatting.GRAY));
+            lines.addAll(protectedWarningLines(recipe, grid));
+            return lines;
+        }
+    }
+
+    /**
+     * The special-items warning lines for {@code recipe}'s current plan, or empty when the live
+     * inventory no longer needs any (the button then says the plain deferred thing only). Same
+     * per-hover cost as the gather tooltip's shortfall: one plan against the cached session. The
+     * open station's plain counts join as plain material: the executor draws them before any
+     * protected copy, so without them an item the station supplies anyway would be over-warned.
+     */
+    static List<ITextComponent> protectedWarningLines(IRecipe<?> recipe, GridContext grid) {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.player == null || minecraft.level == null) {
+            return Collections.emptyList();
+        }
+        CraftPlanner.PlanOutcome outcome = DeferredCraftableCache.plan(recipe, grid);
+        if (!outcome.isPlanned() || !outcome.job().usesProtected()) {
+            return Collections.emptyList();
+        }
+        return CraftPreview.protectedWarningLines(outcome.job(), minecraft.level.getRecipeManager(),
+                minecraft.player.inventory, DeferredCraftableCache.stationCounts());
     }
 
     /** Orange state for an unmakeable recipe: clicking opens the gather list. */

@@ -171,8 +171,8 @@ public final class CraftQueueManager {
             // through to the auto-craft below, which remains the only place the item is granted.
             IRecipe handOff = handOffCandidate(player, job);
             if (handOff != null
-                    && ServerGridPlacer.placeFinalCraft(player, handOff, job.produced(), job.currentCraftLayout())
-                            == ServerGridPlacer.HandOffResult.FILLED) {
+                    && ServerGridPlacer.placeFinalCraft(player, handOff, job.produced(), job.currentCraftLayout(),
+                            job.usesProtected()) == ServerGridPlacer.HandOffResult.FILLED) {
                 ACTIVE.remove(player.getUniqueID());
                 job.onCraftPerformed();
                 sync(player, job, CraftProgressMessage.State.READY_IN_GRID, job.targetResult());
@@ -181,7 +181,7 @@ public final class CraftQueueManager {
                 return;
             }
             CraftExecutor.CraftResult result = CraftExecutor.craftOnce(player, job.currentStep().recipeId(),
-                    job.produced(), job.currentCraftLayout());
+                    job.produced(), job.currentCraftLayout(), job.usesProtected());
             if (result instanceof CraftExecutor.CraftResult.Success) {
                 CraftExecutor.CraftResult.Success success = (CraftExecutor.CraftResult.Success) result;
                 // Dependence can be learned mid-job: a craft that actually drew from the chest or the

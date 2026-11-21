@@ -54,6 +54,13 @@ public final class SprawlNetwork {
      * {@link ServerHelloMessage#CAP_CANCEL_CRAFT} (the client gates the send on that bit).
      */
     private static final int ID2_CANCEL_CRAFT = 4;
+    /**
+     * C2S-only for the same reason (issue #40): the confirmed start of a craft whose plan needs the
+     * player's protected stacks. An older v2 server knows CHANNEL2 without id 5, so it must only
+     * ever travel upstream, and only to a server that advertised
+     * {@link ServerHelloMessage#CAP_PROTECTED} (the client gates the send on that bit).
+     */
+    private static final int ID2_START_PROTECTED = 5;
 
     /** Common preInit (both sides): all message discriminators + their handlers. Every message
      *  must be registered here, even S2C ones, because the server needs the discriminator to encode
@@ -79,6 +86,8 @@ public final class SprawlNetwork {
                 CraftingScreenStateMessage.class, ID2_SCREEN_STATE, Side.SERVER);
         CHANNEL2.registerMessage(CancelCraftMessage.Handler.class,
                 CancelCraftMessage.class, ID2_CANCEL_CRAFT, Side.SERVER);
+        CHANNEL2.registerMessage(StartProtectedCraftMessage.Handler.class,
+                StartProtectedCraftMessage.class, ID2_START_PROTECTED, Side.SERVER);
     }
 
     public static void sendProgress(EntityPlayerMP player, CraftProgressMessage message) {
@@ -110,5 +119,15 @@ public final class SprawlNetwork {
     /** Cancels the local player's running deferred craft; the caller gates on the server's advertised cancel capability. */
     public static void cancelCraft() {
         CHANNEL2.sendToServer(new CancelCraftMessage());
+    }
+
+    /**
+     * Starts a confirmed deferred craft that needs the player's protected stacks (issue #40), by
+     * recipe. The caller gates on the server's advertised protected capability: an older v2 server
+     * knows CHANNEL2 without this discriminator, and an unknown one is a kick.
+     */
+    public static void startProtectedByRecipe(ResourceLocation recipeId) {
+        com.legoj15.sprawlcrafting.forge.client.EngineWatchdog.engineRequestSent();
+        CHANNEL2.sendToServer(new StartProtectedCraftMessage(recipeId));
     }
 }

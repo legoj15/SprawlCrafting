@@ -16,6 +16,7 @@ import com.legoj15.sprawlcrafting.network.CraftProgressPayload;
 import com.legoj15.sprawlcrafting.network.CraftingScreenStatePayload;
 import com.legoj15.sprawlcrafting.network.DeferredCraftableSyncPayload;
 import com.legoj15.sprawlcrafting.network.ProgressStatesV2Payload;
+import com.legoj15.sprawlcrafting.network.ProtectedCraftableSyncPayload;
 import com.legoj15.sprawlcrafting.network.RequestCraftPreviewPayload;
 import com.legoj15.sprawlcrafting.network.RequestShortfallByDisplayPayload;
 import com.legoj15.sprawlcrafting.network.RequestShortfallByRecipePayload;
@@ -23,6 +24,8 @@ import com.legoj15.sprawlcrafting.network.ShortfallPayload;
 import com.legoj15.sprawlcrafting.network.ShortfallV2Payload;
 import com.legoj15.sprawlcrafting.network.StartDeferredCraftByDisplayPayload;
 import com.legoj15.sprawlcrafting.network.StartDeferredCraftPayload;
+import com.legoj15.sprawlcrafting.network.StartProtectedCraftByDisplayPayload;
+import com.legoj15.sprawlcrafting.network.StartProtectedCraftPayload;
 
 import net.minecraft.server.level.ServerPlayer;
 import net.neoforged.bus.api.IEventBus;
@@ -74,6 +77,17 @@ public class NeoForgeMod {
                         CraftQueueManager.cancel(serverPlayer);
                     }
                 });
+        // The protected start (#40): same shape as the plain one, but the plan may count the player's
+        // protected stacks. Optional like every payload: a client that never registered it is never
+        // offered protected crafts in the first place.
+        registrar.playToServer(
+                StartProtectedCraftPayload.TYPE,
+                StartProtectedCraftPayload.STREAM_CODEC,
+                (payload, context) -> {
+                    if (context.player() instanceof ServerPlayer serverPlayer) {
+                        CraftRequests.handleStartRequest(serverPlayer, payload.recipeId(), true);
+                    }
+                });
         registrar.playToClient(
                 CraftProgressPayload.TYPE,
                 CraftProgressPayload.STREAM_CODEC,
@@ -96,6 +110,15 @@ public class NeoForgeMod {
                         DeferredCraftSync.handleStartByDisplay(serverPlayer, payload.displayId());
                     }
                 });
+        // The protected by-display start (#40), the recipe book's confirm for a protected-only entry.
+        registrar.playToServer(
+                StartProtectedCraftByDisplayPayload.TYPE,
+                StartProtectedCraftByDisplayPayload.STREAM_CODEC,
+                (payload, context) -> {
+                    if (context.player() instanceof ServerPlayer serverPlayer) {
+                        DeferredCraftSync.handleStartByDisplay(serverPlayer, payload.displayId(), true);
+                    }
+                });
         registrar.playToServer(
                 RequestCraftPreviewPayload.TYPE,
                 RequestCraftPreviewPayload.STREAM_CODEC,
@@ -108,6 +131,13 @@ public class NeoForgeMod {
                 DeferredCraftableSyncPayload.TYPE,
                 DeferredCraftableSyncPayload.STREAM_CODEC,
                 (payload, context) -> DeferredCraftableCache.accept(payload.displayIds(), payload.recipeIds()));
+        // The protected-only subset of that set (#40): pushed right after it, only to clients that
+        // registered this channel (the server checks canReceive before sending).
+        registrar.playToClient(
+                ProtectedCraftableSyncPayload.TYPE,
+                ProtectedCraftableSyncPayload.STREAM_CODEC,
+                (payload, context) -> DeferredCraftableCache.acceptProtected(
+                        payload.displayIds(), payload.recipeIds()));
         registrar.playToClient(
                 CraftPreviewPayload.TYPE,
                 CraftPreviewPayload.STREAM_CODEC,

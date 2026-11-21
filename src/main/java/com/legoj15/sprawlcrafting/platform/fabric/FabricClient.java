@@ -11,6 +11,7 @@ import com.legoj15.sprawlcrafting.config.SprawlConfig;
 import com.legoj15.sprawlcrafting.network.CraftPreviewPayload;
 import com.legoj15.sprawlcrafting.network.CraftProgressPayload;
 import com.legoj15.sprawlcrafting.network.DeferredCraftableSyncPayload;
+import com.legoj15.sprawlcrafting.network.ProtectedCraftableSyncPayload;
 import com.legoj15.sprawlcrafting.network.ShortfallPayload;
 import com.legoj15.sprawlcrafting.network.ShortfallV2Payload;
 
@@ -48,6 +49,10 @@ public class FabricClient implements ClientModInitializer {
         //? if >=1.21.11 {
         /*ClientPlayNetworking.registerGlobalReceiver(DeferredCraftableSyncPayload.TYPE,
                 (payload, context) -> DeferredCraftableCache.accept(payload.displayIds(), payload.recipeIds()));
+        // The protected-only subset of that set (#40): members confirm with the protected start.
+        ClientPlayNetworking.registerGlobalReceiver(ProtectedCraftableSyncPayload.TYPE,
+                (payload, context) -> DeferredCraftableCache.acceptProtected(
+                        payload.displayIds(), payload.recipeIds()));
         ClientPlayNetworking.registerGlobalReceiver(CraftPreviewPayload.TYPE,
                 (payload, context) -> DeferredClickState.acceptPreview(payload.displayId(), payload.lines()));
         ClientPlayNetworking.registerGlobalReceiver(ShortfallPayload.TYPE,

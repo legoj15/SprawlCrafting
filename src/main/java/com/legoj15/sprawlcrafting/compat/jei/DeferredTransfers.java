@@ -1,5 +1,7 @@
 package com.legoj15.sprawlcrafting.compat.jei;
 
+import java.util.List;
+
 import com.legoj15.sprawlcrafting.client.ClientJobTracker;
 import com.legoj15.sprawlcrafting.client.DeferredClickState;
 import com.legoj15.sprawlcrafting.client.DeferredCraftableCache;
@@ -35,6 +37,18 @@ public final class DeferredTransfers {
         return new GatherListError(recipe);
     }
 
+    /**
+     * The same yellow state for a recipe only a protected-including plan can make (issue #40): the
+     * tooltip adds which special items would be consumed, and a click sends the protected start.
+     * Shared with the station handler (compat/ae2); REI gets the same lines through
+     * {@code client.ProtectedWarnings};
+     * {@code grid} costs the warning lines' plan, as at the clicked grid.
+     */
+    public static IRecipeTransferError protectedDeferredAvailable(RecipeHolder<CraftingRecipe> recipe,
+                                                                  GridContext grid) {
+        return new ProtectedDeferredError(recipe, grid);
+    }
+
     private DeferredTransfers() {
     }
 
@@ -58,11 +72,19 @@ public final class DeferredTransfers {
             if (ClientJobTracker.hasActiveJob()) {
                 return inner; // busy: don't offer to queue another deferred craft
             }
+            // A recipe only the protected tier can make (issue #40) confirms through the protected
+            // start packet, and its tooltip says which special items the plan would consume.
+            boolean protectedCraft = DeferredCraftableCache.isProtectedOnly(holder);
             if (doTransfer) {
-                DeferredClickState.sendStartPacket(holder);
+                if (protectedCraft) {
+                    DeferredClickState.sendProtectedStartPacket(holder);
+                } else {
+                    DeferredClickState.sendStartPacket(holder);
+                }
                 return null;
             }
-            return DEFERRED_AVAILABLE;
+            return protectedCraft ? protectedDeferredAvailable(holder, GridContext.CRAFTING_TABLE)
+                    : DEFERRED_AVAILABLE;
         }
         if (craftability == Craftability.UNSOLVABLE && SprawlConfig.get().needsSystem()) {
             // Even deferred crafting can't make it from current resources. Repurpose JEI's otherwise
@@ -109,6 +131,33 @@ public final class DeferredTransfers {
             tooltip.add(Component.translatable("sprawlcrafting.recipe.deferred.click")
                     .withStyle(ChatFormatting.GRAY));
         }
+    }
+
+    /** Yellow state for a protected-only recipe: the deferred invite plus the special-items warning. */
+    private static final class ProtectedDeferredError extends DeferredCraftError {
+
+        private final RecipeHolder<CraftingRecipe> recipe;
+        private final GridContext grid;
+
+        ProtectedDeferredError(RecipeHolder<CraftingRecipe> recipe, GridContext grid) {
+            this.recipe = recipe;
+            this.grid = grid;
+        }
+
+        @Override
+        public void getTooltip(ITooltipBuilder tooltip) {
+            super.getTooltip(tooltip);
+            protectedWarningLines(recipe, grid).forEach(tooltip::add);
+        }
+    }
+
+    /**
+     * The special-items warning lines for {@code recipe}'s current plan at {@code grid} —
+     * {@link com.legoj15.sprawlcrafting.client.ProtectedWarnings#lines}, the JEI-free home both
+     * viewers share (JEI is only suggested, so the REI path must not class-load JEI statics).
+     */
+    public static List<Component> protectedWarningLines(RecipeHolder<CraftingRecipe> recipe, GridContext grid) {
+        return com.legoj15.sprawlcrafting.client.ProtectedWarnings.lines(recipe, grid);
     }
 
     /** Clickable orange state for an unmakeable recipe: clicking opens the gather list. */

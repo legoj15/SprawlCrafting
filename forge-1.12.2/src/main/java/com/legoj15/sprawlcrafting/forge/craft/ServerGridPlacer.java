@@ -143,6 +143,7 @@ public final class ServerGridPlacer {
      *
      * <p>The vanilla counting skips damaged, enchanted, and renamed stacks, so when the craft
      * needs an intermediate the job made that has since been altered (see {@link ProducedLedger}),
+     * or a protected stack the job was planned with ({@code allowProtected}, issue #40),
      * {@link #placeFromLedger} lays out the executor's own assignment instead.
      *
      * <p>{@code layout} is the plan's per-slot item choice for this final craft
@@ -153,7 +154,7 @@ public final class ServerGridPlacer {
      */
     public static HandOffResult placeFinalCraft(EntityPlayerMP player, IRecipe recipe,
                                                 ProducedLedger<ItemKey, CraftExecutor.LedgerVariant> ledger,
-                                                List<ItemKey> layout) {
+                                                List<ItemKey> layout, boolean allowProtected) {
         if (player.isSpectator()) {
             return HandOffResult.FALLBACK;
         }
@@ -173,7 +174,7 @@ public final class ServerGridPlacer {
         accountStationChest(player, helper);
         IntList packed = new IntArrayList();
         if (!helper.canCraft(recipe, packed, 1)) {
-            return placeFromLedger(player, container, grid, recipe, ledger, layout);
+            return placeFromLedger(player, container, grid, recipe, ledger, layout, allowProtected);
         }
         returnGridToInventory(player, grid);
         distribute(player, grid, recipe, 1, packed);
@@ -191,10 +192,11 @@ public final class ServerGridPlacer {
 
     /**
      * The hand-off for a craft the vanilla counting refused only because it needs filter-rejected
-     * stacks the ledger admits: lays {@link CraftExecutor#assign}'s choice into the grid cell by
-     * cell, then verifies and reverts exactly like {@link #placeFinalCraft}. Any other refusal
-     * (genuinely missing materials, NBT-sensitive ingredients the vanilla path handles) stays a
-     * FALLBACK, untouched.
+     * stacks the ledger admits, or — a protected-planned job ({@code allowProtected}, issue #40) —
+     * one of the player's protected stacks: lays {@link CraftExecutor#assign}'s choice into the grid
+     * cell by cell, then verifies and reverts exactly like {@link #placeFinalCraft}. Any other
+     * refusal (genuinely missing materials, NBT-sensitive ingredients the vanilla path handles)
+     * stays a FALLBACK, untouched.
      *
      * <p>{@code layout} is the plan's per-slot item choice for this craft (null: none); see
      * {@link #placeFinalCraft}.
@@ -202,14 +204,19 @@ public final class ServerGridPlacer {
     private static HandOffResult placeFromLedger(EntityPlayerMP player, Container container, Grid grid,
                                                  IRecipe recipe,
                                                  ProducedLedger<ItemKey, CraftExecutor.LedgerVariant> ledger,
-                                                 List<ItemKey> layout) {
+                                                 List<ItemKey> layout, boolean allowProtected) {
         List<Ingredient> cells = gridLayout(recipe, grid.width(), grid.height());
+        // The plain no-ledger probe stays plain: if plain materials alone would fill the grid, the
+        // vanilla counting should have placed them and its refusal is one of the subtleties this
+        // FALLBACK exists for. The second probe widens with the job's tiers — the ledger's admitted
+        // copies, plus (allowProtected) its protected stacks — so a final craft only they can make
+        // still hands off into the grid instead of auto-crafting.
         if (cells == null || CraftExecutor.assign(player, cells, null, layout).complete()
-                || !CraftExecutor.assign(player, cells, ledger, layout).complete()) {
+                || !CraftExecutor.assign(player, cells, ledger, layout, allowProtected).complete()) {
             return HandOffResult.FALLBACK;
         }
         returnGridToInventory(player, grid);
-        CraftExecutor.Assignment assignment = CraftExecutor.assign(player, cells, ledger, layout);
+        CraftExecutor.Assignment assignment = CraftExecutor.assign(player, cells, ledger, layout, allowProtected);
         if (!assignment.complete()) {
             finishSync(player, container);
             return HandOffResult.FALLBACK;

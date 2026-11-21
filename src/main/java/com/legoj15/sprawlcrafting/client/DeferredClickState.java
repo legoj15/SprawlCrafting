@@ -9,6 +9,8 @@ import com.legoj15.sprawlcrafting.craft.RecipeIds;
 import com.legoj15.sprawlcrafting.network.RequestCraftPreviewPayload;
 import com.legoj15.sprawlcrafting.network.StartDeferredCraftByDisplayPayload;
 import com.legoj15.sprawlcrafting.network.StartDeferredCraftPayload;
+import com.legoj15.sprawlcrafting.network.StartProtectedCraftByDisplayPayload;
+import com.legoj15.sprawlcrafting.network.StartProtectedCraftPayload;
 import com.legoj15.sprawlcrafting.platform.Services;
 
 import net.minecraft.client.Minecraft;
@@ -18,7 +20,9 @@ import net.minecraft.world.item.crafting.RecipeHolder;
 /**
  * Preview-then-confirm state for yellow recipe book clicks (render thread only). First click on a
  * deferred-craftable recipe shows its plan; a second click on the same recipe (inventory unchanged)
- * sends the start packet and the server re-plans authoritatively.
+ * sends the start packet and the server re-plans authoritatively. A plan that consumes the player's
+ * protected stacks (issue #40) shows the warning lines in its preview and its confirm sends the
+ * protected start packet instead.
  *
  * <p>1.21.1 keys the pending recipe by {@code RecipeHolder} and builds the preview client-side.
  * 26.x keys it by the recipe book's opaque {@code RecipeDisplayId} and gets the preview from the
@@ -40,6 +44,16 @@ public final class DeferredClickState {
         // Routed through the platform helper: the raw vanilla send works on NeoForge but not on
         // Fabric, so each loader uses its own C2S networking API.
         Services.PLATFORM.sendToServer(new StartDeferredCraftPayload(RecipeIds.id(holder)));
+    }
+
+    /**
+     * Fires the protected start request — a plan only the player's protected stacks can make
+     * (issue #40), which the player confirmed via the preview or the JEI/REI button. Only reached
+     * through an {@code isProtectedOnly} answer, which is only ever true when the protected channel
+     * was negotiated (the classify/sync gates key on it), so an older server never sees one.
+     */
+    public static void sendProtectedStartPacket(RecipeHolder<?> holder) {
+        Services.PLATFORM.sendToServer(new StartProtectedCraftPayload(RecipeIds.id(holder)));
     }
 
     //? if >=1.21.11 {
@@ -88,7 +102,11 @@ public final class DeferredClickState {
 
     public static void confirmPending() {
         if (pendingDisplay != null) {
-            Services.PLATFORM.sendToServer(new StartDeferredCraftByDisplayPayload(pendingDisplay.index()));
+            // A protected-only recipe (#40, the server-synced protected set says so) confirms with
+            // the protected start; the preview it came from already carried the warning lines.
+            Services.PLATFORM.sendToServer(DeferredCraftableCache.isProtectedOnly(pendingDisplay)
+                    ? new StartProtectedCraftByDisplayPayload(pendingDisplay.index())
+                    : new StartDeferredCraftByDisplayPayload(pendingDisplay.index()));
             clear();
         }
     }
@@ -109,6 +127,8 @@ public final class DeferredClickState {
     }*/
     //?} else {
     private static RecipeHolder<?> pending;
+    /** Whether the pending preview's plan consumes protected stacks (see {@link #confirmPending}). */
+    private static boolean pendingProtected;
 
     /**
      * Opens a plan preview for a freshly-clicked deferred-craftable recipe. Confirmation is
@@ -128,9 +148,11 @@ public final class DeferredClickState {
             return;
         }
         pending = holder;
+        pendingProtected = planned.job().usesProtected();
         pendingInventoryGeneration = generation;
         previewLines = CraftPreview.lines(planned.job(),
-                minecraft.level.getRecipeManager(), minecraft.level.registryAccess());
+                minecraft.level.getRecipeManager(), minecraft.level.registryAccess(),
+                minecraft.player.getInventory(), DeferredCraftableCache.stationCounts());
     }
 
     /**
@@ -153,7 +175,11 @@ public final class DeferredClickState {
     /** Confirms the pending recipe (sends the start packet) and clears the preview. */
     public static void confirmPending() {
         if (pending != null) {
-            sendStartPacket(pending);
+            if (pendingProtected) {
+                sendProtectedStartPacket(pending);
+            } else {
+                sendStartPacket(pending);
+            }
             clear();
         }
     }
@@ -169,6 +195,7 @@ public final class DeferredClickState {
 
     public static void clear() {
         pending = null;
+        pendingProtected = false;
         previewLines = List.of();
     }
     //?}

@@ -1,6 +1,7 @@
 package com.legoj15.sprawlcrafting.forge.compat.jei;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -8,10 +9,12 @@ import java.util.Map;
 import com.legoj15.solver.SlotAssignment;
 import com.legoj15.sprawlcrafting.forge.SprawlConfig;
 import com.legoj15.sprawlcrafting.forge.client.ClientPlanCache;
+import com.legoj15.sprawlcrafting.forge.client.DeferredClickState;
 import com.legoj15.sprawlcrafting.forge.client.PendingGatherScreen;
 import com.legoj15.sprawlcrafting.forge.client.ServerPresence;
 import com.legoj15.sprawlcrafting.forge.craft.CraftExecutor;
 import com.legoj15.sprawlcrafting.forge.craft.ExternalSlots;
+import com.legoj15.sprawlcrafting.forge.craft.ShortfallView;
 import com.legoj15.sprawlcrafting.forge.mixin.jei.RecipeLayoutAccessor;
 import com.legoj15.sprawlcrafting.forge.craft.CraftPlanner;
 import com.legoj15.sprawlcrafting.forge.craft.GridContext;
@@ -42,6 +45,7 @@ import net.minecraft.item.crafting.IRecipe;
 import net.minecraft.item.crafting.Ingredient;
 import net.minecraft.util.NonNullList;
 import net.minecraft.util.ResourceLocation;
+import net.minecraft.util.text.TextFormatting;
 
 /**
  * Routes JEI's recipe-transfer "+" button on a vanilla crafting recipe. For recipes that need
@@ -55,7 +59,9 @@ import net.minecraft.util.ResourceLocation;
  * back for any open container that structurally reads as a 3x3 crafter (a modded crafting station).
  * On JEI's validation pass the button is enabled when the recipe can be made from current stock
  * (directly or via intermediates). The direct fast-path fill derives its grid geometry from the
- * container's slots, so it works for any of these container shapes.
+ * container's slots, so it works for any of these container shapes. A recipe makeable only by
+ * consuming the player's protected stacks (issue #40) counts as deferred here too: its hover
+ * tooltip warns which special items the click would use, and the click sends the protected start.
  */
 public class DeferredCraftTransferHandler<C extends Container> implements IRecipeTransferHandler<C> {
 
@@ -99,7 +105,10 @@ public class DeferredCraftTransferHandler<C extends Container> implements IRecip
         CraftPlanner.Session session = ClientPlanCache.get(player, grid);
         if (doTransfer) {
             if (recipe != null) {
-                if (!session.isSolvable(recipe)) {
+                // Protected-aware (issue #40): a recipe only the protected tier can make is
+                // solvable here too, so the click starts it instead of opening the gather list.
+                CraftPlanner.Craftability craftability = ClientPlanCache.classify(player, grid, recipe);
+                if (craftability == CraftPlanner.Craftability.UNSOLVABLE) {
                     // The orange gather button: "transferring" an unsolvable recipe opens the
                     // missing-resources screen (next tick — see PendingGatherScreen) instead of
                     // asking the engine for a craft it would only reject with a chat error.
@@ -109,7 +118,7 @@ public class DeferredCraftTransferHandler<C extends Container> implements IRecip
                     }
                     return null;
                 }
-                if (session.classify(recipe) == CraftPlanner.Craftability.DIRECT) {
+                if (craftability == CraftPlanner.Craftability.DIRECT) {
                     // Preferred path: one C2S packet, atomic server-side placement with real
                     // vanilla recipe-book semantics (shift = craft-max, no desync). The server
                     // placer pulls from the player inventory AND the open station's bound chest —
@@ -132,8 +141,17 @@ public class DeferredCraftTransferHandler<C extends Container> implements IRecip
                 }
             }
             if (recipe != null) {
-                SprawlNetwork.startByRecipe(recipe.getRegistryName());
+                if (ClientPlanCache.isProtectedOnly(recipe)) {
+                    // The confirmed plan consumed protected stacks (#40): the protected start
+                    // packet, only ever sent to a server that advertised the capability.
+                    SprawlNetwork.startProtectedByRecipe(recipe.getRegistryName());
+                } else {
+                    SprawlNetwork.startByRecipe(recipe.getRegistryName());
+                }
             } else {
+                // Plain only (#40): without a recipe object there is no plan to name the special
+                // items in a warning, and consuming them unannounced is exactly what the protected
+                // tier must never do. A protected-only result is not offered here.
                 if (!session.canDeferCraft(result)) {
                     if (SprawlConfig.needsSystem && SprawlConfig.jeiIntegration) {
                         PendingGatherScreen.open(session.shortfallByResult(result));
@@ -155,13 +173,16 @@ public class DeferredCraftTransferHandler<C extends Container> implements IRecip
                     I18n.format("jei.tooltip.error.recipe.transfer.missing"));
         }
         if (recipe != null) {
-            if (session.isSolvable(recipe)) {
+            CraftPlanner.Craftability craftability = ClientPlanCache.classify(player, grid, recipe);
+            if (craftability != CraftPlanner.Craftability.UNSOLVABLE) {
                 // Solvable → no error object exists to carry state, so the button tint (yellow =
                 // deferred multi-step, plain = direct move) rides the side-band cache instead.
-                JeiTintState.put(recipeLayout,
-                        session.classify(recipe) != CraftPlanner.Craftability.DIRECT
-                                ? JeiTintState.Tint.DEFERRED : null);
-                return null;
+                JeiTintState.put(recipeLayout, craftability != CraftPlanner.Craftability.DIRECT
+                        ? JeiTintState.Tint.DEFERRED : null);
+                // A protected-only recipe's hover tooltip says which special items the click would
+                // consume (#40); for every other solvable recipe there is nothing to warn about.
+                return ClientPlanCache.isProtectedOnly(recipe)
+                        ? new ProtectedDeferredError(grid, recipe) : null;
             }
             if (!SprawlConfig.needsSystem) {
                 JeiTintState.put(recipeLayout, null);
@@ -172,7 +193,7 @@ public class DeferredCraftTransferHandler<C extends Container> implements IRecip
             return new MissingResourcesError(session.shortfall(recipe),
                     missingSlots(recipeLayout, player, session));
         }
-        if (session.canDeferCraft(result)) {
+        if (session.canDeferCraft(result)) { // plain only: see the click path (#40)
             JeiTintState.put(recipeLayout, JeiTintState.Tint.DEFERRED);
             return null;
         }
@@ -184,6 +205,59 @@ public class DeferredCraftTransferHandler<C extends Container> implements IRecip
         JeiTintState.put(recipeLayout, JeiTintState.Tint.GATHER);
         return new MissingResourcesError(session.shortfallByResult(result),
                 missingSlots(recipeLayout, player, session));
+    }
+
+    /**
+     * The yellow state for a recipe only the protected tier can make (issue #40): the deferred
+     * invite, plus the special-items warning in place of the gather list. An
+     * {@link mezz.jei.api.recipe.transfer.IRecipeTransferError} is the only tooltip hook JEI 4
+     * offers, and JEI greys out every errored button — so this extends
+     * {@link MissingResourcesError} (whose type {@code RecipeTransferButtonMixin} re-enables) to
+     * stay clickable while carrying its own hover text. The warning lines are recomputed on every
+     * hover, as legacy-1.16.5's own ProtectedDeferredError does: JEI may keep the error object
+     * across inventory changes, so lines built once (at validation) would go stale and name items
+     * the live pool no longer needs. One plan per hover against the cached client session; the
+     * click re-plans authoritatively on the server anyway.
+     */
+    private static final class ProtectedDeferredError extends MissingResourcesError {
+
+        private final GridContext grid;
+        private final IRecipe recipe;
+
+        ProtectedDeferredError(GridContext grid, IRecipe recipe) {
+            // Never read: showError below draws this class's own tooltip instead, with no red
+            // slot highlights — nothing is "missing", the recipe just needs the player's consent.
+            super(ShortfallView.unavailable(), Collections.<Integer>emptyList());
+            this.grid = grid;
+            this.recipe = recipe;
+        }
+
+        @Override
+        public void showError(Minecraft minecraft, int mouseX, int mouseY,
+                              IRecipeLayout recipeLayout, int recipeX, int recipeY) {
+            if (minecraft.currentScreen != null) {
+                minecraft.currentScreen.drawHoveringText(tooltip(minecraft), mouseX, mouseY);
+            }
+        }
+
+        /** The deferred invite plus the current special-items warning, planned at draw time. */
+        private List<String> tooltip(Minecraft minecraft) {
+            List<String> lines = new ArrayList<String>();
+            lines.add(TextFormatting.YELLOW + I18n.format("sprawlcrafting.recipe.deferred"));
+            lines.add(TextFormatting.GRAY + I18n.format("sprawlcrafting.recipe.deferred.click"));
+            if (minecraft.player != null) {
+                try {
+                    CraftPlanner.PlanOutcome outcome = ClientPlanCache.plan(minecraft.player, grid, recipe);
+                    if (outcome instanceof CraftPlanner.PlanOutcome.Planned) {
+                        lines.addAll(DeferredClickState.protectedWarningLines(
+                                ((CraftPlanner.PlanOutcome.Planned) outcome).job(), minecraft.player, grid));
+                    }
+                } catch (Throwable ignored) {
+                    // The warning is advisory; the click re-plans server-side regardless.
+                }
+            }
+            return lines;
+        }
     }
 
     /**

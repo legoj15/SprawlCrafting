@@ -98,6 +98,15 @@ public final class CraftJob {
      * never needed the station keeps the plain cancel. (1.12.2's {@code CraftJob.externalDependent}.)
      */
     private boolean stationDependent;
+    /**
+     * Whether this job's plan counted the player's protected stacks (enchanted and/or renamed, never
+     * damaged; {@code CraftExecutor#isProtected}) as material — set by the caller that planned it
+     * that way (issue #40), after the plain pool fell short and the player confirmed. Such a job may
+     * pick protected stacks from the 36 main slots, always after every plain stack and an open
+     * station's stock; every other job keeps the plain rule exactly. Damaged stacks are never
+     * protected material, on any job.
+     */
+    private boolean usesProtected;
 
     public CraftJob(ResourceLocation targetRecipe, ItemStack targetResult, List<CraftStep> steps) {
         if (steps.isEmpty()) {
@@ -134,6 +143,15 @@ public final class CraftJob {
 
     public void setStationDependent(boolean stationDependent) {
         this.stationDependent = stationDependent;
+    }
+
+    /** See {@link #usesProtected}. */
+    public boolean usesProtected() {
+        return usesProtected;
+    }
+
+    public void setUsesProtected(boolean usesProtected) {
+        this.usesProtected = usesProtected;
     }
 
     /** What this job crafted and has not used back up; lets the executor take its own altered intermediates. */

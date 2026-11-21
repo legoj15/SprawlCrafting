@@ -56,8 +56,15 @@ public final class CraftRequests {
         }
     }
 
-    /** Start path keyed by a specific recipe (command / recipe-book click). */
-    public static StartOutcome tryStart(EntityPlayerMP player, IRecipe recipe) {
+    /**
+     * Start path keyed by a specific recipe (command / recipe-book click). {@code allowProtected}
+     * is the protected tier (issue #40): the confirmed request from the protected channel, whose
+     * plan may also count the player's protected stacks (enchanted and/or renamed, never damaged)
+     * once the plain passes — the inventory and station chest, then an open terminal's network —
+     * have fallen short. A request that still fails keeps the plain passes' rejection: the message
+     * says what is missing, not which tier ran out.
+     */
+    public static StartOutcome tryStart(EntityPlayerMP player, IRecipe recipe, boolean allowProtected) {
         if (CraftQueueManager.activeJob(player.getUniqueID()).isPresent()) {
             return new StartOutcome.Busy();
         }
@@ -66,26 +73,65 @@ public final class CraftRequests {
         CraftExecutor.clearOpenCraftingGrid(player);
         GridContext grid = GridContext.current(player);
         PlanOutcome own = CraftPlanner.sessionWithoutNetwork(player, grid).plan(recipe);
-        if (!(own instanceof PlanOutcome.Unsolvable || own instanceof PlanOutcome.TooComplex)
-                || !NetworkTerminals.usable(player)) {
-            return finish(player, own, false); // planned, or a failure more materials cannot fix
+        boolean plannedOnNetwork = false;
+        if (own instanceof PlanOutcome.Unsolvable || own instanceof PlanOutcome.TooComplex) {
+            if (NetworkTerminals.usable(player)) {
+                own = CraftPlanner.plan(player, recipe, grid);
+                plannedOnNetwork = own instanceof PlanOutcome.Planned;
+            }
+            if (!(own instanceof PlanOutcome.Planned) && allowProtected
+                    && CraftPlanner.hasProtected(player.inventory)) {
+                // The confirmed fallback (#40): count the protected stacks of the 36 main slots too,
+                // in the same order as the plain passes — without the network first, so a job they
+                // cover never depends on it, then with an open terminal's counts, which makes the
+                // job network-dependent (it pauses, not cancels, when the terminal goes away).
+                PlanOutcome withProtected = CraftPlanner.sessionWithoutNetwork(player, grid, true).plan(recipe);
+                if (!(withProtected instanceof PlanOutcome.Planned) && NetworkTerminals.usable(player)) {
+                    withProtected = CraftPlanner.plan(player, recipe, grid, true);
+                    plannedOnNetwork = withProtected instanceof PlanOutcome.Planned;
+                }
+                if (withProtected instanceof PlanOutcome.Planned) {
+                    ((PlanOutcome.Planned) withProtected).job().setUsesProtected(true);
+                    own = withProtected;
+                }
+            }
         }
-        return finish(player, CraftPlanner.plan(player, recipe, grid), true);
+        return finish(player, own, plannedOnNetwork);
     }
 
-    /** Start path keyed by a result item (the JEI "+" hook, which has the stack, not the recipe). */
-    public static StartOutcome tryStartByResult(EntityPlayerMP player, ItemStack result) {
+    /**
+     * Start path keyed by a result item (the JEI "+" hook, which has the stack, not the recipe),
+     * with the protected tier (issue #40); see {@link #tryStart(EntityPlayerMP, IRecipe, boolean)}.
+     */
+    public static StartOutcome tryStartByResult(EntityPlayerMP player, ItemStack result,
+                                                boolean allowProtected) {
         if (CraftQueueManager.activeJob(player.getUniqueID()).isPresent()) {
             return new StartOutcome.Busy();
         }
         CraftExecutor.clearOpenCraftingGrid(player);
         GridContext grid = GridContext.current(player);
         PlanOutcome own = CraftPlanner.sessionWithoutNetwork(player, grid).planByResult(result);
-        if (!(own instanceof PlanOutcome.Unsolvable || own instanceof PlanOutcome.TooComplex)
-                || !NetworkTerminals.usable(player)) {
-            return finish(player, own, false); // planned, or a failure more materials cannot fix
+        boolean plannedOnNetwork = false;
+        if (own instanceof PlanOutcome.Unsolvable || own instanceof PlanOutcome.TooComplex) {
+            if (NetworkTerminals.usable(player)) {
+                own = CraftPlanner.planByResult(player, result, grid);
+                plannedOnNetwork = own instanceof PlanOutcome.Planned;
+            }
+            if (!(own instanceof PlanOutcome.Planned) && allowProtected
+                    && CraftPlanner.hasProtected(player.inventory)) {
+                PlanOutcome withProtected = CraftPlanner.sessionWithoutNetwork(player, grid, true)
+                        .planByResult(result);
+                if (!(withProtected instanceof PlanOutcome.Planned) && NetworkTerminals.usable(player)) {
+                    withProtected = CraftPlanner.planByResult(player, result, grid, true);
+                    plannedOnNetwork = withProtected instanceof PlanOutcome.Planned;
+                }
+                if (withProtected instanceof PlanOutcome.Planned) {
+                    ((PlanOutcome.Planned) withProtected).job().setUsesProtected(true);
+                    own = withProtected;
+                }
+            }
         }
-        return finish(player, CraftPlanner.planByResult(player, result, grid), true);
+        return finish(player, own, plannedOnNetwork);
     }
 
     /**
@@ -112,6 +158,16 @@ public final class CraftRequests {
 
     /** Packet-path handler (recipe id): resolves, starts, and reports via the action bar. */
     public static void handleStartByRecipe(EntityPlayerMP player, ResourceLocation recipeId) {
+        handleStartByRecipe(player, recipeId, false);
+    }
+
+    /**
+     * {@link #handleStartByRecipe(EntityPlayerMP, ResourceLocation)} with the protected tier
+     * (issue #40): the confirmed request from {@code StartProtectedCraftMessage}, which the client
+     * only sends for a recipe its protected session could plan.
+     */
+    public static void handleStartByRecipe(EntityPlayerMP player, ResourceLocation recipeId,
+                                           boolean allowProtected) {
         if (player.isSpectator()) {
             return;
         }
@@ -121,15 +177,21 @@ public final class CraftRequests {
                     recipeId.toString()), TextFormatting.RED));
             return;
         }
-        report(player, tryStart(player, recipe), recipe.getRecipeOutput().getDisplayName());
+        report(player, tryStart(player, recipe, allowProtected), recipe.getRecipeOutput().getDisplayName());
     }
 
     /** Packet-path handler (result item): the JEI hook. */
     public static void handleStartByResult(EntityPlayerMP player, ItemStack result) {
+        handleStartByResult(player, result, false);
+    }
+
+    /** {@link #handleStartByResult(EntityPlayerMP, ItemStack)} with the protected tier (issue #40);
+     *  see {@link #handleStartByRecipe(EntityPlayerMP, ResourceLocation, boolean)}. */
+    public static void handleStartByResult(EntityPlayerMP player, ItemStack result, boolean allowProtected) {
         if (player.isSpectator() || result.isEmpty()) {
             return;
         }
-        report(player, tryStartByResult(player, result), result.getDisplayName());
+        report(player, tryStartByResult(player, result, allowProtected), result.getDisplayName());
     }
 
     private static void report(EntityPlayerMP player, StartOutcome outcome, String targetName) {

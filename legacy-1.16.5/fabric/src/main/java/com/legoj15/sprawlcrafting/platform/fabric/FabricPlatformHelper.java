@@ -6,6 +6,7 @@ import com.legoj15.sprawlcrafting.network.CancelCraftPacket;
 import com.legoj15.sprawlcrafting.network.CraftProgressPacket;
 import com.legoj15.sprawlcrafting.network.CraftingScreenStatePacket;
 import com.legoj15.sprawlcrafting.network.StartDeferredCraftPacket;
+import com.legoj15.sprawlcrafting.network.StartProtectedCraftPacket;
 import com.legoj15.sprawlcrafting.platform.IPlatformHelper;
 
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
@@ -88,6 +89,25 @@ public class FabricPlatformHelper implements IPlatformHelper {
         PacketBuffer buf = PacketByteBufs.create();
         new StartDeferredCraftPacket(recipeId).write(buf);
         ClientPlayNetworking.send(StartDeferredCraftPacket.ID, buf);
+    }
+
+    // The protected start's own channel, like the cancel's: an older SprawlCrafting server accepts the
+    // plain start channel but has no protected receiver, so this channel's presence is what says the
+    // request would land (and the client never offers protected crafts without it).
+    @Override
+    public boolean canStartProtectedCraft() {
+        return Minecraft.getInstance().getConnection() != null
+                && ClientPlayNetworking.canSend(StartProtectedCraftPacket.ID);
+    }
+
+    @Override
+    public void sendStartProtectedCraft(ResourceLocation recipeId) {
+        if (!canStartProtectedCraft()) {
+            return;
+        }
+        PacketBuffer buf = PacketByteBufs.create();
+        new StartProtectedCraftPacket(recipeId).write(buf);
+        ClientPlayNetworking.send(StartProtectedCraftPacket.ID, buf);
     }
 
     @Override

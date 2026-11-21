@@ -261,3 +261,17 @@ Unbound "Cancel deferred craft" keybind on every tree. The server's `CraftQueueM
   - Fix (orchestrator, small): fc846c8, then 5db9a8e after shop26 flagged it (high: halving S capped every answer at half). Ae2Station.acceptable now probes 2*limit and returns min(limit, ceil(S/2)), on both adapters. review_fast approved, with only comment notes (b185213).
   - Playtest PASS: the user reran it with nuggets in a creative cell and the drives filling. The job stopped with the red no-room message at about 1.3B gold ingots once AE2 was really full, and nothing dropped. The playtest ran on the fc846c8 build; 5db9a8e only widens batches.
   - Known safe-direction trade-offs: free room between 1x and 2x the request, with few holder cells, can underestimate (stopping a step early); the modern AE2 line's two-pass insert is assumed, not verified from its jar.
+
+## 2026-11-20 — #40 enchanted/renamed ("protected") ingredients after confirmation, 1.16.5 first
+
+- scout (Haiku): mapped the modern and 1.12.2 touchpoints for the port — good, thorough; refused to write the scratchpad file the brief named (inline return instead).
+- implement_single (glm-5.3, no_build) on legacy 1.16.5: patch built first try on the host (both loaders + :forge:test). No escalation.
+- reviewer (Haiku) + deepseek-flash (shop26 lane_busy): both flagged the same high — per-cell plain-first took a plain alternative before the plan's protected item, starving another cell (root cause: the orchestrator's brief said "plain first per cell"); plus batch/paced divergence and station ordering. Orchestrator fixed (4597f44).
+- deepseek-flash round 2: the station-ordering fix itself substituted alternatives (high) and the final-grid hand-off still skipped station stock (medium). Orchestrator fixed (bad27f7). Round 3 approved with a doc low; orchestrator fixed the doc. Fix loop ends on reviewed bad27f7 + doc-only commit.
+- Lead noted, not fixed: CraftPlanner.protectedItemsUsed ignores station counts, so the preview can over-warn with a terminal open (display only).
+- implement_single (glm-5.3, no_build) 1.12.2 port: built first try on JDK 25 (5805499). shop26 approved (1 note), reviewer (Haiku) PASS WITH NITS. No escalation.
+- implement_single (glm-5.3, no_build) modern port (14 nodes): buildAndCollect green first try (d2af55f). deepseek-flash request-changes: high — REI handler hard-links the JEI-typed DeferredTransfers (NoClassDefFoundError on REI-without-JEI); reviewer (Haiku) PASS WITH NITS, agreed on the REI gate and the preview over-warn.
+- implement_single (glm-5.3, no_build) combined fix round across all three trees: REI/JEI split, preview counts station plain stock, 1.12.2 JEI tooltip freshness + AE2 terminal parity, codec tests, docs.
+  The fix round built green on every tree (72f1d41); this also closed the station-count over-warn lead above. deepseek-flash and reviewer (Haiku) both approved.
+- deepseek-flash on 72f1d41 approved with one low: the 1.12.2 JEI by-result confirm started a protected craft that no preview had named. The orchestrator made by-result plain-only (d69f820).
+- deepseek-flash final on d69f820 approved: one low and two notes, all stale docs or dead code left by that removal. Past round three, so the orchestrator adjudicated and fixed them itself (doc-only plus deleting the unused overload and constructor). The 1.12.2 build is green. Not merged, not yet playtested.

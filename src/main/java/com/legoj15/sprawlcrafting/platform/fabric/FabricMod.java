@@ -10,6 +10,7 @@ import com.legoj15.sprawlcrafting.network.CraftPreviewPayload;
 import com.legoj15.sprawlcrafting.network.CraftProgressPayload;
 import com.legoj15.sprawlcrafting.network.CraftingScreenStatePayload;
 import com.legoj15.sprawlcrafting.network.DeferredCraftableSyncPayload;
+import com.legoj15.sprawlcrafting.network.ProtectedCraftableSyncPayload;
 import com.legoj15.sprawlcrafting.network.RequestCraftPreviewPayload;
 import com.legoj15.sprawlcrafting.network.RequestShortfallByDisplayPayload;
 import com.legoj15.sprawlcrafting.network.RequestShortfallByRecipePayload;
@@ -17,6 +18,8 @@ import com.legoj15.sprawlcrafting.network.ShortfallPayload;
 import com.legoj15.sprawlcrafting.network.ShortfallV2Payload;
 import com.legoj15.sprawlcrafting.network.StartDeferredCraftByDisplayPayload;
 import com.legoj15.sprawlcrafting.network.StartDeferredCraftPayload;
+import com.legoj15.sprawlcrafting.network.StartProtectedCraftByDisplayPayload;
+import com.legoj15.sprawlcrafting.network.StartProtectedCraftPayload;
 
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
@@ -55,6 +58,13 @@ public class FabricMod implements ModInitializer {
                         context.player().getUUID(), payload.gridWidth(), payload.gridHeight()));
         ServerPlayNetworking.registerGlobalReceiver(CancelCraftPayload.TYPE,
                 (payload, context) -> CraftQueueManager.cancel(context.player()));
+        // The protected start (#40): the confirmed request whose plan may count the player's
+        // protected stacks. Registered like the plain one; a client that never registered it is
+        // never offered protected crafts.
+        c2s().register(
+                StartProtectedCraftPayload.TYPE, StartProtectedCraftPayload.STREAM_CODEC);
+        ServerPlayNetworking.registerGlobalReceiver(StartProtectedCraftPayload.TYPE,
+                (payload, context) -> CraftRequests.handleStartRequest(context.player(), payload.recipeId(), true));
         //?} else {
         /*// Pre-1.20.5 Fabric networking: channel id + raw buffer, and receivers run on the netty
         // thread — decode there, then hop to the server thread (the 1.20.5+ API does that for us).
@@ -73,7 +83,15 @@ public class FabricMod implements ModInitializer {
         // Nothing to decode, but the netty-thread hop is still needed before touching the queue.
         ServerPlayNetworking.registerGlobalReceiver(CancelCraftPayload.ID,
                 (server, player, handler, buf, responseSender) ->
-                        server.execute(() -> CraftQueueManager.cancel(player)));*/
+                        server.execute(() -> CraftQueueManager.cancel(player)));
+        // The protected start (#40) on its own raw channel, like every payload here: an older
+        // server that never registered it never receives one (the client's canSend gate keeps it
+        // that way).
+        ServerPlayNetworking.registerGlobalReceiver(StartProtectedCraftPayload.ID,
+                (server, player, handler, buf, responseSender) -> {
+                    StartProtectedCraftPayload payload = StartProtectedCraftPayload.read(buf);
+                    server.execute(() -> CraftRequests.handleStartRequest(player, payload.recipeId(), true));
+                });*/
         //?}
 
         // 26.x server-driven recipe-book layer: the deferred-craftability sync + display-keyed
@@ -85,10 +103,19 @@ public class FabricMod implements ModInitializer {
                 RequestCraftPreviewPayload.TYPE, RequestCraftPreviewPayload.STREAM_CODEC);
         s2c().register(
                 DeferredCraftableSyncPayload.TYPE, DeferredCraftableSyncPayload.STREAM_CODEC);
+        // The protected-only subset of that set (#40), pushed right after it (FabricClient receives).
+        s2c().register(
+                ProtectedCraftableSyncPayload.TYPE, ProtectedCraftableSyncPayload.STREAM_CODEC);
         s2c().register(
                 CraftPreviewPayload.TYPE, CraftPreviewPayload.STREAM_CODEC);
         ServerPlayNetworking.registerGlobalReceiver(StartDeferredCraftByDisplayPayload.TYPE,
                 (payload, context) -> DeferredCraftSync.handleStartByDisplay(context.player(), payload.displayId()));
+        // The protected by-display start (#40), the recipe book's confirm for a protected-only entry.
+        c2s().register(
+                StartProtectedCraftByDisplayPayload.TYPE, StartProtectedCraftByDisplayPayload.STREAM_CODEC);
+        ServerPlayNetworking.registerGlobalReceiver(StartProtectedCraftByDisplayPayload.TYPE,
+                (payload, context) -> DeferredCraftSync.handleStartByDisplay(
+                        context.player(), payload.displayId(), true));
         ServerPlayNetworking.registerGlobalReceiver(RequestCraftPreviewPayload.TYPE,
                 (payload, context) -> DeferredCraftSync.handlePreviewRequest(context.player(), payload.displayId()));
         c2s().register(

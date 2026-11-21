@@ -139,6 +139,35 @@ public final class DeferredCraftSync {
         }
         Services.PLATFORM.sendToPlayer(player,
                 new DeferredCraftableSyncPayload(grid.ordinal(), displayIds, recipeIds));
+        // The protected tier (#40), right after the deferred set: recipes the plain pool cannot make
+        // but the player's protected stacks can. An empty set clears stale yellows just as well (the
+        // last enchanted copy was used up), so this goes to every client that can receive it; the
+        // second, protected-counting session is built only when the player holds protected stock at
+        // all. Only plain-UNSOLVABLE recipes enter (a plain-DEFERRED one is already yellow and
+        // confirms with the plain packet); the client treats members as deferred and confirms them
+        // with the protected start.
+        if (Services.PLATFORM.canReceive(player,
+                com.legoj15.sprawlcrafting.network.ProtectedCraftableSyncPayload.TYPE.id())) {
+            java.util.Set<Integer> protectedDisplayIds = new java.util.HashSet<>();
+            java.util.Set<net.minecraft.resources.ResourceLocation> protectedRecipeIds = new java.util.HashSet<>();
+            CraftPlanner.Session withProtected = CraftPlanner.hasProtected(player.getInventory())
+                    ? CraftPlanner.session(recipes, player.registryAccess(), player.getInventory(), grid,
+                            stationCounts, true)
+                    : null;
+            if (withProtected != null) {
+                for (net.minecraft.world.item.crafting.RecipeHolder<net.minecraft.world.item.crafting.CraftingRecipe> holder
+                        : RecipeIds.craftingRecipes(recipes)) {
+                    if (session.classify(holder) == CraftPlanner.Craftability.UNSOLVABLE
+                            && withProtected.classify(holder) != CraftPlanner.Craftability.UNSOLVABLE) {
+                        protectedRecipeIds.add(holder.id().identifier());
+                        recipes.listDisplaysForRecipe(holder.id(), entry -> protectedDisplayIds.add(entry.id().index()));
+                    }
+                }
+            }
+            Services.PLATFORM.sendToPlayer(player,
+                    new com.legoj15.sprawlcrafting.network.ProtectedCraftableSyncPayload(
+                            grid.ordinal(), protectedDisplayIds, protectedRecipeIds));
+        }
         // Record only after a successful push, so a tick that was throttled or that the client could
         // not receive doesn't poison the debounce (it would otherwise mark this state "synced" without
         // the client ever getting it).
@@ -152,7 +181,9 @@ public final class DeferredCraftSync {
     // reads ({@code CraftPlanner.snapshotInventory}). Cheap enough to run every tick, and unlike
     // {@code getTimesChanged()} it reflects pickups/{@code /give} (see {@link #maybeSync}). It can
     // over-detect (an item moved between slots re-syncs needlessly) but never under-detects a real
-    // change to which items, and how many, are held.
+    // change to which items, and how many, are held. Each stack's protected state (#40:
+    // enchanted and/or renamed) folds in too — enchanting or renaming a held stack in place changes
+    // neither its item nor its count, yet flips the protected-only classification.
     private static long inventorySignature(net.minecraft.world.entity.player.Inventory inventory) {
         long sig = 1469598103934665603L;
         for (int i = 0; i < net.minecraft.world.entity.player.Inventory.INVENTORY_SIZE; i++) {
@@ -161,6 +192,8 @@ public final class DeferredCraftSync {
             int count = stack.isEmpty() ? 0 : stack.getCount();
             sig = (sig ^ item) * 1099511628211L;
             sig = (sig ^ count) * 1099511628211L;
+            sig = (sig ^ (com.legoj15.sprawlcrafting.craft.CraftExecutor.isProtected(stack) ? 1 : 0))
+                    * 1099511628211L;
         }
         return sig;
     }*/
@@ -202,12 +235,20 @@ public final class DeferredCraftSync {
 
     /** Server handler: a recipe-book click confirmed by display index — map it back and start. No-op on 1.21.1. */
     public static void handleStartByDisplay(ServerPlayer player, int displayId) {
+        handleStartByDisplay(player, displayId, false);
+    }
+
+    /**
+     * {@link #handleStartByDisplay(ServerPlayer, int)} with the protected tier (issue #40): the
+     * confirmed request whose plan may count the player's protected stacks. No-op on 1.21.1.
+     */
+    public static void handleStartByDisplay(ServerPlayer player, int displayId, boolean allowProtected) {
         //? if >=1.21.11 {
         /*net.minecraft.world.item.crafting.RecipeManager recipes = player.level().getServer().getRecipeManager();
         net.minecraft.world.item.crafting.RecipeManager.ServerDisplayInfo info =
                 recipes.getRecipeFromDisplay(new net.minecraft.world.item.crafting.display.RecipeDisplayId(displayId));
         if (info != null) {
-            CraftRequests.handleStartRequest(player, info.parent().id().identifier());
+            CraftRequests.handleStartRequest(player, info.parent().id().identifier(), allowProtected);
         }*/
         //?}
     }
@@ -228,11 +269,34 @@ public final class DeferredCraftSync {
             // Planned as CraftRequests will start it: the inventory first, then with the open station's storage.
             CraftPlanner.PlanOutcome outcome = CraftPlanner.plan(player, info.parent(), grid);
             StationStorage station = outcome instanceof CraftPlanner.PlanOutcome.Planned ? null : StationStorages.open(player);
+            java.util.Map<net.minecraft.world.item.Item, Long> stationCounts =
+                    station == null ? java.util.Map.of() : station.counts();
             if (station != null) {
-                outcome = CraftPlanner.plan(player, info.parent(), grid, station.counts());
+                outcome = CraftPlanner.plan(player, info.parent(), grid, stationCounts);
+            }
+            // The protected fallback (#40), same order as the start handler: only when both plain
+            // passes failed, only for a client that can receive the protected sync (its confirm
+            // click keys off that set), and only while the player holds protected stock. The job is
+            // marked usesProtected, and CraftPreview.lines appends the warning lines for it.
+            if (!(outcome instanceof CraftPlanner.PlanOutcome.Planned)
+                    && Services.PLATFORM.canReceive(player,
+                            com.legoj15.sprawlcrafting.network.ProtectedCraftableSyncPayload.TYPE.id())
+                    && CraftPlanner.hasProtected(player.getInventory())) {
+                CraftPlanner.PlanOutcome withProtected =
+                        CraftPlanner.plan(player, info.parent(), grid, java.util.Map.of(), true);
+                if (!(withProtected instanceof CraftPlanner.PlanOutcome.Planned) && station != null) {
+                    withProtected = CraftPlanner.plan(player, info.parent(), grid, stationCounts, true);
+                }
+                if (withProtected instanceof CraftPlanner.PlanOutcome.Planned protectedPlanned) {
+                    protectedPlanned.job().setUsesProtected(true);
+                    outcome = withProtected;
+                }
             }
             if (outcome instanceof CraftPlanner.PlanOutcome.Planned planned) {
-                lines = CraftPreview.lines(planned.job(), recipes, player.registryAccess());
+                // stationCounts (empty when no station is open) ride along so the protected warning
+                // credits the station's plain stock, which the executor draws before protected copies.
+                lines = CraftPreview.lines(planned.job(), recipes, player.registryAccess(),
+                        player.getInventory(), stationCounts);
             }
         }
         if (Services.PLATFORM.canReceive(player, com.legoj15.sprawlcrafting.network.CraftPreviewPayload.TYPE.id())) {
