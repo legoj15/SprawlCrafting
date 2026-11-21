@@ -5,6 +5,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 
+import com.legoj15.sprawlcrafting.Constants;
 import com.legoj15.solver.DepthFirstSchedule;
 import com.legoj15.solver.ProducedLedger;
 import com.legoj15.solver.SlotLayout;
@@ -168,6 +169,7 @@ public final class CraftJob {
                 ? new DepthFirstSchedule<Item>(totals, layouts, results, resultCounts, held)
                 : null;
         if (interleaved) {
+            Constants.LOG.info("SprawlCrafting: {} runs on a depth-first schedule:{}", targetRecipe, scheduleReport());
             this.layoutRunByStep = new int[steps.size()];
             this.layoutRunStartByStep = new long[steps.size()];
             Arrays.fill(layoutRunStartByStep, -1L);
@@ -175,6 +177,28 @@ public final class CraftJob {
             this.layoutRunByStep = null;
             this.layoutRunStartByStep = null;
         }
+    }
+
+    /**
+     * Diagnostic text for an interleaved job's log lines: one line per step with its recipe, crafts done of
+     * its total, result and the schedule's model stock of that result, then the current batch and cap.
+     */
+    public String scheduleReport() {
+        if (!interleaved) {
+            return " (sequential)";
+        }
+        StringBuilder text = new StringBuilder();
+        for (int i = 0; i < steps.size(); i++) {
+            CraftStep step = steps.get(i);
+            text.append("\n  ").append(i).append(' ').append(step.recipeId()).append(": ")
+                    .append(schedule.done(i)).append('/').append(step.crafts()).append(" -> ")
+                    .append(step.resultCount()).append("x ").append(step.result())
+                    .append(", model stock ").append(step.result() == null ? -1 : schedule.stock(step.result()));
+        }
+        int current = schedule.current();
+        text.append("\n  current step ").append(current).append(", batch ")
+                .append(current < 0 ? 0 : schedule.batch()).append(", cap ").append(schedule.cap());
+        return text.toString();
     }
 
     /** {@code a * b} for non-negative counts, pinned at {@link Long#MAX_VALUE} instead of wrapping. */

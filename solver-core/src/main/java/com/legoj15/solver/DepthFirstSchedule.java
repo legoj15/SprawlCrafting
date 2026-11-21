@@ -260,6 +260,12 @@ public final class DepthFirstSchedule<K> {
         return totalDone;
     }
 
+    /** The model's stock of {@code item}: -1 when no step produces it (raw, untracked). */
+    public long stock(K item) {
+        Long have = stock.get(item);
+        return have == null ? -1L : have;
+    }
+
     /** The batch cap in items (halved by {@link #noRoom}, doubled back by a whole {@link #performed}). */
     public long cap() {
         return cap;

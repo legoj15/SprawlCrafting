@@ -5,6 +5,7 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
+import com.legoj15.sprawlcrafting.Constants;
 import com.legoj15.sprawlcrafting.network.CraftProgressPacket;
 import com.legoj15.sprawlcrafting.platform.Services;
 import com.legoj15.solver.CountFormat;
@@ -264,6 +265,7 @@ public final class CraftQueueManager {
                     // A bulk step's craft had nowhere to put its output: continuing would drop every
                     // craft's result at the player's feet thousands of times per tick (the #35
                     // freeze), so the job stops for the player to make room instead of spilling.
+                    logNoRoom(player, job, result);
                     ACTIVE.remove(player.getUUID());
                     sync(player, job, CraftProgressPacket.State.CANCELLED, ItemStack.EMPTY);
                     notify(player, new TranslationTextComponent("sprawlcrafting.craft.no_room",
@@ -283,6 +285,27 @@ public final class CraftQueueManager {
         if (job.progressSyncDue()) {
             sync(player, job, CraftProgressPacket.State.CRAFTING, lastCrafted);
         }
+    }
+
+    /**
+     * The log line behind a no-room stop: what the step was making, the batch and cap, and how much of the
+     * output an open station says it would still take — enough to tell a full store from one that refuses.
+     */
+    private static void logNoRoom(ServerPlayerEntity player, CraftJob job, CraftExecutor.CraftResult result) {
+        CraftStep step = job.currentStep();
+        long accepts = -1;
+        StationStorage station = StationStorages.open(player);
+        if (station != null && step.result() != null) {
+            try {
+                accepts = station.acceptable(new ItemStack(step.result()), 1_000_000L);
+            } catch (RuntimeException | LinkageError e) {
+                accepts = -2;
+            }
+        }
+        Constants.LOG.warn("SprawlCrafting: no room for {} (dropped at feet: {}); station {} would accept {} of"
+                + " 1000000 {}; free main slots {}; schedule:{}", result.missing().getString(), lastBulkDropped,
+                station == null ? "none" : station.getClass().getSimpleName(), accepts, step.result(),
+                player.inventory.items.stream().limit(36).filter(ItemStack::isEmpty).count(), job.scheduleReport());
     }
 
     /** How many crafts {@link #craftBulk} asks for: the current batch's crafts, one fewer on the final batch, capped at the layout run; {@link #craftBulk} caps it at an int. */
