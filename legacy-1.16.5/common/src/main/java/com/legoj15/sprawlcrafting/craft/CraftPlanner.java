@@ -278,7 +278,7 @@ public final class CraftPlanner {
             if (!target.fits(grid)) {
                 return PlanOutcome.of(PlanOutcome.Kind.NEEDS_BIGGER_GRID);
             }
-            RecipeGraphSolver.Result<ResourceLocation, Item> result = solver.solveIntSizedLong(target, inventory);
+            RecipeGraphSolver.Result<ResourceLocation, Item> result = solver.solveLong(target, inventory);
             if (result instanceof RecipeGraphSolver.Result.Success) {
                 RecipeGraphSolver.Result.Success<ResourceLocation, Item> success =
                         (RecipeGraphSolver.Result.Success<ResourceLocation, Item>) result;
@@ -286,10 +286,13 @@ public final class CraftPlanner {
                 List<CraftStep> steps = new ArrayList<>();
                 for (int i = 0; i < planned.size(); i++) {
                     PlannedStep<ResourceLocation> step = planned.get(i);
+                    McRecipe info = stepInfo(step.recipeId());
                     steps.add(new CraftStep(step.recipeId(), step.crafts(), !fits2x2(step.recipeId(), target),
-                            success.layouts().get(i)));
+                            success.layouts().get(i),
+                            info != null ? info.result() : null, info != null ? info.resultCount() : 0));
                 }
-                return PlanOutcome.planned(new CraftJob(targetRecipe.getId(), target.resultStack, steps));
+                return PlanOutcome.planned(
+                        new CraftJob(targetRecipe.getId(), target.resultStack, steps, inventory));
             }
             RecipeGraphSolver.Result.Failure<ResourceLocation, Item> failure =
                     (RecipeGraphSolver.Result.Failure<ResourceLocation, Item>) result;
@@ -343,6 +346,16 @@ public final class CraftPlanner {
                 return true;
             }
             return recipe.get() instanceof ICraftingRecipe && recipe.get().canCraftInDimensions(2, 2);
+        }
+
+        /**
+         * A plan step's recipe reduced to the solver's view, or null when its id no longer resolves —
+         * such a job fails on its first craft ({@code RECIPE_GONE}) long before its result count
+         * matters, so the steps carry a null result and a zero count then.
+         */
+        private McRecipe stepInfo(ResourceLocation recipeId) {
+            Optional<? extends IRecipe<?>> recipe = RecipeIds.byId(recipes, recipeId);
+            return recipe.isPresent() ? McRecipe.of(recipe.get()) : null;
         }
     }
 

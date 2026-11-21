@@ -91,8 +91,8 @@ public final class CraftQueueManager {
      * {@link CraftExecutor#craftBatch}, each batch an assignment provably equal to that many single
      * crafts (a single craft otherwise). A burst ends at a step boundary so the next step still
      * waits its half second — except into another bulk step, which continues on the next tick
-     * (see {@link CraftJob#onCraftsPerformed(long)}). An interleaved job's steps run the same burst
-     * loop pass by pass (see {@link CraftJob#ROUND_CRAFTS}).
+     * (see {@link CraftJob#onCraftsPerformed(long)}). An interleaved job runs the same burst loop
+     * batch by batch (see {@link CraftJob#isInterleaved()}).
      */
     public static void tick(ServerPlayerEntity player) {
         CraftJob job = ACTIVE.get(player.getUUID());
@@ -208,9 +208,10 @@ public final class CraftQueueManager {
                                 job.targetResult().getHoverName()).withStyle(TextFormatting.GREEN));
                         return;
                     }
-                    // An interleaved job's slice boundaries are not step boundaries: a round visits every
-                    // step, so ending the burst at each slice would cap the job at one slice per tick.
-                    // Its bursts run to the time budget across slices and report on the half-second cadence.
+                    // An interleaved job's batch boundaries are not step boundaries: the schedule
+                    // interleaves the steps, so ending the burst at each batch would cap the job at
+                    // one batch per tick. Its bursts run to the time budget across batches and report
+                    // on the half-second cadence.
                     if ((stepDone && !job.isInterleaved()) || !bulk) {
                         // A step boundary, or the one craft a paced step does per due tick: report it now
                         // (progress bar + step sound), exactly as every craft was reported before bursts. A boundary
@@ -239,37 +240,24 @@ public final class CraftQueueManager {
                         sync(player, job, CraftProgressPacket.State.PAUSED_STATION, ItemStack.EMPTY);
                         return;
                     }
-                    // An interleaved job's shortage may be only the rounds' rounding/ordering lag — an
-                    // earlier step's slice ran floor-short of what this step's slice wants to consume —
-                    // which a later round repays, so skip this step for the rest of the round and keep
-                    // bursting (a round is never stuck; a drain pass that makes no progress reports the
-                    // job stuck below and cancels like any shortfall).
-                    if (job.deferCurrentStep()) {
-                        if (job.isFinished()) {
-                            ACTIVE.remove(player.getUUID());
-                            sync(player, job, CraftProgressPacket.State.FINISHED, lastCrafted);
-                            notify(player, new TranslationTextComponent("sprawlcrafting.craft.finished",
-                                    job.targetResult().getHoverName()).withStyle(TextFormatting.GREEN));
-                            return;
-                        }
-                        if (System.nanoTime() - deadline >= 0) {
-                            break bursts; // time budget spent; the deferred step stays due next tick
-                        }
-                        continue;
-                    }
+                    // The schedule's own stock model already ran every producer this step needed ahead
+                    // of it, so a shortage the model did not foresee is real — the player spent, moved
+                    // or lost the material — and no reordering can recover it: cancel like any job.
                     ACTIVE.remove(player.getUUID());
                     sync(player, job, CraftProgressPacket.State.CANCELLED, ItemStack.EMPTY);
                     notify(player, new TranslationTextComponent("sprawlcrafting.craft.missing",
                             job.targetResult().getHoverName(), result.missing()).withStyle(TextFormatting.RED));
                     return;
                 case NO_ROOM:
-                    // An interleaved job's step whose output has no room yet waits for a later pass: the
-                    // steps after it consume what fills the storage. Only a refusal made before anything
-                    // moved qualifies; items already dropped at the feet still stop the job, as does a
-                    // pass in which no step can move at all (the storage is genuinely full).
-                    if (!lastBulkDropped && job.deferCurrentStep()) {
+                    // The batch's output had nowhere to go: shrink the schedule's batch cap and let it
+                    // re-derive the next batch from the model — a smaller batch fits a tighter network,
+                    // and a network only full of intermediates is drained by the consuming steps the
+                    // re-derivation picks next. Only a refusal made before anything moved qualifies
+                    // (items already dropped at the feet still stop the job), and a batch already at
+                    // the per-craft floor cannot shrink: that storage is genuinely full.
+                    if (!lastBulkDropped && job.shrinkForRoom()) {
                         if (System.nanoTime() - deadline >= 0) {
-                            break bursts;
+                            break bursts; // time budget spent; the smaller batch is due next tick
                         }
                         continue;
                     }
@@ -297,7 +285,7 @@ public final class CraftQueueManager {
         }
     }
 
-    /** How many crafts {@link #craftBulk} asks for: the step's (or slice's) remaining crafts, one fewer on the final step, capped at the layout run; {@link #craftBulk} caps it at an int. */
+    /** How many crafts {@link #craftBulk} asks for: the current batch's crafts, one fewer on the final batch, capped at the layout run; {@link #craftBulk} caps it at an int. */
     private static long bulkRequest(CraftJob job) {
         long maxCrafts = job.craftsLeftInStep();
         if (job.isFinalStep() && maxCrafts > 1) {
@@ -307,18 +295,19 @@ public final class CraftQueueManager {
     }
 
     /**
-     * One batched craft call for a bulk step: as many crafts as the step has left (an interleaved
-     * step's current round slice, {@link CraftJob#craftsLeftInStep()}), except on the
-     * final step one fewer when that leaves at least 1, so the job's very last craft still goes
-     * through the grid hand-off check one craft at a time (see the top of {@link #craftBurst}),
-     * and never more than the current layout run still holds ({@link CraftJob#craftsLeftInLayoutRun()}):
+     * One batched craft call for a bulk step: as many crafts as the current step has left (an
+     * interleaved job's current batch, {@link CraftJob#craftsLeftInStep()}), except on the final
+     * batch one fewer when that leaves at least 1, so the job's very last craft still goes through
+     * the grid hand-off check one craft at a time (see the top of {@link #craftBurst}), and never
+     * more than the current layout run still holds ({@link CraftJob#craftsLeftInLayoutRun()}):
      * the next run can change every cell's item, and one batch applies one assignment. A step with a
      * single craft left, batch or not, is a plain {@link CraftExecutor#craftOnce} —
      * {@link CraftExecutor#craftBatch} would only fall back to it anyway. {@code craftBatch} takes an
-     * int, so a slice larger than that (a lagging step's backlog of rounds) is capped at
-     * {@link Integer#MAX_VALUE}: the slice simply continues in the next batch. Both paths refuse a
-     * craft whose output would spill ({@code refuseSpill}: a bulk step stops rather than drop at the
-     * feet); a paced step keeps the spill, a few items at the feet being fine and expected there.
+     * int, so a batch larger than that (an interleaved job's cap is an int's worth of volume, but a
+     * lagging step's backlog can exceed it) is capped at {@link Integer#MAX_VALUE}: the batch
+     * simply continues in the next call. Both paths refuse a craft whose output would spill
+     * ({@code refuseSpill}: a bulk step stops rather than drop at the feet); a paced step keeps the
+     * spill, a few items at the feet being fine and expected there.
      */
     /** Whether the last {@link #craftBulk} turned a success into NO_ROOM because items dropped at the feet (server thread only). */
     private static boolean lastBulkDropped;
