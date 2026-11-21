@@ -78,12 +78,13 @@ public final class CraftJob {
 
     /**
      * The round size of an interleaved job (see {@link RoundSchedule}): per round each step makes at
-     * most about this many crafts, so intermediates stay around one round's output — an AE2 network
-     * held ~1.3e9 ingots before filling in a playtest — while big steps still batch ~2.7e8 crafts per
-     * {@code CraftExecutor#craftBatch} call. A job whose every step is at most this keeps the
-     * sequential path unchanged.
+     * most about this many crafts — the most one {@code CraftExecutor#craftBatch} call applies, so a big
+     * step costs no more calls than when it ran on its own. What bounds the intermediates is the
+     * storage itself: a batch capped by output room, or refused for it, makes the step wait for a
+     * later pass while the steps after it consume its output (see {@code CraftQueueManager}). A job
+     * whose every step is at most this keeps the sequential path unchanged.
      */
-    public static final long ROUND_CRAFTS = 1L << 28;
+    public static final long ROUND_CRAFTS = Integer.MAX_VALUE;
 
     private final ResourceLocation targetRecipe;
     private final ItemStack targetResult;

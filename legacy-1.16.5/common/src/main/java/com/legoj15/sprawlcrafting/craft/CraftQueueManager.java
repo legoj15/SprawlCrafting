@@ -271,6 +271,16 @@ public final class CraftQueueManager {
                             job.targetResult().getHoverName(), result.missing()).withStyle(TextFormatting.RED));
                     return;
                 case NO_ROOM:
+                    // An interleaved job's step whose output has no room yet waits for a later pass: the
+                    // steps after it consume what fills the storage. Only a refusal made before anything
+                    // moved qualifies; items already dropped at the feet still stop the job, as does a
+                    // pass in which no step can move at all (the storage is genuinely full).
+                    if (!lastBulkDropped && job.deferCurrentStep()) {
+                        if (System.nanoTime() - deadline >= 0) {
+                            break bursts;
+                        }
+                        continue;
+                    }
                     // A bulk step's craft had nowhere to put its output: continuing would drop every
                     // craft's result at the player's feet thousands of times per tick (the #35
                     // freeze), so the job stops for the player to make room instead of spilling.
@@ -309,6 +319,9 @@ public final class CraftQueueManager {
      * craft whose output would spill ({@code refuseSpill}: a bulk step stops rather than drop at the
      * feet); a paced step keeps the spill, a few items at the feet being fine and expected there.
      */
+    /** Whether the last {@link #craftBulk} turned a success into NO_ROOM because items dropped at the feet (server thread only). */
+    private static boolean lastBulkDropped;
+
     /** How many crafts {@link #craftBulk} asks for: the rule in its javadoc, before the int cap. */
     private static long bulkRequest(CraftJob job) {
         long maxCrafts = job.craftsLeftInStep();
@@ -331,7 +344,8 @@ public final class CraftQueueManager {
         // Last line of defence: the room checks should leave nothing to drop, but if anything still
         // landed at the feet, stop the job here (as NO_ROOM) instead of repeating it every craft.
         ITextComponent dropped = CraftExecutor.takeDropped();
-        if (dropped != null && result.kind() == CraftExecutor.CraftResult.Kind.SUCCESS) {
+        lastBulkDropped = dropped != null && result.kind() == CraftExecutor.CraftResult.Kind.SUCCESS;
+        if (lastBulkDropped) {
             return CraftExecutor.CraftResult.noRoom(dropped);
         }
         return result;
