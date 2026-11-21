@@ -21,11 +21,11 @@ import net.minecraft.item.Item;
 public final class CraftStep {
 
     private final ResourceLocation recipeId;
-    private final int crafts;
+    private final long crafts;
     private final boolean needsFullGrid;
     private final List<SlotLayout<Item>> layouts;
 
-    public CraftStep(ResourceLocation recipeId, int crafts, boolean needsFullGrid,
+    public CraftStep(ResourceLocation recipeId, long crafts, boolean needsFullGrid,
                      List<SlotLayout<Item>> layouts) {
         if (crafts < 1) {
             throw new IllegalArgumentException("crafts must be >= 1, got " + crafts);
@@ -40,7 +40,7 @@ public final class CraftStep {
         return recipeId;
     }
 
-    public int crafts() {
+    public long crafts() {
         return crafts;
     }
 

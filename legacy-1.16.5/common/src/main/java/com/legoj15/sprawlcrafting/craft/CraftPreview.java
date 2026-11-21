@@ -43,7 +43,7 @@ public final class CraftPreview {
             IRecipe<?> recipe = RecipeIds.byId(recipes, step.recipeId()).orElse(null);
             ItemStack produced = recipe == null ? ItemStack.EMPTY : RecipeIds.resultOf(recipe);
             if (!produced.isEmpty()) {
-                totals.merge(produced.getItem(), (long) produced.getCount() * step.crafts(), CraftJob::saturatingAdd);
+                totals.merge(produced.getItem(), produced.getCount() * step.crafts(), CraftJob::saturatingAdd);
                 names.putIfAbsent(produced.getItem(), produced.getHoverName());
             }
         }

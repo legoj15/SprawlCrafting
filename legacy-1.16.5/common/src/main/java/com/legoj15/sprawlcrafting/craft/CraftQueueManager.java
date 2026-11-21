@@ -91,7 +91,8 @@ public final class CraftQueueManager {
      * {@link CraftExecutor#craftBatch}, each batch an assignment provably equal to that many single
      * crafts (a single craft otherwise). A burst ends at a step boundary so the next step still
      * waits its half second — except into another bulk step, which continues on the next tick
-     * (see {@link CraftJob#onCraftsPerformed(int)}).
+     * (see {@link CraftJob#onCraftsPerformed(long)}). An interleaved job's steps run the same burst
+     * loop round by round (see {@link CraftJob#ROUND_CRAFTS}).
      */
     public static void tick(ServerPlayerEntity player) {
         CraftJob job = ACTIVE.get(player.getUUID());
@@ -235,6 +236,24 @@ public final class CraftQueueManager {
                         sync(player, job, CraftProgressPacket.State.PAUSED_STATION, ItemStack.EMPTY);
                         return;
                     }
+                    // An interleaved job's shortage may be only the rounds' rounding/ordering lag — an
+                    // earlier step's slice ran floor-short of what this step's slice wants to consume —
+                    // which a later round repays, so skip this step for the rest of the round and keep
+                    // bursting (a round is never stuck; a drain pass that makes no progress reports the
+                    // job stuck below and cancels like any shortfall).
+                    if (job.deferCurrentStep()) {
+                        if (job.isFinished()) {
+                            ACTIVE.remove(player.getUUID());
+                            sync(player, job, CraftProgressPacket.State.FINISHED, lastCrafted);
+                            notify(player, new TranslationTextComponent("sprawlcrafting.craft.finished",
+                                    job.targetResult().getHoverName()).withStyle(TextFormatting.GREEN));
+                            return;
+                        }
+                        if (System.nanoTime() - deadline >= 0) {
+                            break bursts; // time budget spent; the deferred step stays due next tick
+                        }
+                        continue;
+                    }
                     ACTIVE.remove(player.getUUID());
                     sync(player, job, CraftProgressPacket.State.CANCELLED, ItemStack.EMPTY);
                     notify(player, new TranslationTextComponent("sprawlcrafting.craft.missing",
@@ -266,18 +285,21 @@ public final class CraftQueueManager {
     }
 
     /**
-     * One batched craft call for a bulk step: as many crafts as the step has left, except on the
+     * One batched craft call for a bulk step: as many crafts as the step has left (an interleaved
+     * step's current round slice, {@link CraftJob#craftsLeftInStep()}), except on the
      * final step one fewer when that leaves at least 1, so the job's very last craft still goes
      * through the grid hand-off check one craft at a time (see the top of {@link #craftBurst}),
      * and never more than the current layout run still holds ({@link CraftJob#craftsLeftInLayoutRun()}):
      * the next run can change every cell's item, and one batch applies one assignment. A step with a
      * single craft left, batch or not, is a plain {@link CraftExecutor#craftOnce} —
-     * {@link CraftExecutor#craftBatch} would only fall back to it anyway. Both paths refuse a craft
-     * whose output would spill ({@code refuseSpill}: a bulk step stops rather than drop at the feet);
-     * a paced step keeps the spill, a few items at the feet being fine and expected there.
+     * {@link CraftExecutor#craftBatch} would only fall back to it anyway. {@code craftBatch} takes an
+     * int, so a slice larger than that (a lagging step's backlog of rounds) is capped at
+     * {@link Integer#MAX_VALUE}: the slice simply continues in the next batch. Both paths refuse a
+     * craft whose output would spill ({@code refuseSpill}: a bulk step stops rather than drop at the
+     * feet); a paced step keeps the spill, a few items at the feet being fine and expected there.
      */
     private static CraftExecutor.CraftResult craftBulk(ServerPlayerEntity player, CraftJob job) {
-        int maxCrafts = job.craftsLeftInStep();
+        long maxCrafts = job.craftsLeftInStep();
         if (job.isFinalStep() && maxCrafts > 1) {
             maxCrafts--;
         }
@@ -287,7 +309,8 @@ public final class CraftQueueManager {
                 ? CraftExecutor.craftOnce(player, job.currentStep().recipeId(),
                         job.produced(), job.stationDependent(), job.currentCraftLayout(), true, job.usesProtected())
                 : CraftExecutor.craftBatch(player, job.currentStep().recipeId(),
-                        job.produced(), job.stationDependent(), job.currentCraftLayout(), maxCrafts, true,
+                        job.produced(), job.stationDependent(), job.currentCraftLayout(),
+                        (int) Math.min(maxCrafts, Integer.MAX_VALUE), true,
                         job.usesProtected());
         // Last line of defence: the room checks should leave nothing to drop, but if anything still
         // landed at the feet, stop the job here (as NO_ROOM) instead of repeating it every craft.

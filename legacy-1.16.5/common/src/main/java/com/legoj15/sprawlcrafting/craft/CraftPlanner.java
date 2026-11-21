@@ -450,14 +450,14 @@ public final class CraftPlanner {
                 for (SlotLayout<Item> run : step.layouts()) {
                     for (Item item : run.items()) {
                         if (item != null && protectedCopies.containsKey(item)) {
-                            net.merge(item, (long) run.crafts(), Long::sum);
+                            net.merge(item, run.crafts(), Long::sum);
                         }
                     }
                 }
             }
             ItemStack produced = RecipeIds.resultOf(recipe);
             if (!produced.isEmpty() && protectedCopies.containsKey(produced.getItem())) {
-                net.merge(produced.getItem(), -((long) Math.max(1, produced.getCount()) * step.crafts()),
+                net.merge(produced.getItem(), -(Math.max(1, produced.getCount()) * step.crafts()),
                         Long::sum);
             }
         }
