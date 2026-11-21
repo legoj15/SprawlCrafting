@@ -166,8 +166,13 @@ feeds it RFG's MCP→SRG srg (`-AreobfSrgFile`, from `mcp_stable/39/rfg_srgs/mcp
 root. Verified the refmap is generated and maps `drawButton`→`func_191745_a` and
 `mouseClicked`→`func_191862_a` (the `func_194338_a` redirect target is already an SRG name and needs
 no entry). Without this, the mixins would compile but silently fail to apply in an obfuscated
-install. The jar manifest still carries `MixinConfigs: mixins.sprawlcrafting.json` so MixinBooter
-loads the config (no coremod / TweakClass needed).
+install. The jar manifest carries `MixinConfigs: mixins.sprawlcrafting.json,mixins.sprawlcrafting.jei.json`
+so MixinBooter loads the configs (no TweakClass). It also declares `FMLCorePlugin` +
+`FMLCorePluginContainsFMLMod`, pointing at the empty `SprawlCraftingCorePlugin`: without that, MixinBooter
+adds the jar to the classloader by a relative path while FML scans it by an absolute one, and a dedicated
+server launched the canonical way (`java -jar forge-....jar nogui`) with MixinBooter installed crashes with
+`DuplicateModsFoundException` (issue #41). As a reparseable coremod, FML owns the jar and MixinBooter skips
+it. FML logs one harmless WARN about the `FMLCorePluginContainsFMLMod` marker at startup.
 
 ## Verification
 
