@@ -92,7 +92,7 @@ public final class CraftQueueManager {
      * crafts (a single craft otherwise). A burst ends at a step boundary so the next step still
      * waits its half second — except into another bulk step, which continues on the next tick
      * (see {@link CraftJob#onCraftsPerformed(long)}). An interleaved job's steps run the same burst
-     * loop round by round (see {@link CraftJob#ROUND_CRAFTS}).
+     * loop pass by pass (see {@link CraftJob#ROUND_CRAFTS}).
      */
     public static void tick(ServerPlayerEntity player) {
         CraftJob job = ACTIVE.get(player.getUUID());
@@ -305,6 +305,15 @@ public final class CraftQueueManager {
         }
     }
 
+    /** How many crafts {@link #craftBulk} asks for: the step's (or slice's) remaining crafts, one fewer on the final step, capped at the layout run; {@link #craftBulk} caps it at an int. */
+    private static long bulkRequest(CraftJob job) {
+        long maxCrafts = job.craftsLeftInStep();
+        if (job.isFinalStep() && maxCrafts > 1) {
+            maxCrafts--;
+        }
+        return Math.min(maxCrafts, job.craftsLeftInLayoutRun());
+    }
+
     /**
      * One batched craft call for a bulk step: as many crafts as the step has left (an interleaved
      * step's current round slice, {@link CraftJob#craftsLeftInStep()}), except on the
@@ -321,15 +330,6 @@ public final class CraftQueueManager {
      */
     /** Whether the last {@link #craftBulk} turned a success into NO_ROOM because items dropped at the feet (server thread only). */
     private static boolean lastBulkDropped;
-
-    /** How many crafts {@link #craftBulk} asks for: the rule in its javadoc, before the int cap. */
-    private static long bulkRequest(CraftJob job) {
-        long maxCrafts = job.craftsLeftInStep();
-        if (job.isFinalStep() && maxCrafts > 1) {
-            maxCrafts--;
-        }
-        return Math.min(maxCrafts, job.craftsLeftInLayoutRun());
-    }
 
     private static CraftExecutor.CraftResult craftBulk(ServerPlayerEntity player, CraftJob job) {
         long maxCrafts = bulkRequest(job);

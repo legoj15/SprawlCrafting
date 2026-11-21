@@ -35,12 +35,14 @@ import net.minecraft.item.ItemStack;
  * waiting another half second, so a compression chain runs as one long burst split only by the
  * time budget.
  *
- * <p>A job with any step over {@link #ROUND_CRAFTS} crafts runs <em>interleaved</em> instead
- * ({@link RoundSchedule}): in rounds, each round a proportional slice of every step in plan order,
- * so an intermediate is never held much beyond one round's output — running such a plan step by step
- * in order would stockpile every intermediate in full (1e14 gold ingots at once) before the next step
- * consumes it, and an AE2 network fills at ~1e9. Every step of an interleaved job bursts as a bulk
- * one; a job whose steps are all within {@link #ROUND_CRAFTS} behaves exactly as the cadence above
+ * <p>A job with any step over {@link Integer#MAX_VALUE} crafts (a long step from the solver's quantity
+ * path) runs <em>scheduled</em> ({@link RoundSchedule}, one round of full targets): its steps still run
+ * in plan order, in int-sized batches, but a step that comes up short — its output has no room in the
+ * storage, or a batch came back short — waits instead of cancelling while the steps after it consume
+ * what it made, and later passes resume it. So the storage, not a fixed batch, bounds the
+ * intermediates, and a tree that fits runs exactly as fast as plan order (each storage call costs about
+ * a tick on a large network, so rounds that visit every step would multiply them). Every step of such a
+ * job bursts as a bulk one; a job whose steps all fit an int behaves exactly as the cadence above
  * describes (the sequential path).
  */
 public final class CraftJob {
@@ -77,14 +79,12 @@ public final class CraftJob {
     public static final long SERVER_TICK_BURST_BUDGET_NANOS = 10_000_000L;
 
     /**
-     * The round size of an interleaved job (see {@link RoundSchedule}): per round each step makes at
-     * most about this many crafts — the most one {@code CraftExecutor#craftBatch} call applies, so a big
-     * step costs no more calls than when it ran on its own. What bounds the intermediates is the
-     * storage itself: a batch capped by output room, or refused for it, makes the step wait for a
-     * later pass while the steps after it consume its output (see {@code CraftQueueManager}). A job
-     * whose every step is at most this keeps the sequential path unchanged.
+     * The round size of a scheduled job (see {@link RoundSchedule}). Unbounded: one round of full
+     * targets, so the steps run in plan order and only the storage interleaves them. Proportional rounds
+     * were measured at about 9x the time of plan order on an Evolved Divine Crystal (1.7e13 crafts, about
+     * 70 minutes against 7.5) because every round visits every step with a storage call.
      */
-    public static final long ROUND_CRAFTS = Integer.MAX_VALUE;
+    public static final long ROUND_CRAFTS = Long.MAX_VALUE;
 
     private final ResourceLocation targetRecipe;
     private final ItemStack targetResult;
@@ -93,8 +93,8 @@ public final class CraftJob {
     private final ProducedLedger<Item, CraftExecutor.LedgerVariant> produced =
             new ProducedLedger<Item, CraftExecutor.LedgerVariant>();
     /**
-     * The round walk, decided once here: interleaved ({@link RoundSchedule#interleaved()}) when any
-     * step exceeds {@link #ROUND_CRAFTS}; null on the sequential path, which keeps the fields below.
+     * The schedule, decided once here: used when any step exceeds {@link Integer#MAX_VALUE} crafts;
+     * null on the sequential path, which keeps the fields below.
      */
     private final RoundSchedule schedule;
     /** Whether this job runs interleaved; every step-state method below branches on it. */
@@ -155,7 +155,11 @@ public final class CraftJob {
         }
         this.totalCrafts = sum;
         RoundSchedule planned = new RoundSchedule(totals, ROUND_CRAFTS);
-        this.interleaved = planned.interleaved();
+        boolean overInt = false;
+        for (long total : totals) {
+            overInt |= total > Integer.MAX_VALUE;
+        }
+        this.interleaved = overInt;
         this.schedule = interleaved ? planned : null;
         if (interleaved) {
             this.layoutRunByStep = new int[steps.size()];
@@ -324,7 +328,7 @@ public final class CraftJob {
         return interleaved || currentStep().crafts() > BULK_THRESHOLD;
     }
 
-    /** Whether this job runs in rounds (some step exceeds {@link #ROUND_CRAFTS}); see {@link RoundSchedule}. */
+    /** Whether this job runs on a {@link RoundSchedule} (some step exceeds an int). */
     public boolean isInterleaved() {
         return interleaved;
     }

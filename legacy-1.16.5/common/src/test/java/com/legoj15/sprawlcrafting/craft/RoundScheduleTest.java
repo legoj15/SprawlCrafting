@@ -151,4 +151,17 @@ class RoundScheduleTest {
         }
         assertFalse(schedule.finished());
     }
+
+    /**
+     * The no-progress skip stops at the first round in which a step that was only waiting at its
+     * target gets more to do, since that step may supply the short one; skipping to the full targets
+     * would let every step make its whole total at once.
+     */
+    @Test
+    void theNoProgressSkipStopsWhereAnIdleStepGrows() {
+        RoundSchedule schedule = new RoundSchedule(new long[] {50, 1000}, 10); // 100 rounds
+        assertEquals(1, schedule.current()); // round 1: step 0's target is 0, step 1's is 10
+        assertTrue(schedule.defer());
+        assertEquals(2, schedule.round(), "round 2 gives step 0 its first craft");
+    }
 }

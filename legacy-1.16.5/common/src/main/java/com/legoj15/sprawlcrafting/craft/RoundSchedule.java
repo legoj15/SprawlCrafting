@@ -141,9 +141,11 @@ final class RoundSchedule {
         long endedRound = round; // full targets there (r == N) or in a drain pass: no progress is final
         boolean progressed = progressedThisPass; // read before advancePass resets it
         if (!progressed && round < rounds) {
-            // Every attempted step was short and none made a craft: the stock is what it is, and later
-            // ordinary rounds would only ask the same steps again. Go straight to the full targets.
-            round = rounds - 1;
+            // Every attempted step was short and none made a craft. Rounds in which no step's target
+            // grows past what it has done would only ask the same steps again, so skip to the first
+            // round in which a step that sat at its target here gets more to do (it may supply the
+            // short ones), or to the full targets when none does.
+            round = nextGrowingRound() - 1;
         }
         advancePass();
         if (endedRound >= rounds && !progressed) {
@@ -182,6 +184,28 @@ final class RoundSchedule {
     }
 
     /** Ends the round or drain pass now running: deferred flags and the cursor start over. */
+    /**
+     * The first round after this one in which an unfinished step that is at its target now gets a
+     * larger target ({@code floor(crafts * r / N) > done}, i.e. {@code r >= ceil((done + 1) * N / crafts)}),
+     * or {@link #rounds} when there is none.
+     */
+    private long nextGrowingRound() {
+        long next = rounds;
+        BigInteger n = BigInteger.valueOf(rounds);
+        for (int i = 0; i < crafts.length; i++) {
+            if (done[i] >= crafts[i] || done[i] < target(i)) {
+                continue;
+            }
+            BigInteger need = BigInteger.valueOf(done[i] + 1).multiply(n);
+            BigInteger[] qr = need.divideAndRemainder(BigInteger.valueOf(crafts[i]));
+            BigInteger r = qr[1].signum() == 0 ? qr[0] : qr[0].add(BigInteger.ONE);
+            if (r.compareTo(BigInteger.valueOf(next)) < 0) {
+                next = Math.max(round + 1, r.longValue());
+            }
+        }
+        return next;
+    }
+
     private void advancePass() {
         round++;
         cursor = 0;
