@@ -4,8 +4,10 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 import org.junit.jupiter.api.Test;
@@ -16,6 +18,7 @@ import com.legoj15.solver.RecipeGraphSolver.Result;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RecipeGraphSolverTest {
@@ -1282,17 +1285,52 @@ class RecipeGraphSolverTest {
     }
 
     @Test
-    void makeablePlanLongerThanTheStepCapIsReportedTooLarge() {
-        // The same makeable tree with room for 64 steps: refused, and said to be too large rather
-        // than short of anything. budgetExceeded stays set for callers that only read that.
+    void quantityPlanLengthDoesNotGrowWithQuantity() {
+        // The same makeable tree with room for only 64 steps: still planned, in about one step per
+        // recipe (a step records its recipe's whole demand as a long count), so the plan's length
+        // tracks the tree's shape, not its quantities.
         TestRecipe target = quantityChain(17);
         int unbounded = Integer.MAX_VALUE;
         RecipeGraphSolver<String, String> small = new RecipeGraphSolver<>(
                 item -> recipes.stream().filter(r -> r.result().equals(item)).collect(Collectors.toList()),
                 remainders::get, 32, 4096, 64);
-        Result.Failure<String, String> failure = assertInstanceOf(Result.Failure.class,
-                small.solve(target, inv("a", unbounded, "b", unbounded, "d", unbounded)));
-        assertTrue(failure.tooLarge(), "makeable, but longer than the step cap");
-        assertTrue(failure.budgetExceeded());
+        Result<String, String> result = small.solve(target, inv("a", unbounded, "b", unbounded, "d", unbounded));
+        Result.Success<String, String> success = assertInstanceOf(Result.Success.class, result);
+        Set<String> distinct = new HashSet<>();
+        for (PlannedStep<String> step : success.steps()) {
+            distinct.add(step.recipeId());
+        }
+        assertTrue(success.steps().size() <= 2 * distinct.size(),
+                "about one step per recipe expected, got " + success.steps());
+        long leafCrafts = 0;
+        for (PlannedStep<String> step : success.steps()) {
+            if (step.recipeId().equals("leaf")) {
+                leafCrafts += step.crafts();
+            }
+        }
+        assertEquals(16_926_659_444_736L, leafCrafts);
+    }
+
+    @Test
+    void intSizedCutsLongStepsAndTheirRunsAtIntBoundaries() {
+        long big = 3L * Integer.MAX_VALUE + 5;
+        Result.Success<String, String> plan = new Result.Success<>(
+                java.util.Arrays.asList(new PlannedStep<>("a", big), new PlannedStep<>("b", 2)),
+                java.util.Arrays.asList(
+                        java.util.Arrays.asList(new SlotLayout<>(Integer.MAX_VALUE + 10L, java.util.Arrays.asList("x")),
+                                new SlotLayout<>(big - Integer.MAX_VALUE - 10L, java.util.Arrays.asList("y"))),
+                        java.util.Collections.<SlotLayout<String>>emptyList()));
+        Result.Success<String, String> cut = plan.intSized(64);
+        assertEquals(5, cut.steps().size(), "four int-sized pieces of a, then b");
+        long sum = 0;
+        for (int i = 0; i < 4; i++) {
+            assertTrue(cut.steps().get(i).crafts() <= Integer.MAX_VALUE);
+            sum += cut.steps().get(i).crafts();
+        }
+        assertEquals(big, sum);
+        assertEquals(java.util.Arrays.asList(new SlotLayout<>(10L, java.util.Arrays.asList("x")),
+                new SlotLayout<>(Integer.MAX_VALUE - 10L, java.util.Arrays.asList("y"))), cut.layouts().get(1));
+        assertTrue(cut.layouts().get(4).isEmpty());
+        assertNull(plan.intSized(4), "more pieces than the cap");
     }
 }

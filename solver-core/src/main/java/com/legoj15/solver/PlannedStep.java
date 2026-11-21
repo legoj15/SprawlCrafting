@@ -16,9 +16,9 @@ import java.util.Objects;
 public final class PlannedStep<R> {
 
     private final R recipeId;
-    private final int crafts;
+    private final long crafts;
 
-    public PlannedStep(R recipeId, int crafts) {
+    public PlannedStep(R recipeId, long crafts) {
         if (crafts < 1) {
             throw new IllegalArgumentException("crafts must be >= 1, got " + crafts);
         }
@@ -30,11 +30,11 @@ public final class PlannedStep<R> {
         return recipeId;
     }
 
-    public int crafts() {
+    public long crafts() {
         return crafts;
     }
 
-    public PlannedStep<R> withCrafts(int newCrafts) {
+    public PlannedStep<R> withCrafts(long newCrafts) {
         return new PlannedStep<>(recipeId, newCrafts);
     }
 

@@ -230,7 +230,9 @@ public final class CraftJob {
     public int craftsLeftInLayoutRun() {
         return currentCraftLayout() == null
                 ? craftsLeftInStep()
-                : layoutRunStart + currentStep().layouts().get(layoutRun).crafts() - craftsDoneInStep;
+                // A layout run holds a long count; the planner cuts plans into int-sized steps
+                // (Success.intSized), so a step's runs always fit one.
+                : (int) (layoutRunStart + currentStep().layouts().get(layoutRun).crafts() - craftsDoneInStep);
     }
 
     /**

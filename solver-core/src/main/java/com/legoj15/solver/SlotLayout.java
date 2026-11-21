@@ -22,14 +22,14 @@ import java.util.Objects;
  */
 public final class SlotLayout<K> {
 
-    private final int crafts;
+    private final long crafts;
     private final List<K> items;
 
     /**
      * @param crafts how many consecutive crafts of the step use this layout (>= 1)
      * @param items  one item per non-empty ingredient slot, in slot order (no null entries)
      */
-    public SlotLayout(int crafts, List<K> items) {
+    public SlotLayout(long crafts, List<K> items) {
         if (crafts < 1) {
             throw new IllegalArgumentException("crafts must be >= 1, got " + crafts);
         }
@@ -44,7 +44,7 @@ public final class SlotLayout<K> {
         this.items = Collections.unmodifiableList(copy);
     }
 
-    public int crafts() {
+    public long crafts() {
         return crafts;
     }
 
