@@ -37,8 +37,8 @@ import net.minecraft.item.ItemStack;
  *
  * <p>A job with any step over {@link Integer#MAX_VALUE} crafts (a long step from the solver's quantity
  * path) runs <em>scheduled</em> ({@link RoundSchedule}, one round of full targets): its steps still run
- * in plan order, in int-sized batches, but a step that comes up short — its output has no room in the
- * storage, or a batch came back short — waits instead of cancelling while the steps after it consume
+ * in plan order, in int-sized batches, but a step that comes up short — an ingredient is missing, or
+ * its output has no room in the storage — waits instead of cancelling while the steps after it consume
  * what it made, and later passes resume it. So the storage, not a fixed batch, bounds the
  * intermediates, and a tree that fits runs exactly as fast as plan order (each storage call costs about
  * a tick on a large network, so rounds that visit every step would multiply them). Every step of such a

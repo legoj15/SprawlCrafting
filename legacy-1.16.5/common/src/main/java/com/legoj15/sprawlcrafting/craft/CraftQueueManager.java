@@ -186,7 +186,6 @@ public final class CraftQueueManager {
                 }
                 // FALLBACK: couldn't hand off (recipe locked, grid uncleanable, …) — auto-craft below.
             }
-            long requested = bulk ? Math.min(bulkRequest(job), Integer.MAX_VALUE) : 1;
             CraftExecutor.CraftResult result = bulk
                     ? craftBulk(player, job)
                     : CraftExecutor.craftOnce(player, job.currentStep().recipeId(),
@@ -202,13 +201,6 @@ public final class CraftQueueManager {
                     }
                     lastCrafted = result.crafted();
                     boolean stepDone = job.onCraftsPerformed(result.crafts());
-                    // An interleaved slice that came back as a short batch (more than one craft, fewer
-                    // than asked) was capped by supply or room: the next call would only fail on the
-                    // same shortage, so the step yields the rest of its slice to a later round now.
-                    if (!stepDone && bulk && job.isInterleaved() && result.crafts() > 1
-                            && result.crafts() < requested) {
-                        job.deferCurrentStep(); // the batch was progress, so this pass is never stuck
-                    }
                     if (job.isFinished()) {
                         ACTIVE.remove(player.getUUID());
                         sync(player, job, CraftProgressPacket.State.FINISHED, lastCrafted);
