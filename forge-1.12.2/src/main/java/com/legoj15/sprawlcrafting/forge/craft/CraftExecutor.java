@@ -1,6 +1,7 @@
 package com.legoj15.sprawlcrafting.forge.craft;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -341,9 +342,10 @@ public final class CraftExecutor {
     private static Batch batchPlan(EntityPlayerMP player, Assignment assignment, ItemStack result,
                                    List<Ingredient> ingredients, List<ItemKey> layout,
                                    int maxCrafts, boolean allowProtected) {
+        // A fallback pick (a ledger-admitted, protected or any-plain match) depends on more than the
+        // shared pool order; k single crafts would not repeat it provably.
         if (maxCrafts <= 1 || !assignment.preferredFilled) {
-            return null; // a fallback pick (a ledger-admitted, protected or any-plain match) depends on
-            // more than the shared pool order; k single crafts would not repeat it provably.
+            return null;
         }
         // A carried layout must be the one this assignment honoured: the per-craft path re-checks the
         // layout against the live stock before every craft, so a stock that has drifted back over the
@@ -370,7 +372,10 @@ public final class CraftExecutor {
             // NBT variants under one ItemKey would make a later craft's output differ from the first's.
             ItemStack same = identity.get(preferred);
             if (same == null) {
-                identity.put(preferred, picked);
+                // A copy, never the live slot stack: the drain empties that slot, and an emptied 1.12.2
+                // stack reads as air, so a live reference would stop the drain at the next slot and
+                // leave the rest of the batch's input unconsumed (a duplication, seen in-game on #39).
+                identity.put(preferred, picked.copy());
             } else if (!sameItem(same, picked)) {
                 return null;
             }
@@ -394,6 +399,11 @@ public final class CraftExecutor {
             ItemStack remainder = item.getContainerItem(one);
             if (remainder.isEmpty()) {
                 continue;
+            }
+            if (remainder.getCount() != 1) {
+                // The counts below are per consumed stack; a multi-count remainder would be scaled
+                // wrong, so the single craft (which inserts the remainder as returned) handles it.
+                return null;
             }
             long perCraft = use.get(pick.getKey());
             boolean merged = false;
@@ -532,9 +542,10 @@ public final class CraftExecutor {
             }
         }
         if (!remainders.isEmpty()) {
+            // Remainders could drop at the feet with no network open to catch them; one craft keeps
+            // that the per-craft path's own rule.
             if (network == null) {
-                return null; // remainders could drop at the feet (no network open to catch them); one
-                // craft keeps that the per-craft path's own rule.
+                return null;
             }
             for (int g = 0; g < remainders.size(); g++) {
                 k = Math.min(k, inventoryRoom(inventory, remainders.get(g), false) / remainderCounts.get(g));
@@ -568,6 +579,24 @@ public final class CraftExecutor {
      */
     private static CraftResult applyBatch(EntityPlayerMP player, Assignment assignment, Batch batch,
                                           ItemStack result, ProducedLedger<ItemKey, LedgerVariant> ledger) {
+        // Read-only proof that the drain below covers the whole batch before anything moves: a drain
+        // that ran short would hand out k results for fewer inputs.
+        for (Map.Entry<ItemKey, ItemStack> pick : batch.identity.entrySet()) {
+            long need = (long) batch.crafts * batch.use.get(pick.getKey());
+            for (Source source : assignment.sources) {
+                ItemStack held = source.peek();
+                if (held.isEmpty() || !pick.getKey().equals(ItemKey.of(held)) || !usableAsIngredient(held)) {
+                    continue;
+                }
+                if (!sameItem(held, pick.getValue())) {
+                    break;
+                }
+                need -= held.getCount();
+            }
+            if (need > 0) {
+                return applyOnce(player, assignment, result, ledger);
+            }
+        }
         ItemStack networkShort = extractNetwork(player, batch.networkTakes);
         if (!networkShort.isEmpty()) {
             return applyOnce(player, assignment, result, ledger);
@@ -583,6 +612,7 @@ public final class CraftExecutor {
         ItemStack resultOut = result.copy();
         resultOut.setCount((int) Math.min((long) batch.crafts * Math.max(1, result.getCount()),
                 Integer.MAX_VALUE));
+        boolean drained = false; // the remainders are owed only once the whole drain has run
         try {
             // Charged before anything is consumed: the counted picks read each cell's exact stack
             // (its ledger key), and a source the drain empties below would have nothing left to read.
@@ -615,6 +645,7 @@ public final class CraftExecutor {
                 }
             }
             inventory.markDirty();
+            drained = true;
             ItemStack crafted = result.copy();
             // The result before the remainders: the plan gave only the result the empty slots and the
             // network's proven share, so a remainder inserted first could take space the result was
@@ -631,7 +662,7 @@ public final class CraftExecutor {
             return new CraftResult.Success(crafted, usedChest, usedNetwork, batch.crafts);
         } catch (Throwable failure) {
             returnPreparedNetworkItems(player, assignment.sources, failure);
-            for (ItemStack remainder : remainders) {
+            for (ItemStack remainder : drained ? remainders : Collections.<ItemStack>emptyList()) {
                 try {
                     insertIntoMainInventory(player, remainder);
                 } catch (Throwable refundFailure) {
