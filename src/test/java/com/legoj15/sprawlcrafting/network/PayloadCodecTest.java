@@ -47,6 +47,19 @@ class PayloadCodecTest {
     }
 
     @Test
+    void startProtectedCraftPayloadRoundTrips() {
+        // Same single-ResourceLocation layout as the plain start (issue #40's protected confirm);
+        // pinned separately so the two ids cannot silently swap codecs.
+        StartProtectedCraftPayload original =
+                new StartProtectedCraftPayload(ResourceLocation.fromNamespaceAndPath("minecraft", "chest"));
+        ByteBuf b = buf();
+        StartProtectedCraftPayload.STREAM_CODEC.encode(b, original);
+        StartProtectedCraftPayload decoded = StartProtectedCraftPayload.STREAM_CODEC.decode(b);
+        assertEquals(original, decoded);
+        assertEquals(0, b.readableBytes(), "codec must consume the whole buffer");
+    }
+
+    @Test
     void craftingScreenStatePayloadRoundTrips() {
         CraftingScreenStatePayload original = new CraftingScreenStatePayload(3, 3);
         ByteBuf b = buf();
@@ -71,6 +84,16 @@ class PayloadCodecTest {
     }
 
     @Test
+    void startProtectedCraftByDisplayPayloadRoundTrips() {
+        // The protected counterpart of the by-display start (issue #40): one VAR_INT display index.
+        ByteBuf b = buf();
+        StartProtectedCraftByDisplayPayload.STREAM_CODEC.encode(b, new StartProtectedCraftByDisplayPayload(4242));
+        assertEquals(new StartProtectedCraftByDisplayPayload(4242),
+                StartProtectedCraftByDisplayPayload.STREAM_CODEC.decode(b));
+        assertEquals(0, b.readableBytes());
+    }
+
+    @Test
     void deferredCraftableSyncPayloadRoundTripsAndIsOrderIndependent() {
         DeferredCraftableSyncPayload original = new DeferredCraftableSyncPayload(
                 1, Set.of(99, 7, 42),
@@ -90,6 +113,34 @@ class PayloadCodecTest {
         ByteBuf b = buf();
         DeferredCraftableSyncPayload.STREAM_CODEC.encode(b, original);
         DeferredCraftableSyncPayload decoded = DeferredCraftableSyncPayload.STREAM_CODEC.decode(b);
+        assertEquals(original, decoded);
+        assertTrue(decoded.displayIds().isEmpty());
+        assertTrue(decoded.recipeIds().isEmpty());
+    }
+
+    @Test
+    void protectedCraftableSyncPayloadRoundTripsAndIsOrderIndependent() {
+        // Issue #40's protected-only subset rides the same (grid, displayIds, recipeIds) layout as
+        // the deferred sync above; pinned separately so a field reorder cannot pass one and fail
+        // the other unnoticed.
+        ProtectedCraftableSyncPayload original = new ProtectedCraftableSyncPayload(
+                1, Set.of(99, 7, 42),
+                Set.of(ResourceLocation.fromNamespaceAndPath("minecraft", "chest"),
+                        ResourceLocation.fromNamespaceAndPath("sprawlcrafting", "thing")));
+        ByteBuf b = buf();
+        ProtectedCraftableSyncPayload.STREAM_CODEC.encode(b, original);
+        ProtectedCraftableSyncPayload decoded = ProtectedCraftableSyncPayload.STREAM_CODEC.decode(b);
+        assertEquals(original, decoded);
+        assertEquals(0, b.readableBytes());
+    }
+
+    @Test
+    void protectedCraftableSyncPayloadWithEmptySetsRoundTripsToEmptyNotNull() {
+        // The clearing push (no protected-only recipes left) is empty sets, not nulls.
+        ProtectedCraftableSyncPayload original = new ProtectedCraftableSyncPayload(0, Set.of(), Set.of());
+        ByteBuf b = buf();
+        ProtectedCraftableSyncPayload.STREAM_CODEC.encode(b, original);
+        ProtectedCraftableSyncPayload decoded = ProtectedCraftableSyncPayload.STREAM_CODEC.decode(b);
         assertEquals(original, decoded);
         assertTrue(decoded.displayIds().isEmpty());
         assertTrue(decoded.recipeIds().isEmpty());

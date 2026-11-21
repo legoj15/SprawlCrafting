@@ -200,7 +200,9 @@ public class DeferredCraftingTransferHandler implements IRecipeTransferHandler<W
     /**
      * The special-items warning lines for {@code recipe}'s current plan, or empty when the live
      * inventory no longer needs any (the button then says the plain deferred thing only). Same
-     * per-hover cost as the gather tooltip's shortfall: one plan against the cached session.
+     * per-hover cost as the gather tooltip's shortfall: one plan against the cached session. The
+     * open station's plain counts join as plain material: the executor draws them before any
+     * protected copy, so without them an item the station supplies anyway would be over-warned.
      */
     static List<ITextComponent> protectedWarningLines(IRecipe<?> recipe, GridContext grid) {
         Minecraft minecraft = Minecraft.getInstance();
@@ -212,7 +214,7 @@ public class DeferredCraftingTransferHandler implements IRecipeTransferHandler<W
             return Collections.emptyList();
         }
         return CraftPreview.protectedWarningLines(outcome.job(), minecraft.level.getRecipeManager(),
-                minecraft.player.inventory);
+                minecraft.player.inventory, DeferredCraftableCache.stationCounts());
     }
 
     /** Orange state for an unmakeable recipe: clicking opens the gather list. */

@@ -3,15 +3,18 @@ package com.legoj15.sprawlcrafting.forge.client;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 
 import com.legoj15.solver.CountFormat;
 import com.legoj15.sprawlcrafting.forge.craft.CraftJob;
 import com.legoj15.sprawlcrafting.forge.craft.CraftPlanner;
 import com.legoj15.sprawlcrafting.forge.craft.CraftStep;
+import com.legoj15.sprawlcrafting.forge.craft.GridContext;
+import com.legoj15.sprawlcrafting.forge.craft.ItemKey;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.resources.I18n;
-import net.minecraft.entity.player.InventoryPlayer;
+import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.crafting.CraftingManager;
 import net.minecraft.item.crafting.IRecipe;
@@ -49,18 +52,29 @@ public final class DeferredClickState {
     private static CraftPlanner.Session cachedSession;
     private static List<String> cachedLines;
 
+    /**
+     * The plain counts of the pool's sources beyond the 36 main slots ({@link CraftPlanner#plainExternalCounts}),
+     * cached against the planning session they were counted over: the JEI tooltip recomputes its
+     * warning per hover, and a terminal's network scan must not run per frame. One scan per session
+     * rebuild — the cadence at which the session itself already decided the pool changed.
+     */
+    private static CraftPlanner.Session countedSession;
+    private static Map<ItemKey, Integer> externalCounts;
+
     private static boolean overlayHover;
 
     public static void arm(IRecipe recipe) {
         armedRecipe = recipe;
     }
 
-    /** Clears the armed recipe and the preview cache with it. */
+    /** Clears the armed recipe and the preview caches with it. */
     public static void disarm() {
         armedRecipe = null;
         cachedRecipe = null;
         cachedSession = null;
         cachedLines = null;
+        countedSession = null;
+        externalCounts = null;
     }
 
     /** The previewed recipe, or null when nothing is armed. */
@@ -98,7 +112,7 @@ public final class DeferredClickState {
                 cachedLines = Collections.unmodifiableList(
                         outcome instanceof CraftPlanner.PlanOutcome.Planned
                                 ? buildLines(((CraftPlanner.PlanOutcome.Planned) outcome).job(),
-                                        Minecraft.getMinecraft().player.inventory)
+                                        Minecraft.getMinecraft().player, session.grid())
                                 : new ArrayList<String>());
             } catch (Throwable ignored) {
                 // Runs on the render path; a failed preview must never break the tooltip.
@@ -124,7 +138,7 @@ public final class DeferredClickState {
         return hovered;
     }
 
-    private static List<String> buildLines(CraftJob plan, InventoryPlayer inventory) {
+    private static List<String> buildLines(CraftJob plan, EntityPlayer player, GridContext grid) {
         List<String> lines = new ArrayList<String>();
         lines.add(TextFormatting.YELLOW + I18n.format("sprawlcrafting.preview.header",
                 plan.targetResult().getDisplayName()));
@@ -149,7 +163,7 @@ public final class DeferredClickState {
         if (steps.size() > shown) {
             lines.add(TextFormatting.DARK_GRAY + " ...");
         }
-        lines.addAll(protectedWarningLines(plan, inventory));
+        lines.addAll(protectedWarningLines(plan, player, grid));
         lines.add(TextFormatting.GREEN + I18n.format("sprawlcrafting.preview.confirm"));
         return lines;
     }
@@ -158,14 +172,18 @@ public final class DeferredClickState {
      * The protected-stack warning (issue #40): a gold header plus one line per protected item the
      * plan will consume, naming why it is special. Empty for a plan that uses none — including a
      * {@code usesProtected} job whose plain copies happened to cover everything, which can happen
-     * when the inventory changed between the plan and this look. Shared with the JEI "+" tooltip
-     * ({@code DeferredCraftTransferHandler}), which shows the same lines before its click.
+     * when the inventory changed between the plan and this look. The plan's other sources (the open
+     * grid and station chest, an open terminal's network) are credited as plain material: the
+     * executor draws them before any protected copy, so without them an item those sources supply
+     * anyway would be over-warned. Shared with the JEI "+" tooltip
+     * ({@code DeferredCraftTransferHandler}), which recomputes these lines per hover.
      */
-    public static List<String> protectedWarningLines(CraftJob plan, InventoryPlayer inventory) {
+    public static List<String> protectedWarningLines(CraftJob plan, EntityPlayer player, GridContext grid) {
         if (!plan.usesProtected()) {
             return Collections.emptyList();
         }
-        List<ItemStack> used = CraftPlanner.protectedItemsUsed(plan, inventory);
+        List<ItemStack> used = CraftPlanner.protectedItemsUsed(plan, player.inventory,
+                externalPlainCounts(player, grid));
         if (used.isEmpty()) {
             return Collections.emptyList();
         }
@@ -183,5 +201,20 @@ public final class DeferredClickState {
             lines.add(TextFormatting.GOLD + I18n.format(key, stack.getDisplayName()));
         }
         return lines;
+    }
+
+    /**
+     * {@link CraftPlanner#plainExternalCounts} against the session the plan came from
+     * ({@code ClientPlanCache.get}), which is what the cache above keys on. The client session's
+     * pool always includes an open terminal's network ({@code CraftPlanner.session}), so the counts
+     * mirror that pool exactly: network included, empty when no terminal is open.
+     */
+    private static Map<ItemKey, Integer> externalPlainCounts(EntityPlayer player, GridContext grid) {
+        CraftPlanner.Session session = ClientPlanCache.get(player, grid);
+        if (countedSession != session) {
+            externalCounts = CraftPlanner.plainExternalCounts(player, true);
+            countedSession = session;
+        }
+        return externalCounts;
     }
 }

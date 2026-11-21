@@ -186,7 +186,7 @@ public class DeferredCraftTransferHandler<C extends Container> implements IRecip
                 // A protected-only recipe's hover tooltip says which special items the click would
                 // consume (#40); for every other solvable recipe there is nothing to warn about.
                 return ClientPlanCache.isProtectedOnly(recipe)
-                        ? new ProtectedDeferredError(player, grid, recipe) : null;
+                        ? new ProtectedDeferredError(grid, recipe) : null;
             }
             if (!SprawlConfig.needsSystem) {
                 JeiTintState.put(recipeLayout, null);
@@ -217,38 +217,50 @@ public class DeferredCraftTransferHandler<C extends Container> implements IRecip
      * {@link mezz.jei.api.recipe.transfer.IRecipeTransferError} is the only tooltip hook JEI 4
      * offers, and JEI greys out every errored button — so this extends
      * {@link MissingResourcesError} (whose type {@code RecipeTransferButtonMixin} re-enables) to
-     * stay clickable while carrying its own hover text. The plan behind the warning is computed
-     * once, at validation: the click re-plans authoritatively on the server anyway.
+     * stay clickable while carrying its own hover text. The warning lines are recomputed on every
+     * hover, as legacy-1.16.5's own ProtectedDeferredError does: JEI may keep the error object
+     * across inventory changes, so lines built once (at validation) would go stale and name items
+     * the live pool no longer needs. One plan per hover against the cached client session; the
+     * click re-plans authoritatively on the server anyway.
      */
     private static final class ProtectedDeferredError extends MissingResourcesError {
 
-        private final List<String> tooltip;
+        private final GridContext grid;
+        private final IRecipe recipe;
 
-        ProtectedDeferredError(EntityPlayer player, GridContext grid, IRecipe recipe) {
+        ProtectedDeferredError(GridContext grid, IRecipe recipe) {
             // Never read: showError below draws this class's own tooltip instead, with no red
             // slot highlights — nothing is "missing", the recipe just needs the player's consent.
             super(ShortfallView.unavailable(), Collections.<Integer>emptyList());
-            List<String> lines = new ArrayList<String>();
-            lines.add(TextFormatting.YELLOW + I18n.format("sprawlcrafting.recipe.deferred"));
-            lines.add(TextFormatting.GRAY + I18n.format("sprawlcrafting.recipe.deferred.click"));
-            try {
-                CraftPlanner.PlanOutcome outcome = ClientPlanCache.plan(player, grid, recipe);
-                if (outcome instanceof CraftPlanner.PlanOutcome.Planned) {
-                    lines.addAll(DeferredClickState.protectedWarningLines(
-                            ((CraftPlanner.PlanOutcome.Planned) outcome).job(), player.inventory));
-                }
-            } catch (Throwable ignored) {
-                // The warning is advisory; the click re-plans server-side regardless.
-            }
-            this.tooltip = Collections.unmodifiableList(lines);
+            this.grid = grid;
+            this.recipe = recipe;
         }
 
         @Override
         public void showError(Minecraft minecraft, int mouseX, int mouseY,
                               IRecipeLayout recipeLayout, int recipeX, int recipeY) {
             if (minecraft.currentScreen != null) {
-                minecraft.currentScreen.drawHoveringText(tooltip, mouseX, mouseY);
+                minecraft.currentScreen.drawHoveringText(tooltip(minecraft), mouseX, mouseY);
             }
+        }
+
+        /** The deferred invite plus the current special-items warning, planned at draw time. */
+        private List<String> tooltip(Minecraft minecraft) {
+            List<String> lines = new ArrayList<String>();
+            lines.add(TextFormatting.YELLOW + I18n.format("sprawlcrafting.recipe.deferred"));
+            lines.add(TextFormatting.GRAY + I18n.format("sprawlcrafting.recipe.deferred.click"));
+            if (minecraft.player != null) {
+                try {
+                    CraftPlanner.PlanOutcome outcome = ClientPlanCache.plan(minecraft.player, grid, recipe);
+                    if (outcome instanceof CraftPlanner.PlanOutcome.Planned) {
+                        lines.addAll(DeferredClickState.protectedWarningLines(
+                                ((CraftPlanner.PlanOutcome.Planned) outcome).job(), minecraft.player, grid));
+                    }
+                } catch (Throwable ignored) {
+                    // The warning is advisory; the click re-plans server-side regardless.
+                }
+            }
+            return lines;
         }
     }
 

@@ -209,6 +209,27 @@ public final class CraftPlanner {
         }
     }
 
+    /**
+     * The plain side of {@link #snapshotMaterials} alone: the counts of the pool's sources beyond
+     * the 36 main slots — {@link ExternalSlots#materialSlots} (the open grid and a station's
+     * connected chest) plus, with {@code network}, an open terminal's network — or empty when none
+     * of them holds usable material. For display passes that must credit those sources the way the
+     * executor draws them (before any protected copy, as in {@link #protectedItemsUsed}); the plan
+     * itself counts them into its pool, so this is only the split-back-out.
+     */
+    public static Map<ItemKey, Integer> plainExternalCounts(EntityPlayer player, boolean network) {
+        Map<ItemKey, Integer> counts = new HashMap<ItemKey, Integer>();
+        for (net.minecraft.inventory.Slot slot : ExternalSlots.materialSlots(player)) {
+            addUsable(counts, slot.getStack());
+        }
+        if (network) {
+            for (ItemStack stack : NetworkTerminals.stacks(player)) {
+                addUsable(counts, stack);
+            }
+        }
+        return counts;
+    }
+
     public static final class Session {
         private final GridContext grid;
         private final Map<ItemKey, List<McRecipe>> producers = new HashMap<ItemKey, List<McRecipe>>();
@@ -480,11 +501,15 @@ public final class CraftPlanner {
      * protected copies among the 36 slots, the plan's net consumption — per step, its layouts'
      * occurrences (any protected alternative, when the step carries no layout: which of them the
      * executor picks is not decided yet) less what a step produces of it — counted above the plain
-     * copies available. Keyed by {@link ItemKey} (item + metadata), like every other planning
-     * identity on 1.12.2. Display-facing (the click preview and the JEI tooltip); the executor
-     * itself re-decides per craft from the live pool.
+     * copies available. {@code external} adds the plain counts of the other sources the plan used
+     * ({@link #plainExternalCounts}: the open grid and station chest, an open terminal's network;
+     * empty for none): the executor draws those before any protected copy, so without them an item
+     * those sources supply anyway would be over-warned. Keyed by {@link ItemKey} (item + metadata),
+     * like every other planning identity on 1.12.2. Display-facing (the click preview and the JEI
+     * tooltip); the executor itself re-decides per craft from the live pool.
      */
-    public static List<ItemStack> protectedItemsUsed(CraftJob job, InventoryPlayer inventory) {
+    public static List<ItemStack> protectedItemsUsed(CraftJob job, InventoryPlayer inventory,
+                                                     Map<ItemKey, Integer> external) {
         Map<ItemKey, Long> plain = new HashMap<ItemKey, Long>();
         Map<ItemKey, ItemStack> protectedCopies = new LinkedHashMap<ItemKey, ItemStack>();
         for (int i = 0; i < MAIN_INVENTORY_SIZE; i++) {
@@ -507,6 +532,13 @@ public final class CraftPlanner {
         }
         if (protectedCopies.isEmpty()) {
             return Collections.emptyList();
+        }
+        for (Map.Entry<ItemKey, Integer> entry : external.entrySet()) {
+            if (entry.getValue() > 0) {
+                ItemKey key = entry.getKey();
+                Long current = plain.get(key);
+                plain.put(key, (current == null ? 0L : current.longValue()) + entry.getValue().intValue());
+            }
         }
         Map<ItemKey, Long> net = new HashMap<ItemKey, Long>();
         Set<ItemKey> undetermined = new HashSet<ItemKey>();

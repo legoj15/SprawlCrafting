@@ -56,18 +56,13 @@ public final class CraftRequests {
         }
     }
 
-    /** Start path keyed by a specific recipe (command / recipe-book click). */
-    public static StartOutcome tryStart(EntityPlayerMP player, IRecipe recipe) {
-        return tryStart(player, recipe, false);
-    }
-
     /**
-     * {@link #tryStart(EntityPlayerMP, IRecipe)} with the protected tier (issue #40):
-     * {@code allowProtected} is the confirmed request from the protected channel, whose plan may
-     * also count the player's protected stacks (enchanted and/or renamed, never damaged) once the
-     * plain passes — the inventory and station chest, then an open terminal's network — have fallen
-     * short. A request that still fails keeps the plain passes' rejection: the message says what is
-     * missing, not which tier ran out.
+     * Start path keyed by a specific recipe (command / recipe-book click). {@code allowProtected}
+     * is the protected tier (issue #40): the confirmed request from the protected channel, whose
+     * plan may also count the player's protected stacks (enchanted and/or renamed, never damaged)
+     * once the plain passes — the inventory and station chest, then an open terminal's network —
+     * have fallen short. A request that still fails keeps the plain passes' rejection: the message
+     * says what is missing, not which tier ran out.
      */
     public static StartOutcome tryStart(EntityPlayerMP player, IRecipe recipe, boolean allowProtected) {
         if (CraftQueueManager.activeJob(player.getUniqueID()).isPresent()) {
@@ -104,13 +99,10 @@ public final class CraftRequests {
         return finish(player, own, plannedOnNetwork);
     }
 
-    /** Start path keyed by a result item (the JEI "+" hook, which has the stack, not the recipe). */
-    public static StartOutcome tryStartByResult(EntityPlayerMP player, ItemStack result) {
-        return tryStartByResult(player, result, false);
-    }
-
-    /** {@link #tryStartByResult(EntityPlayerMP, ItemStack)} with the protected tier (issue #40);
-     *  see {@link #tryStart(EntityPlayerMP, IRecipe, boolean)}. */
+    /**
+     * Start path keyed by a result item (the JEI "+" hook, which has the stack, not the recipe),
+     * with the protected tier (issue #40); see {@link #tryStart(EntityPlayerMP, IRecipe, boolean)}.
+     */
     public static StartOutcome tryStartByResult(EntityPlayerMP player, ItemStack result,
                                                 boolean allowProtected) {
         if (CraftQueueManager.activeJob(player.getUniqueID()).isPresent()) {

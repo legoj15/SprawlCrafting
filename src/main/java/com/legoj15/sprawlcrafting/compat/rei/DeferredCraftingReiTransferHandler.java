@@ -7,7 +7,7 @@ import com.legoj15.sprawlcrafting.client.DeferredClickState;
 import com.legoj15.sprawlcrafting.client.DeferredCraftableCache;
 import com.legoj15.sprawlcrafting.client.MissingIngredients;
 import com.legoj15.sprawlcrafting.client.MissingIngredientsView;
-import com.legoj15.sprawlcrafting.compat.jei.DeferredTransfers;
+import com.legoj15.sprawlcrafting.client.ProtectedWarnings;
 import com.legoj15.sprawlcrafting.config.SprawlConfig;
 import com.legoj15.sprawlcrafting.craft.CraftPlanner.Craftability;
 import com.legoj15.sprawlcrafting.craft.GridContext;
@@ -85,8 +85,10 @@ public class DeferredCraftingReiTransferHandler implements TransferHandler {
         Craftability craftability = DeferredCraftableCache.classify(recipe, grid);
         if (craftability == Craftability.DEFERRED && !ClientJobTracker.hasActiveJob()) {
             // A recipe only the protected tier can make (issue #40) confirms through the protected
-            // start packet, and the tooltip carries the special-items warning (DeferredTransfers'
-            // JEI lines, shared here so the two viewers cannot drift apart).
+            // start packet, and the tooltip carries the special-items warning (ProtectedWarnings,
+            // the JEI-free line builder shared with JEI so the two viewers cannot drift apart —
+            // never DeferredTransfers itself, whose JEI-typed statics would crash a JEI-less
+            // REI install at class load).
             boolean protectedCraft = DeferredCraftableCache.isProtectedOnly(recipe);
             if (context.isActuallyCrafting()) {
                 if (protectedCraft) {
@@ -102,8 +104,11 @@ public class DeferredCraftingReiTransferHandler implements TransferHandler {
                     .color(TRANSLUCENT_YELLOW)
                     .tooltip(Component.translatable("sprawlcrafting.recipe.deferred").withStyle(ChatFormatting.YELLOW))
                     .tooltip(Component.translatable("sprawlcrafting.recipe.deferred.click").withStyle(ChatFormatting.GRAY));
-            for (Component line : DeferredTransfers.protectedWarningLines(recipe, grid)) {
-                button.tooltip(line);
+            // The warning lines cost a full plan per hover: only a protected-only recipe needs them.
+            if (protectedCraft) {
+                for (Component line : ProtectedWarnings.lines(recipe, grid)) {
+                    button.tooltip(line);
+                }
             }
             return button;
         }

@@ -29,7 +29,8 @@ public final class CraftPreview {
     private CraftPreview() {
     }
 
-    public static List<ITextComponent> lines(CraftJob job, RecipeManager recipes, PlayerInventory inventory) {
+    public static List<ITextComponent> lines(CraftJob job, RecipeManager recipes, PlayerInventory inventory,
+                                             Map<Item, Long> station) {
         List<ITextComponent> out = new ArrayList<>();
         out.add(new TranslationTextComponent("sprawlcrafting.preview.header",
                 job.targetResult().getHoverName()).withStyle(TextFormatting.YELLOW));
@@ -50,7 +51,7 @@ public final class CraftPreview {
             out.add(new TranslationTextComponent("sprawlcrafting.preview.step",
                     CountFormat.format(e.getValue()), names.get(e.getKey())).withStyle(TextFormatting.GRAY));
         }
-        out.addAll(protectedWarningLines(job, recipes, inventory));
+        out.addAll(protectedWarningLines(job, recipes, inventory, station));
         out.add(new TranslationTextComponent("sprawlcrafting.preview.confirm")
                 .withStyle(TextFormatting.GREEN, TextFormatting.ITALIC));
         return out;
@@ -60,14 +61,18 @@ public final class CraftPreview {
      * The protected-stack warning (issue #40): a gold header plus one line per protected item the plan
      * will consume, naming why it is special. Empty for a plan that uses none — including a
      * {@code usesProtected} job whose plain copies happened to cover everything, which can happen when
-     * the inventory changed between the plan and this look.
+     * the inventory changed between the plan and this look. {@code station} is the plain counts of the
+     * other sources the plan used (an open crafting station's storage; empty for none), which the
+     * executor draws before any protected copy and so count as plain here (see
+     * {@link CraftPlanner#protectedItemsUsed}).
      */
     public static List<ITextComponent> protectedWarningLines(CraftJob job, RecipeManager recipes,
-                                                             PlayerInventory inventory) {
+                                                             PlayerInventory inventory,
+                                                             Map<Item, Long> station) {
         if (!job.usesProtected()) {
             return Collections.emptyList();
         }
-        List<ItemStack> used = CraftPlanner.protectedItemsUsed(job, recipes, inventory);
+        List<ItemStack> used = CraftPlanner.protectedItemsUsed(job, recipes, inventory, station);
         if (used.isEmpty()) {
             return Collections.emptyList();
         }

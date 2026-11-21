@@ -24,7 +24,9 @@ import net.minecraft.item.crafting.IRecipe;
  *   <li><b>Direct</b> (all ingredients in the player's inventory plus the network) — AE2's handler,
  *       unchanged: it lays the recipe into the terminal grid from the network, which is what a
  *       terminal user expects.</li>
- *   <li><b>Deferred</b> (makeable via intermediates) — SprawlCrafting's engine, yellow button.</li>
+ *   <li><b>Deferred</b> (makeable via intermediates — including only via the player's protected
+ *       stacks, issue #40, which gets the warning tooltip and the protected start like at a table)
+ *       — SprawlCrafting's engine, yellow button.</li>
  *   <li><b>Unsolvable</b> — the orange gather button / greyed "+" listing missing raws, exactly as at
  *       a table; with the needs helper off, AE2's handler (stock behaviour).</li>
  * </ul>
@@ -101,22 +103,31 @@ public final class NetworkTerminalTransferHandler extends DeferredCraftTransferH
         return super.transferRecipe(container, recipeLayout, player, maxTransfer, doTransfer);
     }
 
-    /** Direct / deferred / unsolvable for the shown recipe at the 3x3 grid; null when it has no output. */
+    /**
+     * Direct / deferred / unsolvable for the shown recipe at the 3x3 grid; null when it has no
+     * output. Protected-aware (issue #40), like the base handler's own paths: a recipe only the
+     * player's protected stacks can make is {@code DEFERRED} here too, so the terminal offers the
+     * yellow deferred button (warning tooltip, protected start on click) instead of routing it to
+     * AE2's handler, which would grey it out or try to fill the grid from plain stock only. The
+     * by-result fallback keeps the plain session's direct/deferred split and widens only its
+     * shortfalls, reusing {@link ClientPlanCache}'s protected tier rather than a second classify.
+     */
     private static CraftPlanner.Craftability classify(IRecipeLayout recipeLayout, EntityPlayer player) {
         ItemStack result = outputStack(recipeLayout);
         if (result.isEmpty()) {
             return null;
         }
-        CraftPlanner.Session session = ClientPlanCache.get(player, GridContext.CRAFTING_TABLE);
         IRecipe recipe = findRecipe(recipeLayout, result);
         if (recipe != null) {
-            return session.classify(recipe);
+            return ClientPlanCache.classify(player, GridContext.CRAFTING_TABLE, recipe);
         }
+        CraftPlanner.Session session = ClientPlanCache.get(player, GridContext.CRAFTING_TABLE);
         CraftPlanner.PlanOutcome outcome = session.planByResult(result);
-        if (!(outcome instanceof CraftPlanner.PlanOutcome.Planned)) {
-            return CraftPlanner.Craftability.UNSOLVABLE;
+        if (outcome instanceof CraftPlanner.PlanOutcome.Planned) {
+            return ((CraftPlanner.PlanOutcome.Planned) outcome).job().steps().size() == 1
+                    ? CraftPlanner.Craftability.DIRECT : CraftPlanner.Craftability.DEFERRED;
         }
-        return ((CraftPlanner.PlanOutcome.Planned) outcome).job().steps().size() == 1
-                ? CraftPlanner.Craftability.DIRECT : CraftPlanner.Craftability.DEFERRED;
+        return ClientPlanCache.canDeferCraft(player, GridContext.CRAFTING_TABLE, result)
+                ? CraftPlanner.Craftability.DEFERRED : CraftPlanner.Craftability.UNSOLVABLE;
     }
 }

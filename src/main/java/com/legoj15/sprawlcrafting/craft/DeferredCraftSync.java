@@ -293,8 +293,10 @@ public final class DeferredCraftSync {
                 }
             }
             if (outcome instanceof CraftPlanner.PlanOutcome.Planned planned) {
+                // stationCounts (empty when no station is open) ride along so the protected warning
+                // credits the station's plain stock, which the executor draws before protected copies.
                 lines = CraftPreview.lines(planned.job(), recipes, player.registryAccess(),
-                        player.getInventory());
+                        player.getInventory(), stationCounts);
             }
         }
         if (Services.PLATFORM.canReceive(player, com.legoj15.sprawlcrafting.network.CraftPreviewPayload.TYPE.id())) {

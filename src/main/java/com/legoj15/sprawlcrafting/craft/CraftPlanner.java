@@ -355,11 +355,15 @@ public final class CraftPlanner {
      * protected copies among the 36 slots, the plan's net consumption — per step, its layouts'
      * occurrences (any protected alternative, when the step carries no layout: which of them the
      * executor picks is not decided yet) less what a step produces of it — counted above the plain
-     * copies available. Display-facing (the click preview and the JEI tooltip); the executor itself
+     * copies available. {@code station} adds the plain counts of the other sources the plan used
+     * (an open crafting station's storage; empty for none): the executor draws those before any
+     * protected copy, so without them an item the station supplies anyway would be over-warned.
+     * Display-facing (the click preview and the JEI tooltip); the executor itself
      * re-decides per craft from the live pool.
      */
     public static List<ItemStack> protectedItemsUsed(CraftJob job, RecipeManager recipes,
-                                                     RegistryAccess registries, Inventory inventory) {
+                                                     RegistryAccess registries, Inventory inventory,
+                                                     Map<Item, Long> station) {
         Map<Item, Long> plain = new HashMap<>();
         Map<Item, ItemStack> protectedCopies = new LinkedHashMap<>();
         for (int i = 0; i < Inventory.INVENTORY_SIZE; i++) {
@@ -376,6 +380,11 @@ public final class CraftPlanner {
         if (protectedCopies.isEmpty()) {
             return List.of();
         }
+        station.forEach((item, count) -> {
+            if (count > 0) {
+                plain.merge(item, count, Long::sum);
+            }
+        });
         Map<Item, Long> net = new HashMap<>();
         Set<Item> undetermined = new HashSet<>();
         for (CraftStep step : job.steps()) {

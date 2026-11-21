@@ -619,10 +619,12 @@ compression mods saturate at `Long.MAX_VALUE`. Counts are therefore `long` from 
   of that item (`ProducedLedger`), because some mods alter an item right after it is inserted —
   and except the **protected tier** (issue #40): enchanted and/or renamed (never damaged) stacks
   the player holds may be planned and consumed, but only for a job the player explicitly confirmed
-  (the protected start packet; the preview says which special items would be used), only after the
-  plain pool — inventory, then an open station — fell short, and always after every plain copy of
-  the same item both at planning and at every pick. A plain stack always wins; damaged stacks are
-  never protected material.
+  (the protected start packet; the preview says which special items would be used) and only once
+  the plain pool — inventory, then an open station — fell short. At planning the protected stacks
+  are simply counted alongside the plain ones (a plan that consumes one is exactly a plan the
+  plain pool could not cover); the plain-before-protected order itself is the executor's rule,
+  per job and per cell at every pick, so a plain copy of the same item always wins there. Damaged
+  stacks are never protected material.
   Rejected copies the player held before the job produced anything are the player's own: the
   ledger records that count per exact variant (item + damage/meta + NBT/components) over all the
   player's holdings (their inventory including armour and offhand, the cursor, and the open

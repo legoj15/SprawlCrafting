@@ -506,10 +506,10 @@ public final class CraftExecutor {
      * {@code withNetwork}, also holds the open network terminal's stock. Only {@link #craftOnce}
      * passes true: it is the one consumer that {@link #prepareNetwork extracts} its network picks
      * before taking them. The grid placer's {@link Assignment#take} never sees a network source.
-     * The pool is built once and pooled from the start (unlike the modern tree's separate
-     * inventory-only pass), so a protected job with a station chest or terminal open is already the
-     * "pooled assignment" the #40 rule wants: its per-source order keeps every plain copy — the
-     * player's, the chest's, the network's — ahead of any protected one.
+     * The pool is built once and pooled from the start (unlike the 1.16.5 executor's separate
+     * inventory-only pass in its {@code prepare}), so a protected job with a station chest or
+     * terminal open is already the "pooled assignment" the #40 rule wants: its per-source order
+     * keeps every plain copy — the player's, the chest's, the network's — ahead of any protected one.
      */
     private static Assignment assign(EntityPlayer player, List<Ingredient> ingredients,
                                      ProducedLedger<ItemKey, LedgerVariant> ledger, boolean withNetwork,

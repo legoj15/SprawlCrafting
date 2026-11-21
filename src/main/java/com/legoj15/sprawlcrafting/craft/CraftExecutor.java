@@ -414,8 +414,10 @@ public final class CraftExecutor {
         // drain is min(k*m, outstanding less keep), exactly the total of k per-craft drains of m
         // against the same frozen keep. A protected-planned job's protected stacks are plain
         // material in exactly that sense ({@link #assignPass} records their picks as plain and
-        // {@link #countRefused} keeps them out of the ledger's refused baseline), so they do not
-        // block batching; damaged stacks always do. (The lookups above ran before anything was
+        // {@link #countRefused} keeps them out of the ledger's refused baseline) — but a batch
+        // still never consumes one: a protected pick is a fallback pick, which clears
+        // {@code preferredFilled}, so batchPlan returns null (k = 1) and the craft runs one at a
+        // time. Damaged stacks always block batching. (The lookups above ran before anything was
         // drawn, so a throwing remainder mod cannot strand items here.)
         for (int i = 0; i < Inventory.INVENTORY_SIZE; i++) {
             ItemStack stack = inventory.getItem(i);

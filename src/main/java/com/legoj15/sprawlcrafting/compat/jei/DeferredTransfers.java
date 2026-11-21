@@ -10,14 +10,12 @@ import com.legoj15.sprawlcrafting.client.MissingIngredients;
 import com.legoj15.sprawlcrafting.client.MissingIngredientsView;
 import com.legoj15.sprawlcrafting.config.SprawlConfig;
 import com.legoj15.sprawlcrafting.craft.CraftPlanner.Craftability;
-import com.legoj15.sprawlcrafting.craft.CraftPreview;
 import com.legoj15.sprawlcrafting.craft.GridContext;
 import com.legoj15.sprawlcrafting.craft.ShortfallView;
 
 import mezz.jei.api.gui.builder.ITooltipBuilder;
 import mezz.jei.api.recipe.transfer.IRecipeTransferError;
 import net.minecraft.ChatFormatting;
-import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.item.crafting.CraftingRecipe;
 import net.minecraft.world.item.crafting.RecipeHolder;
@@ -153,30 +151,12 @@ public final class DeferredTransfers {
     }
 
     /**
-     * The special-items warning lines for {@code recipe}'s current plan at {@code grid}, or empty
-     * when the live inventory no longer needs any (the button then says the plain deferred thing
-     * only). Same per-hover cost as the gather tooltip's shortfall: one plan against the cached
-     * session. 26.x cannot solve locally (the sync only carries ids, no item names), so there the
-     * tooltip is the header plus a see-the-preview hint — the preview itself carries the full lines.
+     * The special-items warning lines for {@code recipe}'s current plan at {@code grid} —
+     * {@link com.legoj15.sprawlcrafting.client.ProtectedWarnings#lines}, the JEI-free home both
+     * viewers share (JEI is only suggested, so the REI path must not class-load JEI statics).
      */
     public static List<Component> protectedWarningLines(RecipeHolder<CraftingRecipe> recipe, GridContext grid) {
-        //? if >=1.21.11 {
-        /*return java.util.List.of(
-                Component.translatable("sprawlcrafting.preview.protected_header").withStyle(ChatFormatting.GOLD),
-                Component.translatable("sprawlcrafting.preview.protected_hint")
-                        .withStyle(ChatFormatting.GOLD, ChatFormatting.ITALIC));*/
-        //?} else {
-        Minecraft minecraft = Minecraft.getInstance();
-        if (minecraft.player == null || minecraft.level == null) {
-            return List.of();
-        }
-        if (!(DeferredCraftableCache.plan(recipe, grid)
-                instanceof com.legoj15.sprawlcrafting.craft.CraftPlanner.PlanOutcome.Planned planned)) {
-            return List.of();
-        }
-        return CraftPreview.protectedWarningLines(planned.job(), minecraft.level.getRecipeManager(),
-                minecraft.level.registryAccess(), minecraft.player.getInventory());
-        //?}
+        return com.legoj15.sprawlcrafting.client.ProtectedWarnings.lines(recipe, grid);
     }
 
     /** Clickable orange state for an unmakeable recipe: clicking opens the gather list. */
