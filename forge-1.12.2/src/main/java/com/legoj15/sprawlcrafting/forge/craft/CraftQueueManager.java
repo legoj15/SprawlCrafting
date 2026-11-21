@@ -98,8 +98,13 @@ public final class CraftQueueManager {
      * {@link CraftJob#TICKS_PER_STEP} ticks; a bulk step performs a burst of crafts
      * (bounded only by time: {@link CraftJob#BURST_BUDGET_NANOS}, and within
      * its share of the {@link CraftJob#SERVER_TICK_BURST_BUDGET_NANOS} all players split, see
-     * {@link BurstBudget}) every tick until it is done. Each craft is validated and applied by
-     * {@link CraftExecutor#craftOnce} against the live inventory, exactly as a lone craft is. A burst ends
+     * {@link BurstBudget}) every tick until it is done. Each craft is validated against the live
+     * inventory, exactly as a lone craft is: a paced step one at a time through
+     * {@link CraftExecutor#craftOnce}, a sequential bulk step in batches through
+     * {@link CraftExecutor#craftBatch} — each batch one assignment provably equal to that many
+     * single crafts, a single craft otherwise (issue #35) — and an interleaved job craft by craft
+     * ({@link CraftExecutor#craftOnce}: its schedule interleaves the steps, so one assignment never
+     * repeats). A burst ends
      * at a step boundary so the next step still waits its half second. An interleaved job runs the
      * same burst loop batch by batch across step boundaries (see {@link CraftJob#isInterleaved()}).
      */
@@ -180,11 +185,13 @@ public final class CraftQueueManager {
     }
 
     /**
-     * Performs the crafts due this tick: one for a paced step; for a bulk one, as many as fit before
-     * {@code deadline} or the step boundary (there is no count cap: the time budget alone bounds the
-     * tick). The clock is checked after a craft, never before, so a job always makes at least one
-     * craft of progress even when its {@code deadline} (nanoTime) has already passed. An interleaved
-     * job's crafts each re-derive the schedule's next batch, so one burst spans batches and steps
+     * Performs the crafts due this tick: one for a paced step; for a bulk one, batches of as many
+     * crafts as fit before {@code deadline} or the step boundary (there is no count cap: the time
+     * budget bounds the tick, checked between batches; one batch is a single unit of work whose cost
+     * is a fixed number of pool scans and inserts, not proportional to its crafts — issue #35). The
+     * clock is checked after a craft, never before, so a job always makes at least one craft of
+     * progress even when its {@code deadline} (nanoTime) has already passed. An interleaved job's
+     * crafts each re-derive the schedule's next batch, so one burst spans batches and steps
      * alike; its crafts also pass the no-room gate below, which a sequential job's never do (a bulk
      * craft's own dropped output stops it instead, and a paced craft keeps the spill-at-the-feet
      * rule this tree has always had).
@@ -246,10 +253,13 @@ public final class CraftQueueManager {
             // The drop tripwire (issue #45): a bulk step has no room pre-check here — one run before
             // the craft cannot see the slots the craft's own consumption frees, so it would refuse
             // crafts that fit — so the drop itself is the report. Forget anything dropped before
-            // this craft, then read what this one dropped after it.
+            // this craft, then read what this one dropped after it. A batch (issue #35) caps itself
+            // by proven room instead of dropping; this stays its last line of defence.
             CraftExecutor.takeDropped();
-            CraftExecutor.CraftResult result = CraftExecutor.craftOnce(player, job.currentStep().recipeId(),
-                    job.produced(), job.currentCraftLayout(), job.usesProtected());
+            CraftExecutor.CraftResult result = bulk && !job.isInterleaved()
+                    ? craftBulk(player, job)
+                    : CraftExecutor.craftOnce(player, job.currentStep().recipeId(),
+                            job.produced(), job.currentCraftLayout(), job.usesProtected());
             ItemStack dropped = CraftExecutor.takeDropped();
             if (result instanceof CraftExecutor.CraftResult.Success) {
                 CraftExecutor.CraftResult.Success success = (CraftExecutor.CraftResult.Success) result;
@@ -262,7 +272,8 @@ public final class CraftQueueManager {
                     job.setNetworkDependent(true);
                 }
                 lastCrafted = success.crafted();
-                boolean stepDone = job.onCraftPerformed();
+                // A batch's k crafts are one unit of work: the ledger records them in one go.
+                boolean stepDone = job.onCraftsPerformed(success.crafts());
                 if (job.isFinished()) {
                     ACTIVE.remove(player.getUniqueID());
                     sync(player, job, CraftProgressMessage.State.FINISHED, lastCrafted);
@@ -335,6 +346,31 @@ public final class CraftQueueManager {
         if (job.progressSyncDue()) {
             sync(player, job, CraftProgressMessage.State.CRAFTING, lastCrafted);
         }
+    }
+
+    /**
+     * One batched craft call for a sequential bulk step (issue #35): as many crafts as the step has
+     * left, except on the final step one fewer when that leaves at least 1 — the job's very last
+     * craft still goes through the grid hand-off check one craft at a time (see the top of
+     * {@link #craftBurst}) — and never more than the current layout run still holds
+     * ({@link CraftJob#craftsLeftInLayoutRun()}): the next run can change every cell's item, and
+     * one batch applies one assignment. A request of one is a plain
+     * {@link CraftExecutor#craftOnce} — {@link CraftExecutor#craftBatch} would only fall back to it
+     * anyway — and {@link CraftExecutor#craftBatch} itself caps k by whatever it cannot prove
+     * (supply, room, a repeating assignment), so this ceiling only bounds the ask.
+     */
+    private static CraftExecutor.CraftResult craftBulk(EntityPlayerMP player, CraftJob job) {
+        long maxCrafts = job.craftsLeftInStep();
+        if (job.isFinalStep() && maxCrafts > 1) {
+            maxCrafts--;
+        }
+        maxCrafts = Math.min(maxCrafts, job.craftsLeftInLayoutRun());
+        return maxCrafts <= 1
+                ? CraftExecutor.craftOnce(player, job.currentStep().recipeId(), job.produced(),
+                        job.currentCraftLayout(), job.usesProtected())
+                : CraftExecutor.craftBatch(player, job.currentStep().recipeId(), job.produced(),
+                        job.currentCraftLayout(), (int) Math.min(maxCrafts, Integer.MAX_VALUE),
+                        job.usesProtected());
     }
 
     /**

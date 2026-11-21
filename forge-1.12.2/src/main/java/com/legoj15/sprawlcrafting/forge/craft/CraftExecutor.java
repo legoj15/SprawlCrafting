@@ -34,6 +34,11 @@ import net.minecraftforge.common.crafting.IShapedRecipe;
  * item per ingredient slot, returns crafting remainders (empty buckets), and inserts the result
  * as real items (overflow drops at the player's feet). Java-8 port of the modern executor.
  *
+ * <p>A bulk sequential step also batches (issue #35): {@link #craftBatch} applies up to k crafts as
+ * ONE counted application of the assignment {@link #craftOnce} would make, valid only while every
+ * consumed stack, remainder and output provably repeats; anything unprovable runs the single craft
+ * instead, so the two paths can never disagree about what a craft does.
+ *
  * <p>This is the per-step consumption point of DESIGN.md: ingredients are re-checked against
  * reality here, every half second — the plan only predicted them.
  *
@@ -87,11 +92,18 @@ public final class CraftExecutor {
             private final ItemStack crafted;
             private final boolean usedChest;
             private final boolean usedNetwork;
+            /** How many crafts this result applied (issue #35): 1 per craftOnce, k for a batch. */
+            private final int crafts;
 
             public Success(ItemStack crafted, boolean usedChest, boolean usedNetwork) {
+                this(crafted, usedChest, usedNetwork, 1);
+            }
+
+            private Success(ItemStack crafted, boolean usedChest, boolean usedNetwork, int crafts) {
                 this.crafted = crafted;
                 this.usedChest = usedChest;
                 this.usedNetwork = usedNetwork;
+                this.crafts = crafts;
             }
 
             public ItemStack crafted() {
@@ -104,6 +116,11 @@ public final class CraftExecutor {
 
             public boolean usedNetwork() {
                 return usedNetwork;
+            }
+
+            /** How many crafts this result applied: the count {@link CraftJob#onCraftsPerformed} records. */
+            public int crafts() {
+                return crafts;
             }
         }
 
@@ -147,22 +164,33 @@ public final class CraftExecutor {
         // discovered at slot N leaves earlier matches — and the chest — untouched. chosen keeps
         // one entry per ingredient slot (-1 for a gap in the shape) so the simulation below can
         // reconstruct the grid positions.
-        InventoryPlayer inventory = player.inventory;
         Assignment assignment = assign(player, recipe.getIngredients(), ledger, true, layout, allowProtected);
         if (assignment.missing != null) {
             return new CraftResult.MissingIngredient(describe(assignment.missing));
         }
-        List<Source> sources = assignment.sources;
-        int[] chosen = assignment.chosen;
 
         // What this craft actually produces, asked of the recipe with the exact stacks about to
         // be consumed: getRecipeOutput() alone is NBT-less for input-dependent outputs and, per
         // its contract, empty for dynamic recipes — which the old early-exit misreported as
         // RecipeGone before the ingredients were even checked.
-        ItemStack result = computeResult(recipe, sources, chosen);
+        ItemStack result = computeResult(recipe, assignment.sources, assignment.chosen);
         if (result.isEmpty()) {
             return new CraftResult.RecipeGone();
         }
+        return applyOnce(player, assignment, result, ledger);
+    }
+
+    /**
+     * {@link #craftOnce}'s apply over an already matched assignment — the phases after the lookups,
+     * shared with {@link #craftBatch}'s fallback (a batch that cannot be proven runs this single
+     * craft on the plan it already made; nothing has moved yet, so the assignment is still this
+     * craft's exact choice).
+     */
+    private static CraftResult applyOnce(EntityPlayerMP player, Assignment assignment, ItemStack result,
+                                         ProducedLedger<ItemKey, LedgerVariant> ledger) {
+        List<Source> sources = assignment.sources;
+        int[] chosen = assignment.chosen;
+        InventoryPlayer inventory = player.inventory;
 
         // Phase 1b: pull every network item this craft needs out of the network up front, all or
         // nothing, so the network can no longer come up short once phase 2 starts consuming (a
@@ -223,6 +251,386 @@ public final class CraftExecutor {
             return new CraftResult.Success(crafted, usedChest, usedNetwork);
         } catch (Throwable failure) {
             returnPreparedNetworkItems(player, sources, failure);
+            for (ItemStack remainder : remainders) {
+                try {
+                    insertIntoMainInventory(player, remainder);
+                } catch (Throwable refundFailure) {
+                    failure.addSuppressed(refundFailure);
+                }
+            }
+            throw failure;
+        }
+    }
+
+    /**
+     * Up to {@code maxCrafts} crafts of the recipe as ONE operation, leaving exactly the per-item
+     * totals (inventory, chest and network), the job's ledger state, step progress and drops (none)
+     * that {@code maxCrafts} successive {@link #craftOnce} calls would (issue #35): one recipe
+     * lookup, one assignment scan, one network extraction and one insert per output instead of one
+     * of each per craft, which is what a million-craft tree was actually spending its tick on.
+     *
+     * <p>The batch applies the very assignment {@link #craftOnce} would make right now k times,
+     * which is only provable while every pick is the plain pool-order pick of the cell's preferred
+     * identity and every consumed stack stays identical (item, metadata, NBT) to the first craft's
+     * choice for its cell — the result and the remainders are computed from those exact stacks, so
+     * a variant switch mid-batch would change what a craft produces. Supply (player slots, chest,
+     * network — the network's share proven by a simulated extraction), the assignment's own
+     * repetition rule ({@link SlotAssignment#stableRepeats} over the same pooled stock the choice
+     * was made over), output room and the ledger's per-variant state each cap k; anything that
+     * cannot be proven — a fallback pick, a credited item the craft also consumes, output without
+     * room — runs a single craft instead ({@link #applyOnce}), with exactly craftOnce's result.
+     * A batch never drops at the feet: what does not provably fit caps k (the per-craft path's
+     * #45 rule is the fallback's).
+     */
+    public static CraftResult craftBatch(EntityPlayerMP player, ResourceLocation recipeId,
+                                         ProducedLedger<ItemKey, LedgerVariant> ledger, List<ItemKey> layout,
+                                         int maxCrafts, boolean allowProtected) {
+        IRecipe recipe = CraftingManager.getRecipe(recipeId);
+        if (recipe == null) {
+            return new CraftResult.RecipeGone();
+        }
+        Assignment assignment = assign(player, recipe.getIngredients(), ledger, true, layout, allowProtected);
+        if (assignment.missing != null) {
+            return new CraftResult.MissingIngredient(describe(assignment.missing));
+        }
+        ItemStack result = computeResult(recipe, assignment.sources, assignment.chosen);
+        if (result.isEmpty()) {
+            return new CraftResult.RecipeGone();
+        }
+        Batch batch = batchPlan(player, assignment, result, recipe.getIngredients(), layout, maxCrafts,
+                allowProtected);
+        if (batch == null) {
+            return applyOnce(player, assignment, result, ledger);
+        }
+        return applyBatch(player, assignment, batch, result, ledger);
+    }
+
+    /** A worked-out batch: what one craft consumes and returns, and how many crafts it stands for. */
+    private static final class Batch {
+        /** How many crafts this batch applies (at least 2). */
+        final int crafts;
+        /** Per preferred {@link ItemKey}: the exact stack every craft consumes (the first craft's pick). */
+        final Map<ItemKey, ItemStack> identity;
+        /** Per preferred {@link ItemKey}: how many cells of one craft take it. */
+        final Map<ItemKey, Long> use;
+        /** Per-craft remainder totals, grouped by exact remainder stack (identical groups merged). */
+        final List<ItemStack> remainders;
+        final List<Long> remainderCounts;
+        /** The network's share of the whole batch, per network source (extracted all-or-nothing). */
+        final Map<NetworkSource, Integer> networkTakes;
+
+        Batch(int crafts, Map<ItemKey, ItemStack> identity, Map<ItemKey, Long> use,
+              List<ItemStack> remainders, List<Long> remainderCounts, Map<NetworkSource, Integer> networkTakes) {
+            this.crafts = crafts;
+            this.identity = identity;
+            this.use = use;
+            this.remainders = remainders;
+            this.remainderCounts = remainderCounts;
+            this.networkTakes = networkTakes;
+        }
+    }
+
+    /**
+     * Works out the batch of up to {@code maxCrafts} crafts, or null when this call may not batch
+     * (k = 1: the caller's {@link #applyOnce}). Every cap below is chosen so the batch's final state
+     * is exactly k single crafts': the pick rule (plain tier-1 of the preferred identity, the
+     * assignment's {@code preferredFilled}), the identity of every consumed stack (the pool-order drain of
+     * copies identical to the first craft's pick), {@link SlotAssignment#stableRepeats} over the
+     * assignment's own stock view, live network supply, int safety and output room.
+     */
+    private static Batch batchPlan(EntityPlayerMP player, Assignment assignment, ItemStack result,
+                                   List<Ingredient> ingredients, List<ItemKey> layout,
+                                   int maxCrafts, boolean allowProtected) {
+        if (maxCrafts <= 1 || !assignment.preferredFilled) {
+            return null; // a fallback pick (a ledger-admitted, protected or any-plain match) depends on
+            // more than the shared pool order; k single crafts would not repeat it provably.
+        }
+        // A carried layout must be the one this assignment honoured: the per-craft path re-checks the
+        // layout against the live stock before every craft, so a stock that has drifted back over the
+        // layout's use would switch a later craft to the layout's items while the batch repeats this
+        // assignment — a re-check the repetition proof below does not model. A null layout (a step
+        // without one) chose with SlotAssignment alone and keeps the plain proof.
+        if (layout != null && !assignment.layoutHonored) {
+            return null;
+        }
+        List<Source> sources = assignment.sources;
+        Map<ItemKey, Long> use = new LinkedHashMap<ItemKey, Long>();
+        Map<ItemKey, ItemStack> identity = new LinkedHashMap<ItemKey, ItemStack>();
+        List<List<ItemKey>> slots = new ArrayList<List<ItemKey>>();
+        Set<ItemKey> candidates = new HashSet<ItemKey>();
+        for (int n = 0; n < ingredients.size(); n++) {
+            Ingredient ingredient = ingredients.get(n);
+            if (ingredient == null || ingredient == Ingredient.EMPTY) {
+                continue;
+            }
+            ItemKey preferred = assignment.preferred[n];
+            ItemStack picked = sources.get(assignment.chosen[n]).peek();
+            // Every cell sharing a preferred identity must share its exact picked stack too: the
+            // batch repeats ONE stack per cell (result and remainders are computed from it), and two
+            // NBT variants under one ItemKey would make a later craft's output differ from the first's.
+            ItemStack same = identity.get(preferred);
+            if (same == null) {
+                identity.put(preferred, picked);
+            } else if (!sameItem(same, picked)) {
+                return null;
+            }
+            use.merge(preferred, 1L, Long::sum);
+            List<ItemKey> alternatives = CraftPlanner.slotAlternatives(ingredient);
+            slots.add(alternatives);
+            candidates.addAll(alternatives);
+        }
+        // The remainders every craft returns, from the exact consumed stacks (identical across the
+        // batch, so one lookup stands for all k). Looked up before anything is drawn, so a throwing
+        // container-item mod cannot strand extracted items.
+        List<ItemStack> remainders = new ArrayList<ItemStack>();
+        List<Long> remainderCounts = new ArrayList<Long>();
+        for (Map.Entry<ItemKey, ItemStack> pick : identity.entrySet()) {
+            ItemStack one = pick.getValue().copy();
+            one.setCount(1);
+            Item item = one.getItem();
+            if (!item.hasContainerItem(one)) {
+                continue;
+            }
+            ItemStack remainder = item.getContainerItem(one);
+            if (remainder.isEmpty()) {
+                continue;
+            }
+            long perCraft = use.get(pick.getKey());
+            boolean merged = false;
+            for (int g = 0; g < remainders.size(); g++) {
+                if (sameItem(remainders.get(g), remainder)) {
+                    remainderCounts.set(g, remainderCounts.get(g) + perCraft);
+                    merged = true;
+                    break;
+                }
+            }
+            if (!merged) {
+                remainders.add(remainder);
+                remainderCounts.add(perCraft);
+            }
+        }
+        // A craft credited an item it also consumes (its own result in a slot, or a remainder equal to
+        // an input) cannot batch: each single craft applies and inserts its output BEFORE the next
+        // craft assigns, so craft i draws stock craft i-1 just put back — an interleave one counted
+        // application cannot reproduce exactly.
+        Map<ItemKey, Long> made = new LinkedHashMap<ItemKey, Long>();
+        for (int g = 0; g < remainders.size(); g++) {
+            made.merge(ItemKey.of(remainders.get(g)), remainderCounts.get(g), Long::sum);
+        }
+        int perResult = Math.max(1, result.getCount());
+        made.merge(ItemKey.of(result), (long) perResult, Long::sum);
+        for (ItemKey credited : made.keySet()) {
+            if (use.containsKey(credited)) {
+                return null;
+            }
+        }
+        for (ItemStack remainder : remainders) {
+            if (ItemKey.of(remainder).equals(ItemKey.of(result))) {
+                return null; // the result's and the remainder's room proofs would count the same stacks
+            }
+        }
+        // No refused stack of a candidate identity — or of any item a cell's ingredient would still
+        // test-accept — may sit in the pool. With one there the ledger holds counts against items the
+        // batch consumes, and both ledger-only ways an assignment stops provably repeating open up:
+        // an admitted altered pick draws per-variant headroom one craft at a time, which item totals
+        // cannot reproduce, and the #26 preference stock counts exactly those stacks
+        // ({@link #countAdmitted}), so a choice fed by headroom cannot be repeated from item counts.
+        // With none of them every pick is plain, and one counted charge of k*m equals k charges of m
+        // (the refused baseline the charge reads cannot move while only plain stacks are consumed).
+        // Protected stacks of a protected-planned job are plain material in exactly that sense, but a
+        // batch drains only copies identical to the first craft's plain pick, so they never enter.
+        for (Source source : sources) {
+            ItemStack stack = source.peek();
+            if (!stack.isEmpty() && !usableAsIngredient(stack, allowProtected)
+                    && (candidates.contains(ItemKey.of(stack)) || acceptedByAny(ingredients, stack))) {
+                return null;
+            }
+        }
+        final Map<ItemKey, Integer> stock = assignment.stock;
+        long k = SlotAssignment.stableRepeats(slots, key -> {
+            Integer have = stock.get(key);
+            return have == null ? 0L : have.longValue();
+        }, use, made, maxCrafts);
+        for (long perCraft : use.values()) {
+            k = Math.min(k, Integer.MAX_VALUE / perCraft); // ledger charges and drains are int-sized
+        }
+        k = Math.min(k, Integer.MAX_VALUE / perResult);
+        for (long perCraft : remainderCounts) {
+            k = Math.min(k, Integer.MAX_VALUE / perCraft); // summed remainders insert as one int stack
+        }
+        // k crafts drain, per identity, the pool's plain copies identical to the first craft's pick,
+        // in pool order — every single craft's tier-1 pick walks the same sources from the front. The
+        // batch is that drain only while every copy it takes is identical: a different NBT variant
+        // under the same ItemKey would change the result computed from the consumed stacks, and a
+        // protected or refused copy would change the pick tier. Non-matching and non-plain sources
+        // never stop the drain: the per-craft pick skips them while identical copies remain beyond.
+        InventoryPlayer inventory = player.inventory;
+        Map<ItemKey, Long> ownCopies = new LinkedHashMap<ItemKey, Long>();
+        Map<ItemKey, NetworkSource> suppliers = new LinkedHashMap<ItemKey, NetworkSource>();
+        for (Map.Entry<ItemKey, ItemStack> pick : identity.entrySet()) {
+            ItemKey key = pick.getKey();
+            ItemStack stack = pick.getValue();
+            long perCraft = use.get(key);
+            long own = 0; // identical copies ahead of the network: the player's slots, then the chest
+            NetworkSource supplier = null; // one network source per stored identity
+            long networkCount = 0;
+            for (Source source : sources) {
+                ItemStack held = source.peek();
+                if (held.isEmpty() || !key.equals(ItemKey.of(held)) || !usableAsIngredient(held)) {
+                    continue;
+                }
+                if (!sameItem(held, stack)) {
+                    break; // the drain would reach a different variant: k must stop before it
+                }
+                if (source instanceof NetworkSource) {
+                    supplier = (NetworkSource) source;
+                    networkCount = held.getCount();
+                } else {
+                    own += held.getCount();
+                }
+            }
+            ownCopies.put(key, own);
+            if (supplier != null) {
+                suppliers.put(key, supplier);
+            }
+            k = Math.min(k, (own + networkCount) / perCraft);
+            if (supplier != null) {
+                // The listing's count is a cache; only a simulated extraction proves the network can
+                // hand the share over (power, a concurrent export bus). A short answer caps k to what
+                // is provable; a later, smaller k only shrinks earlier shares, which stay covered.
+                long share = k * perCraft - Math.min(k * perCraft, own);
+                if (share > 0) {
+                    long got = supplier.network.extract(supplier.template,
+                            (int) Math.min(share, Integer.MAX_VALUE), true);
+                    if (got < share) {
+                        k = Math.min(k, (own + got) / perCraft);
+                    }
+                }
+            }
+        }
+        // Output room, read before anything moves (conservative: slots the batch's own consumption
+        // frees are not counted). The result may have the empty slots and the network — the network
+        // only for the whole overflow a simulated insert proves it takes; anything less caps k so the
+        // result fits the main inventory alone. Each remainder gets its own partial stacks' merge
+        // room only, so two outputs never count the same free space.
+        long room = inventoryRoom(inventory, result, true);
+        NetworkTerminals.View network = NetworkTerminals.view(player);
+        if (k * perResult > room) {
+            boolean proven = false;
+            if (network != null) {
+                ItemStack overflow = result.copy();
+                overflow.setCount((int) Math.min(k * perResult - room, Integer.MAX_VALUE));
+                try {
+                    proven = network.accepts(overflow);
+                } catch (RuntimeException | LinkageError e) {
+                    LogManager.getLogger("SprawlCrafting")
+                            .warn("SprawlCrafting: network room probe failed, not batching into it", e);
+                }
+            }
+            if (!proven) {
+                k = Math.min(k, room / perResult);
+            }
+        }
+        if (!remainders.isEmpty()) {
+            if (network == null) {
+                return null; // remainders could drop at the feet (no network open to catch them); one
+                // craft keeps that the per-craft path's own rule.
+            }
+            for (int g = 0; g < remainders.size(); g++) {
+                k = Math.min(k, inventoryRoom(inventory, remainders.get(g), false) / remainderCounts.get(g));
+            }
+        }
+        if (k <= 1) {
+            return null;
+        }
+        // The network's share of the final k, per identity: what the pool's own copies cannot cover.
+        Map<NetworkSource, Integer> networkTakes = new LinkedHashMap<NetworkSource, Integer>();
+        for (Map.Entry<ItemKey, ItemStack> pick : identity.entrySet()) {
+            NetworkSource supplier = suppliers.get(pick.getKey());
+            if (supplier == null) {
+                continue;
+            }
+            long perCraft = use.get(pick.getKey());
+            long share = k * perCraft - Math.min(k * perCraft, ownCopies.get(pick.getKey()));
+            if (share > 0) {
+                networkTakes.put(supplier, (int) Math.min(share, Integer.MAX_VALUE));
+            }
+        }
+        return new Batch((int) k, identity, use, remainders, remainderCounts, networkTakes);
+    }
+
+    /**
+     * Applies a worked-out batch: the single craft's phases ({@link #applyOnce}), scaled to k crafts.
+     * The network's share is extracted all-or-nothing first, exactly as one craft's
+     * {@link #prepareNetwork}; a short draw has been refunded and the whole call falls back to the
+     * single craft, whose own preparation then reports the item missing (or succeeds — the network
+     * may still cover one craft).
+     */
+    private static CraftResult applyBatch(EntityPlayerMP player, Assignment assignment, Batch batch,
+                                          ItemStack result, ProducedLedger<ItemKey, LedgerVariant> ledger) {
+        ItemStack networkShort = extractNetwork(player, batch.networkTakes);
+        if (!networkShort.isEmpty()) {
+            return applyOnce(player, assignment, result, ledger);
+        }
+        InventoryPlayer inventory = player.inventory;
+        List<ItemStack> remainders = new ArrayList<ItemStack>();
+        for (int g = 0; g < batch.remainders.size(); g++) {
+            ItemStack stack = batch.remainders.get(g).copy();
+            stack.setCount((int) Math.min((long) batch.crafts * batch.remainderCounts.get(g),
+                    Integer.MAX_VALUE));
+            remainders.add(stack);
+        }
+        ItemStack resultOut = result.copy();
+        resultOut.setCount((int) Math.min((long) batch.crafts * Math.max(1, result.getCount()),
+                Integer.MAX_VALUE));
+        try {
+            // Charged before anything is consumed: the counted picks read each cell's exact stack
+            // (its ledger key), and a source the drain empties below would have nothing left to read.
+            // The charge itself touches only the tally and ledger, never the pool.
+            assignment.chargeCraftsTo(ledger, batch.crafts);
+            boolean touchedExternal = false;
+            boolean usedChest = false;
+            boolean usedNetwork = false;
+            for (Map.Entry<ItemKey, ItemStack> pick : batch.identity.entrySet()) {
+                ItemKey key = pick.getKey();
+                ItemStack stack = pick.getValue();
+                long need = (long) batch.crafts * batch.use.get(key);
+                for (Source source : assignment.sources) {
+                    if (need <= 0) {
+                        break;
+                    }
+                    ItemStack held = source.peek();
+                    if (held.isEmpty() || !key.equals(ItemKey.of(held)) || !usableAsIngredient(held)) {
+                        continue; // never a tier-1 pick; the drain skips it
+                    }
+                    if (!sameItem(held, stack)) {
+                        break; // a different variant: k was capped to stop before it (defensive here)
+                    }
+                    int take = (int) Math.min(need, held.getCount());
+                    source.consume(take);
+                    need -= take;
+                    touchedExternal |= source.isExternal();
+                    usedChest |= source.isChest();
+                    usedNetwork |= source instanceof NetworkSource;
+                }
+            }
+            inventory.markDirty();
+            ItemStack crafted = result.copy();
+            // The result before the remainders: the plan gave only the result the empty slots and the
+            // network's proven share, so a remainder inserted first could take space the result was
+            // promised. Totals are the same either way (each output fits its own promised room).
+            usedNetwork |= insertIntoMainInventory(player, resultOut);
+            // Removed before inserting, so the failure path never hands one out twice.
+            while (!remainders.isEmpty()) {
+                usedNetwork |= insertIntoMainInventory(player, remainders.remove(0));
+            }
+            ledger.produced(ledgerKey(crafted), (long) batch.crafts * crafted.getCount());
+            if (touchedExternal) {
+                player.openContainer.detectAndSendChanges();
+            }
+            return new CraftResult.Success(crafted, usedChest, usedNetwork, batch.crafts);
+        } catch (Throwable failure) {
+            returnPreparedNetworkItems(player, assignment.sources, failure);
             for (ItemStack remainder : remainders) {
                 try {
                     insertIntoMainInventory(player, remainder);
@@ -356,7 +764,8 @@ public final class CraftExecutor {
      * which is the safe direction (a no routes the craft to the engine).
      */
     private static boolean canCraftFrom(List<Source> sources, List<Ingredient> ingredients) {
-        ItemKey[] preferred = preferredKeys(sources, ingredients, null, null, false); // a direct craft has no plan layout
+        // a direct craft has no plan layout
+        ItemKey[] preferred = preferredKeys(sources, ingredients, null, null, false).preferred;
         int[] reserved = new int[sources.size()];
         for (int i = 0; i < ingredients.size(); i++) {
             Ingredient ingredient = ingredients.get(i);
@@ -444,6 +853,18 @@ public final class CraftExecutor {
         if (needed == null) {
             return ItemStack.EMPTY;
         }
+        return extractNetwork(player, needed);
+    }
+
+    /**
+     * Extracts each network source's {@code needed} count, all or nothing: every extraction is
+     * simulated first (no side effects on a shortfall), then done for real; a real extraction that
+     * still comes up short (power, a concurrent export bus between the two calls) puts everything
+     * already extracted back — or, should the network refuse it, into the player's inventory, never
+     * the void. Returns EMPTY on success, else a stack naming the short item. Both {@link #applyOnce}
+     * (one craft's picks) and {@link #applyBatch} (the whole batch's share) run through here.
+     */
+    private static ItemStack extractNetwork(EntityPlayer player, Map<NetworkSource, Integer> needed) {
         for (Map.Entry<NetworkSource, Integer> entry : needed.entrySet()) {
             NetworkSource source = entry.getKey();
             if (source.network.extract(source.template, entry.getValue(), true) < entry.getValue()) {
@@ -545,8 +966,13 @@ public final class CraftExecutor {
             countRefused(player, sources, tally, allowProtected);
             tally.open(ledger);
         }
-        ItemKey[] preferred = preferredKeys(sources, ingredients, layout,
+        CellChoice choice = preferredKeys(sources, ingredients, layout,
                 ledger != null && admittedPreference ? tally : null, allowProtected);
+        ItemKey[] preferred = choice.preferred;
+        // Whether every non-empty cell took its preferred identity straight from the pool's plain
+        // stock, in pool order (no fallback tier): only such a pick is a function of the item counts
+        // alone, which is what a batch's k-fold repetition proof needs (issue #35).
+        boolean preferredFilled = true;
         for (int i = 0; i < chosen.length; i++) {
             Ingredient ingredient = ingredients.get(i);
             if (ingredient == null || ingredient == Ingredient.EMPTY) {
@@ -556,8 +982,12 @@ public final class CraftExecutor {
             int idx = findMatchingSource(sources, ingredient, preferred[i], reserved, ledger == null ? null : tally,
                     admittedPreference, allowProtected);
             if (idx < 0) {
-                return new Assignment(sources, chosen, tally, ingredient);
+                return new Assignment(sources, chosen, tally, ingredient, choice, preferredFilled);
             }
+            // Read before the reservation below raises it: the plain tier-1 pick of the preferred
+            // identity this cell could have made, the one pick a batch can repeat.
+            preferredFilled &= preferred[i] != null
+                    && idx == findPreferredPlainSource(sources, ingredient, preferred[i], reserved);
             reserved[idx]++;
             chosen[i] = idx;
             if (ledger != null) {
@@ -569,7 +999,7 @@ public final class CraftExecutor {
                 tally.picked(ledgerKey(stack), refused ? variantOf(stack) : null, refused);
             }
         }
-        return new Assignment(sources, chosen, tally, null);
+        return new Assignment(sources, chosen, tally, null, choice, preferredFilled);
     }
 
     /**
@@ -635,13 +1065,25 @@ public final class CraftExecutor {
         private final int[] chosen;
         private final LedgerTally<ItemKey, LedgerVariant> tally;
         private final Ingredient missing;
+        /** {@link #preferredKeys}'s answer for the pass that made this assignment (issue #35). */
+        private final ItemKey[] preferred;
+        /** The pooled stock {@link #preferred} was chosen over — {@link SlotAssignment#stableRepeats}'s view. */
+        private final Map<ItemKey, Integer> stock;
+        /** Whether a carried plan layout is the choice this assignment honoured. */
+        private final boolean layoutHonored;
+        /** Whether every non-empty cell took its preferred identity as a plain pool-order pick. */
+        private final boolean preferredFilled;
 
         private Assignment(List<Source> sources, int[] chosen, LedgerTally<ItemKey, LedgerVariant> tally,
-                           Ingredient missing) {
+                           Ingredient missing, CellChoice choice, boolean preferredFilled) {
             this.sources = sources;
             this.chosen = chosen;
             this.tally = tally;
             this.missing = missing;
+            this.preferred = choice.preferred;
+            this.stock = choice.stock;
+            this.layoutHonored = choice.layoutHonored;
+            this.preferredFilled = preferredFilled;
         }
 
         boolean complete() {
@@ -662,6 +1104,41 @@ public final class CraftExecutor {
 
         void chargeTo(ProducedLedger<ItemKey, LedgerVariant> ledger) {
             tally.chargeTo(ledger);
+        }
+
+        /**
+         * {@code crafts} crafts' ledger charge in one go: the single-craft picks this assignment
+         * already recorded, plus {@code crafts - 1} more per cell, then one charge. Equal to that
+         * many per-craft charges because a batch runs only on plain tier-1 picks over a refused
+         * baseline only plain consumption cannot move (see {@link #chargeTo}'s keep rule). Run
+         * before any consumption: the counted picks read each cell's live stack for its ledger key.
+         */
+        void chargeCraftsTo(ProducedLedger<ItemKey, LedgerVariant> ledger, int crafts) {
+            if (crafts > 1) {
+                for (int i = 0; i < chosen.length; i++) {
+                    if (chosen[i] >= 0) {
+                        tally.picked(ledgerKey(sources.get(chosen[i]).peek()), null, false, crafts - 1);
+                    }
+                }
+            }
+            chargeTo(ledger);
+        }
+    }
+
+    /**
+     * {@link #preferredKeys}'s answer: the per-cell identities, the pooled stock they were chosen
+     * over, and whether a carried plan layout was honoured (null layout, or one that no longer fits,
+     * falls back to {@link SlotAssignment} — the caller decides what that means).
+     */
+    private static final class CellChoice {
+        private final ItemKey[] preferred;
+        private final Map<ItemKey, Integer> stock;
+        private final boolean layoutHonored;
+
+        CellChoice(ItemKey[] preferred, Map<ItemKey, Integer> stock, boolean layoutHonored) {
+            this.preferred = preferred;
+            this.stock = stock;
+            this.layoutHonored = layoutHonored;
         }
     }
 
@@ -725,9 +1202,9 @@ public final class CraftExecutor {
      * source (issue #49), exactly the two pool positions {@link #findProtectedSource} scans; the
      * station chest and the grid stay plain pools either way.
      */
-    private static ItemKey[] preferredKeys(List<Source> sources, List<Ingredient> ingredients,
-                                           List<ItemKey> layout, LedgerTally<ItemKey, LedgerVariant> admitting,
-                                           boolean allowProtected) {
+    private static CellChoice preferredKeys(List<Source> sources, List<Ingredient> ingredients,
+                                            List<ItemKey> layout, LedgerTally<ItemKey, LedgerVariant> admitting,
+                                            boolean allowProtected) {
         Map<ItemKey, Integer> stock = new HashMap<ItemKey, Integer>();
         for (Source source : sources) {
             ItemStack stack = source.peek();
@@ -762,9 +1239,9 @@ public final class CraftExecutor {
                     preferred[n] = layout.get(s++);
                 }
             }
-            return preferred;
+            return new CellChoice(preferred, stock, true);
         }
-        return SlotAssignment.assignCells(cells, stock).toArray(new ItemKey[0]);
+        return new CellChoice(SlotAssignment.assignCells(cells, stock).toArray(new ItemKey[0]), stock, false);
     }
 
     /**
@@ -858,12 +1335,9 @@ public final class CraftExecutor {
                                           int[] reserved, LedgerTally<ItemKey, LedgerVariant> tally,
                                           boolean admittedPreference, boolean allowProtected) {
         if (preferred != null) {
-            for (int i = 0; i < sources.size(); i++) {
-                ItemStack stack = sources.get(i).peek();
-                if (!stack.isEmpty() && stack.getCount() - reserved[i] > 0 && preferred.equals(ItemKey.of(stack))
-                        && usableAsIngredient(stack) && ingredient.apply(stack)) {
-                    return i;
-                }
+            int plain = findPreferredPlainSource(sources, ingredient, preferred, reserved);
+            if (plain >= 0) {
+                return plain;
             }
             if (tally != null && admittedPreference) {
                 // The job's altered copy of the identity the rule chose (#26), before any alternative
@@ -926,6 +1400,24 @@ public final class CraftExecutor {
     }
 
     /**
+     * The first unreserved plain stack of {@code preferred} in pool order that the ingredient
+     * accepts, or -1: tier 1 of {@link #findMatchingSource}'s pick order, and the one rule a batch
+     * repeats k times — a pick any later tier makes depends on more than the pool's item counts
+     * (issue #35).
+     */
+    private static int findPreferredPlainSource(List<Source> sources, Ingredient ingredient, ItemKey preferred,
+                                                int[] reserved) {
+        for (int i = 0; i < sources.size(); i++) {
+            ItemStack stack = sources.get(i).peek();
+            if (!stack.isEmpty() && stack.getCount() - reserved[i] > 0 && preferred.equals(ItemKey.of(stack))
+                    && usableAsIngredient(stack) && ingredient.apply(stack)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /**
      * The first unreserved protected stack ({@link #isProtected}) the ingredient accepts — of
      * {@code preferred} when non-null, else of any identity — or -1. The player's main-slot sources
      * are scanned first, then — with a network crafting terminal open — the network's stored
@@ -975,6 +1467,17 @@ public final class CraftExecutor {
         /** Remove one item. Never called more times than {@link #peek}'s count, per the ledger. */
         void consumeOne();
 
+        /**
+         * Removes {@code count} items at once — a batch's drain (issue #35); the same pool state as
+         * that many {@link #consumeOne} calls, without paying per-item call overhead on a
+         * million-craft step.
+         */
+        default void consume(int count) {
+            for (int i = 0; i < count; i++) {
+                consumeOne();
+            }
+        }
+
         boolean isExternal();
 
         /** A station's connected side inventory (its chest), as opposed to the crafting grid or the player. */
@@ -999,6 +1502,15 @@ public final class CraftExecutor {
         public void consumeOne() {
             ItemStack stack = inventory.mainInventory.get(slot);
             stack.shrink(1);
+            if (stack.isEmpty()) {
+                inventory.mainInventory.set(slot, ItemStack.EMPTY);
+            }
+        }
+
+        @Override
+        public void consume(int count) {
+            ItemStack stack = inventory.mainInventory.get(slot);
+            stack.shrink(count);
             if (stack.isEmpty()) {
                 inventory.mainInventory.set(slot, ItemStack.EMPTY);
             }
@@ -1030,6 +1542,13 @@ public final class CraftExecutor {
         @Override
         public void consumeOne() {
             slot.decrStackSize(1);
+        }
+
+        @Override
+        public void consume(int count) {
+            if (count > 0) {
+                slot.decrStackSize(count);
+            }
         }
 
         @Override
@@ -1078,12 +1597,26 @@ public final class CraftExecutor {
             if (prepared > 0) {
                 prepared--;
             } else if (network.extract(template, 1, false) < 1) {
-                // Unreachable by construction: only craftOnce builds network sources, and it prepares
-                // every pick before consuming. Never let a miss pass silently all the same.
+                // Unreachable by construction: only the craft paths build network sources, and they
+                // prepare every pick before consuming. Never let a miss pass silently all the same.
                 LogManager.getLogger("SprawlCrafting")
                         .warn("Network source consumed without a prepared item: {}", template);
             }
             view.shrink(1);
+        }
+
+        @Override
+        public void consume(int count) {
+            int fromPrepared = Math.min(count, prepared);
+            prepared -= fromPrepared;
+            int rest = count - fromPrepared;
+            if (rest > 0 && network.extract(template, rest, false) < rest) {
+                // As in consumeOne: a batch extracts its whole share up front, so this too is
+                // unreachable by construction — and never silent.
+                LogManager.getLogger("SprawlCrafting")
+                        .warn("Network source consumed without a prepared item: {}", template);
+            }
+            view.shrink(count);
         }
 
         /** Returns prepared-but-unconsumed items to the network; whatever it refuses goes to the player. */
@@ -1349,6 +1882,29 @@ public final class CraftExecutor {
             }
         }
         return (int) Math.min(room, stack.getCount());
+    }
+
+    /**
+     * Room for copies of {@code stack} in the 36 main slots: the free space of sameItem stacks and,
+     * when {@code emptySlots}, one max stack per empty slot. Read before any consumption moves
+     * anything — {@link #batchPlan}'s view, deliberately an underestimate (slots the batch's own
+     * consumption frees are not counted) so what it bounds can never spill; the network's share is
+     * the caller's to prove separately.
+     */
+    private static long inventoryRoom(InventoryPlayer inventory, ItemStack stack, boolean emptySlots) {
+        long room = 0;
+        int max = Math.max(1, stack.getMaxStackSize());
+        for (int i = 0; i < MAIN; i++) {
+            ItemStack existing = inventory.mainInventory.get(i);
+            if (existing.isEmpty()) {
+                if (emptySlots) {
+                    room += max;
+                }
+            } else if (sameItem(existing, stack)) {
+                room += Math.max(0, max - existing.getCount());
+            }
+        }
+        return room;
     }
 
     /** Same item, same metadata, same NBT — count-independent (for merge/fit checks). */
