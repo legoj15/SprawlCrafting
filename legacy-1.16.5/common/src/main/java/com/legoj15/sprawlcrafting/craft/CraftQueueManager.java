@@ -208,7 +208,10 @@ public final class CraftQueueManager {
                                 job.targetResult().getHoverName()).withStyle(TextFormatting.GREEN));
                         return;
                     }
-                    if (stepDone || !bulk) {
+                    // An interleaved job's slice boundaries are not step boundaries: a round visits every
+                    // step, so ending the burst at each slice would cap the job at one slice per tick.
+                    // Its bursts run to the time budget across slices and report on the half-second cadence.
+                    if ((stepDone && !job.isInterleaved()) || !bulk) {
                         // A step boundary, or the one craft a paced step does per due tick: report it now
                         // (progress bar + step sound), exactly as every craft was reported before bursts. A boundary
                         // into another bulk step is the exception: batching finishes a bulk step in one tick and the

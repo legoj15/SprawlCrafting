@@ -323,6 +323,11 @@ public final class CraftJob {
         return interleaved || currentStep().crafts() > BULK_THRESHOLD;
     }
 
+    /** Whether this job runs in rounds (some step exceeds {@link #ROUND_CRAFTS}); see {@link RoundSchedule}. */
+    public boolean isInterleaved() {
+        return interleaved;
+    }
+
     /**
      * The current step cannot run now (its ingredients are not there yet): an interleaved job skips
      * it for the rest of this round — the shortage is a rounding/ordering lag a later round repays —
