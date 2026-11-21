@@ -626,7 +626,9 @@ compression mods saturate at `Long.MAX_VALUE`. Counts are therefore `long` from 
   probe is the batched strategy alone, so that proves nothing and the answer stays "too complex"
   (known cost: a real shortage on a slot with a choice of items, in a tree past the int cap, also
   reads "too complex"). The probe runs with every re-ask first, since a generating cycle needs
-  them; only if that runs out of budget does the leftover-skipping probe answer. A
+  them; only if that runs out of budget does the leftover-skipping probe answer, and its
+  shortfall verdict is then a heuristic (it can be false for a generating cycle in a tree that
+  also exhausts the full probe). A
   probe success names the recipes a plan uses, and a guided batched pass plans over only those
   (no dead-end candidate such as ingot-from-block retried per batch); its kept steps cost no
   attempts and `maxSteps` (default 16,384, about 3.5e13 crafts of one recipe) bounds it. Past
