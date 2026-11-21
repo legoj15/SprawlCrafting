@@ -643,6 +643,11 @@ public final class CraftExecutor {
                     usedChest |= source.isChest();
                     usedNetwork |= source instanceof NetworkSource;
                 }
+                if (need > 0) {
+                    // The pre-pass proved coverage; reaching here means it drifted from this loop.
+                    // Fail loud rather than hand out k results for short inputs.
+                    throw new IllegalStateException("SprawlCrafting batch drain short by " + need + " of " + key);
+                }
             }
             inventory.markDirty();
             drained = true;

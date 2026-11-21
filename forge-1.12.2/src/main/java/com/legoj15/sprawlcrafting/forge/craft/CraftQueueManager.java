@@ -105,8 +105,7 @@ public final class CraftQueueManager {
      * single crafts, a single craft otherwise (issue #35) — and an interleaved job craft by craft
      * ({@link CraftExecutor#craftOnce}: its schedule interleaves the steps, so one assignment never
      * repeats). A burst ends at a step boundary so the next step still waits its half second. An
-     * interleaved job runs the
-     * same burst loop batch by batch across step boundaries (see {@link CraftJob#isInterleaved()}).
+     * interleaved job runs the same burst loop batch by batch across step boundaries (see {@link CraftJob#isInterleaved()}).
      */
     public static void tick(EntityPlayerMP player) {
         CraftJob job = ACTIVE.get(player.getUniqueID());
