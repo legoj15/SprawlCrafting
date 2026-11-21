@@ -283,3 +283,12 @@ tasks.withType(JavaCompile).configureEach {
                 'an obfuscated install until this is present.', mcpToSrgFile)
     }
 }
+
+// Test harness hook (dev runs only): -Psc.connect=host:port makes runClient join that server at startup
+// through vanilla 1.12.2's own --server/--port launch arguments (the modern nodes' quick-play hook).
+if (project.hasProperty('sc.connect')) {
+    def target = project.property('sc.connect').toString().split(':')
+    tasks.named('runClient').configure {
+        args('--server', target[0], '--port', target.length > 1 ? target[1] : '25565')
+    }
+}
