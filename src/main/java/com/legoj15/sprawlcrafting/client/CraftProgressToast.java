@@ -152,8 +152,8 @@ public class CraftProgressToast implements Toast {
         int y = 27;
         guiGraphics.fill(left, y, right, y + 2, BAR_BACK_COLOR);
         if (job.total() > 0) {
-            // Ratio in double from the long counts (#46): int math would overflow on a job past
-            // Integer.MAX_VALUE crafts long before the cast.
+            // Ratio in double from the long counts (#46): float's 24-bit mantissa loses the
+            // low digits of a real over-int count.
             int filled = (int) ((right - left) * ((double) job.done() / job.total()));
             guiGraphics.fill(left, y, left + filled, y + 2, BAR_COLOR);
         }
@@ -241,8 +241,8 @@ public class CraftProgressToast implements Toast {
         int y = 27;
         guiGraphics.fill(left, y, right, y + 2, BAR_BACK_COLOR);
         if (job.total() > 0) {
-            // Ratio in double from the long counts (#46): int math would overflow on a job past
-            // Integer.MAX_VALUE crafts long before the cast.
+            // Ratio in double from the long counts (#46): float's 24-bit mantissa loses the
+            // low digits of a real over-int count.
             int filled = (int) ((right - left) * ((double) job.done() / job.total()));
             guiGraphics.fill(left, y, left + filled, y + 2, BAR_COLOR);
         }

@@ -33,8 +33,8 @@ public record CraftProgressCountsPayload(CraftProgressPayload.State state, ItemS
 
     /**
      * The over-int-capable done/total pair. Declared as its own registry-free codec (bare
-     * {@code ByteBuf}, no ItemStack) so PayloadCodecTest can pin the VarLong layout — the whole point
-     * of this payload — without a bootstrapped registry.
+     * {@code ByteBuf}, no ItemStack) so PayloadCodecTest can round-trip over-int counts — the whole
+     * point of this payload — without a bootstrapped registry.
      */
     public record Counts(long done, long total) {
         //? if >=1.20.5 {
