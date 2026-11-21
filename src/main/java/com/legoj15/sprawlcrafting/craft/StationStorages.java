@@ -53,6 +53,26 @@ public final class StationStorages {
          */
         Map<Item, Long> clientCounts(AbstractContainerMenu menu);
 
+        /**
+         * Client: the protected-tier counts of the storage {@code menu} shows (the client's mirror of
+         * {@link StationStorage#protectedCounts()}, issue #49), or null when {@code menu} is not a
+         * usable station. The null — not an empty map — is what keeps provider dispatch working: a
+         * station that has no protected tier answers null and the next provider gets its turn, while
+         * an empty non-null map means "this station is mine and holds nothing protected". Default
+         * null, so a plain-only provider needs no code. Called at most once per client tick.
+         */
+        default Map<Item, Long> clientProtectedCounts(AbstractContainerMenu menu) {
+            return null;
+        }
+
+        /**
+         * Client: the count-1 samples behind {@link #clientProtectedCounts} (the mirror of
+         * {@link StationStorage#protectedSamples()}, issue #49), same null rule. Default null.
+         */
+        default Map<Item, net.minecraft.world.item.ItemStack> clientProtectedSamples(AbstractContainerMenu menu) {
+            return null;
+        }
+
         /** Every station menu class and type, for recipe-viewer transfer-handler registration. */
         List<StationMenu> menus();
     }
@@ -133,6 +153,32 @@ public final class StationStorages {
             Map<Item, Long> counts = provider.clientCounts(menu);
             if (counts != null) {
                 return counts;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Client mirror of the open station's protected-tier counts (issue #49), or null for a menu no
+     * provider claims — same fail-safe dispatch as {@link #clientCounts}; callers treat null as
+     * "no station protected tier" (an empty map, see {@link Provider#clientProtectedCounts}).
+     */
+    public static Map<Item, Long> clientProtectedCounts(AbstractContainerMenu menu) {
+        for (Provider provider : PROVIDERS) {
+            Map<Item, Long> counts = provider.clientProtectedCounts(menu);
+            if (counts != null) {
+                return counts;
+            }
+        }
+        return null;
+    }
+
+    /** Client mirror of the open station's protected samples (issue #49), or null as {@link #clientProtectedCounts}. */
+    public static Map<Item, net.minecraft.world.item.ItemStack> clientProtectedSamples(AbstractContainerMenu menu) {
+        for (Provider provider : PROVIDERS) {
+            Map<Item, net.minecraft.world.item.ItemStack> samples = provider.clientProtectedSamples(menu);
+            if (samples != null) {
+                return samples;
             }
         }
         return null;

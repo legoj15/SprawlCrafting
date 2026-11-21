@@ -12,12 +12,16 @@ import net.minecraft.world.item.ItemStack;
  * valid for the moment it was obtained from {@link StationStorages#open}; callers re-open it for
  * every craft instead of holding it across ticks.
  *
- * <p>Only <em>plain</em> items count: one stack identity per {@link Item} with no component patch.
- * A plain stack always passes {@code CraftExecutor.usableAsIngredient} (it carries no damage,
- * enchantment or name), so the planner's snapshot, the executor's draws and the client's mirror all
- * agree on the same pool, keyed by item exactly like the player-inventory snapshot — whose protected
- * tier (issue #40) adds only enchanted/renamed copies the player holds, never anything from here:
- * the station stays a plain pool even for a job planned with protected stacks.
+ * <p>The plain methods ({@link #counts}, {@link #available}, {@link #extract}, {@link #insert},
+ * {@link #acceptable}) stay a plain pool: one stack identity per {@link Item} with no component
+ * patch. A plain stack always passes {@code CraftExecutor.usableAsIngredient} (it carries no
+ * damage, enchantment or name), so the planner's snapshot, the executor's draws and the client's
+ * mirror all agree on the same pool, keyed by item exactly like the player-inventory snapshot.
+ * The protected methods ({@link #protectedCounts}, {@link #protectedSamples},
+ * {@link #extractProtected}, issue #49) are the exception: they serve the confirmed protected tier
+ * only (issue #40 — a job planned with the player's protected stacks after the player confirmed),
+ * never the plain pool, so {@link #insert} and {@link #acceptable} keep refusing non-plain stacks
+ * and a plain job never sees these copies at all.
  *
  * <p>Implementations live in loader/mod compat code ({@code compat/ae2}); shared code only ever
  * sees this interface.
@@ -61,4 +65,40 @@ public interface StationStorage {
      * to drop items at the player's feet.
      */
     long acceptable(ItemStack stack, long limit);
+
+    /**
+     * Protected-tier counts (issue #49): per {@link Item}, how many protected stacks
+     * ({@code CraftExecutor.isProtected}, never damaged) the station holds, visible in the terminal
+     * and extractable right now with power — the station's side of the confirmed tier (#40), drawn
+     * only after the plain pool (inventory, then station) and the player's own protected copies.
+     * {@link Long#MAX_VALUE} means unbounded by the same rule as {@link #counts} (a probe of that
+     * exact key, not a big listing). As expensive as {@link #counts} (a full storage scan), so it is
+     * read only when the protected tier is live. Default empty: a station that cannot tell its
+     * protected stacks apart simply has none. Never merged into the plain pool by the planner.
+     */
+    default Map<Item, Long> protectedCounts() {
+        return Map.of();
+    }
+
+    /**
+     * One count-1 copy per {@link Item} of {@link #protectedCounts} (hover name and enchantments
+     * intact), for the confirmation warning lines (issue #49) — the station's counterpart of the
+     * player-inventory samples. Default empty.
+     */
+    default Map<Item, ItemStack> protectedSamples() {
+        return Map.of();
+    }
+
+    /**
+     * Extracts exactly ONE protected stack of {@code item} (issue #49) whose stack {@code accepts}
+     * tests true — using THAT stored entry's own key, never the canonical plain key, MODULATE with
+     * power exactly as {@link #extract} does. The protected tier's draw; the caller stages it into
+     * the player's inventory, where the existing protected-inventory path consumes it.
+     *
+     * @return the extracted stack (count 1), or {@link ItemStack#EMPTY} when the station holds no
+     *         protected {@code item} that {@code accepts} takes
+     */
+    default ItemStack extractProtected(Item item, java.util.function.Predicate<ItemStack> accepts) {
+        return ItemStack.EMPTY;
+    }
 }

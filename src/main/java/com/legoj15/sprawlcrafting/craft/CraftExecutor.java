@@ -40,7 +40,10 @@ import net.minecraft.world.item.crafting.RecipeHolder;
  *   <li>Only the 36 main inventory slots are read and written — never armor or offhand —
  *       so planning, consumption, and insertion all see the same item pool. The one addition is a
  *       crafting station the player has open ({@link StationStorages}: an AE2 Crafting Terminal, or a Sophisticated storage with a crafting upgrade),
- *       whose storage both the planner and {@link #craftOnce} add to the pool while it is open. The
+ *       whose storage both the planner and {@link #craftOnce} add to the pool while it is open — its
+ *       plain stock always, and for a job planned with protected stacks its protected ones too
+ *       (issue #49), staged into the inventory one copy at a time
+ *       ({@link #stageProtectedFromStation}) so consumption still runs through the main slots. The
  *       ledger's player-own baseline is a read-only exception: it counts the filter-rejected stacks
  *       the player holds outside the pool too (see {@link #countRefused}), which are never picked.</li>
  *   <li>Damaged, enchanted, or renamed stacks are never consumed, matching what the
@@ -50,7 +53,9 @@ import net.minecraft.world.item.crafting.RecipeHolder;
  *       planned with them after the player confirmed (issue #40), the protected stacks
  *       {@link #isProtected} describes: per cell, a protected copy of the plan's item comes after
  *       its plain copies (inventory, then station) but before any alternative item, which a later
- *       cell may need alone.</li>
+ *       cell may need alone. The open station's protected stacks (issue #49) join that tier last:
+ *       staged into the inventory before the assignment, they are consumed as protected inventory
+ *       copies — after the plain station and the player's own protected ones.</li>
  * </ul>
  */
 public final class CraftExecutor {
@@ -128,6 +133,21 @@ public final class CraftExecutor {
         Plan plan = prepare(player, recipeId, ledger, stationPlanned, layout, allowProtected);
         if (plan == null) {
             return new CraftResult.RecipeGone();
+        }
+        // The station's protected tier (issue #49) is staging, not identity plumbing: copies are
+        // moved into the main inventory first, and the assignment below then consumes them through
+        // the ordinary protected-inventory path. Staging mutates, so the plan is re-made after it.
+        int staged = stageProtectedFromStation(player, plan.station(), plan.ingredients(), plan.layout(),
+                plan.ledger(), plan.allowProtected());
+        if (staged > 0) {
+            Plan fresh = prepare(player, recipeId, ledger, stationPlanned, layout, allowProtected);
+            if (fresh == null) {
+                return new CraftResult.RecipeGone();
+            }
+            plan = fresh;
+            if (plan.assignment().missing() != null) {
+                logStagedUnused(staged);
+            }
         }
         return applyOnce(player, plan, refuseSpill);
     }
@@ -307,7 +327,22 @@ public final class CraftExecutor {
         if (plan == null) {
             return new CraftResult.RecipeGone();
         }
+        // One craft's worth of staging (issue #49), as in craftOnce; the batch guards below then
+        // decide whether even one craft's picks may repeat (a staged protected copy is a fallback
+        // pick, which clears preferredFilled and runs the craft alone).
+        int staged = stageProtectedFromStation(player, plan.station(), plan.ingredients(), plan.layout(),
+                plan.ledger(), plan.allowProtected());
+        if (staged > 0) {
+            Plan fresh = prepare(player, recipeId, ledger, stationPlanned, layout, allowProtected);
+            if (fresh == null) {
+                return new CraftResult.RecipeGone();
+            }
+            plan = fresh;
+        }
         if (plan.assignment().missing() != null) {
+            if (staged > 0) {
+                logStagedUnused(staged);
+            }
             return new CraftResult.MissingIngredient(describe(plan.assignment().missing()));
         }
         Batch batch = batchPlan(player, plan, maxCrafts);
@@ -315,6 +350,168 @@ public final class CraftExecutor {
             return applyOnce(player, plan, refuseSpill); // nothing has moved yet: the plan is still this craft's
         }
         return applyBatch(player, plan, batch, refuseSpill);
+    }
+
+    /** A 3×3 grid's worth of cells: the bound on one craft's staging passes (issue #49). */
+    private static final int GRID_CELLS = 9;
+
+    /**
+     * Stages the open station's protected stacks into the 36 main slots (issue #49) — the protected
+     * tier's station half is staging, not identity plumbing: one copy at a time is moved into the
+     * inventory, where the existing protected-inventory path (per cell: plain inventory, plain
+     * station, protected inventory) then picks it, so the per-source order holds. Active only for a
+     * protected-planned job ({@code allowProtected}) whose station reports protected stock at all.
+     *
+     * <p>With a {@code layout}, each cell whose preferred item the usable inventory (protected copies
+     * included, minus copies earlier cells of this layout claimed) plus the station's plain stock
+     * cannot cover is staged its preferred item — keeping the plan's choice before any alternative.
+     * Without one — or when an assignment over the pool still reports something missing — the missing
+     * ingredient's accepted items are tried one protected copy at a time, re-assigning after each, at
+     * most one pass per grid cell. A copy is drawn only when the main inventory can take it whole
+     * ({@link #roomForOne}): nothing is ever dropped at the feet or pushed back into the station
+     * ({@link StationStorage#insert} refuses non-plain stacks). No room, or nothing the station can
+     * supply, stops staging; the craft then reports missing exactly as before, and a copy the craft
+     * ends up not using simply stays with the player (the caller logs one debug line).
+     *
+     * @return how many protected stacks were moved into the main inventory
+     */
+    private static int stageProtectedFromStation(ServerPlayer player, StationStorage station,
+                                                 List<Ingredient> ingredients, List<Item> layout,
+                                                 ProducedLedger<Item, LedgerVariant> ledger,
+                                                 boolean allowProtected) {
+        if (!allowProtected || station == null || ingredients.isEmpty()) {
+            return 0;
+        }
+        Map<Item, Long> protectedStock;
+        try {
+            protectedStock = station.protectedCounts();
+        } catch (RuntimeException | LinkageError e) {
+            Constants.LOG.warn("SprawlCrafting: crafting station protected scan failed, not staging from it", e);
+            return 0;
+        }
+        if (protectedStock.isEmpty()) {
+            return 0;
+        }
+        Inventory inventory = player.getInventory();
+        // The station's plain availability, asked at most once per item per staging (a lookup each).
+        Map<Item, Long> plainStock = new HashMap<>();
+        // Items this station provably cannot stage (no protected copy a cell's ingredient accepted).
+        Set<Item> noneLeft = new HashSet<>();
+        int staged = 0;
+        if (layout != null) {
+            int cells = 0;
+            for (Ingredient ingredient : ingredients) {
+                if (ingredient != null && !ingredient.isEmpty()) {
+                    cells++;
+                }
+            }
+            if (layout.size() == cells) {
+                // The layout is indexed by non-empty cell, as the solver's slots are.
+                Map<Item, Integer> claimed = new HashMap<>();
+                int cell = 0;
+                for (Ingredient ingredient : ingredients) {
+                    if (ingredient == null || ingredient.isEmpty()) {
+                        continue;
+                    }
+                    Item item = layout.get(cell++);
+                    if (item == null) {
+                        continue;
+                    }
+                    long demand = claimed.merge(item, 1, Integer::sum);
+                    long supply = usableCount(inventory, item, true)
+                            + plainStationStock(station, plainStock, item);
+                    if (supply >= demand) {
+                        continue; // earlier claims plus this cell's are already covered
+                    }
+                    if (!roomForOne(inventory, item)) {
+                        return staged; // no room for a whole staged stack: stop, never drop it
+                    }
+                    if (extractOneInto(player, station, ingredient, item, noneLeft)) {
+                        staged++;
+                    }
+                }
+            }
+        }
+        // The layout staged what it could; an assignment still missing something gets one protected
+        // copy per pass, each fixing one cell's shortfall (at most one pass per grid cell).
+        Assignment assignment = assign(inventory, ingredients, ledger, station, layout, allowProtected);
+        for (int pass = 0; pass < GRID_CELLS && assignment.missing() != null; pass++) {
+            Ingredient missing = assignment.missing();
+            boolean stagedOne = false;
+            for (Item item : CraftPlanner.slotAlternatives(missing)) {
+                if (noneLeft.contains(item)) {
+                    continue;
+                }
+                if (!roomForOne(inventory, item)) {
+                    return staged;
+                }
+                if (extractOneInto(player, station, missing, item, noneLeft)) {
+                    staged++;
+                    stagedOne = true;
+                    break;
+                }
+            }
+            if (!stagedOne) {
+                break; // the station holds no protected copy this cell's ingredient accepts
+            }
+            assignment = assign(inventory, ingredients, ledger, station, layout, allowProtected);
+        }
+        return staged;
+    }
+
+    /**
+     * One protected copy of {@code item} out of the station and into the main inventory (issue #49):
+     * the stored entry's own stack, which the executor's protected-inventory tier then consumes.
+     * False — with {@code noneLeft} noted, so one craft never asks again — when the station holds no
+     * copy the ingredient accepts; the caller has already guaranteed room for the whole stack, so it
+     * can neither drop at the feet nor go back into the station.
+     */
+    private static boolean extractOneInto(ServerPlayer player, StationStorage station, Ingredient ingredient,
+                                          Item item, Set<Item> noneLeft) {
+        ItemStack copy;
+        try {
+            copy = station.extractProtected(item, ingredient::test);
+        } catch (RuntimeException | LinkageError e) {
+            Constants.LOG.warn("SprawlCrafting: crafting station protected extraction failed, not staging {}", item, e);
+            copy = ItemStack.EMPTY;
+        }
+        if (copy.isEmpty()) {
+            noneLeft.add(item);
+            return false;
+        }
+        insertIntoMainInventory(player, copy, null);
+        return true;
+    }
+
+    /**
+     * The station's plain availability of {@code item} (issue #49), memoized per staging call. A
+     * throwing station counts as none: staging then over-draws its own tier at worst, never the
+     * plain pool's.
+     */
+    private static long plainStationStock(StationStorage station, Map<Item, Long> cache, Item item) {
+        return cache.computeIfAbsent(item, i -> {
+            try {
+                return station.available(i, Integer.MAX_VALUE);
+            } catch (RuntimeException | LinkageError e) {
+                Constants.LOG.warn("SprawlCrafting: crafting station availability check failed, assuming none", e);
+                return 0L;
+            }
+        });
+    }
+
+    /**
+     * Whether the main inventory can take one whole stack of {@code item} (issue #49): the
+     * plain-stack read of {@link #outputRoom}, which cannot see a protected copy's own partial stacks
+     * (their components differ) — the safe side, a copy that might not merge is simply not drawn.
+     */
+    private static boolean roomForOne(Inventory inventory, Item item) {
+        return outputRoom(inventory, null, new ItemStack(item), 1, true, null) >= 1;
+    }
+
+    /** One debug line for staged copies (issue #49) the craft ended up not using: they stay with the player. */
+    private static void logStagedUnused(int staged) {
+        Constants.LOG.debug("SprawlCrafting: {} staged protected stack(s) from the crafting station left unused"
+                + " in the inventory", staged);
     }
 
     /**
@@ -885,6 +1082,12 @@ public final class CraftExecutor {
             return new FillOutcome.Fallback();
         }
         List<Ingredient> cells = gridLayout(recipe, grid.width(), grid.height());
+        // Staging (issue #49) before the probes below: a protected copy drawn out of the station
+        // lands in the main inventory, so the probes and placeFromLedger's assignment see it, and
+        // the protected probe can then pick this manual layout over vanilla's plain fill.
+        int stagedProtected = cells == null ? 0
+                : stageProtectedFromStation(player, StationStorages.open(player), cells, layout, ledger,
+                        allowProtected);
         boolean plainFallsShort = cells != null
                 && assign(player.getInventory(), cells, null, null, layout, false).missing() != null;
         boolean needsLedger = plainFallsShort
@@ -898,8 +1101,10 @@ public final class CraftExecutor {
         if (needsLedger || needsProtected || !grid.recipeBookPlacement()) {
             // No handlePlacement outside a recipe-book menu, so the layout is ours; a recipe that does
             // not fit the grid has nothing to lay out there (vanilla's own no-op falls through below).
-            return cells == null ? new FillOutcome.Fallback()
-                    : placeFromLedger(player, menu, grid, cells, expected, ledger, layout, allowProtected);
+            if (cells == null) {
+                return new FillOutcome.Fallback();
+            }
+            return placeFromLedger(player, menu, grid, cells, expected, ledger, layout, allowProtected);
         }
         //? if >=1.21.11 {
         /*if (!(menu instanceof net.minecraft.world.inventory.AbstractCraftingMenu craftingMenu)) {
@@ -936,6 +1141,10 @@ public final class CraftExecutor {
         // ClientboundContainerSetContentPacket — all slots + carried + a fresh stateId — so the
         // grid renders complete and the first take click matches. Vanilla AbstractContainerMenu
         // method, identical on both versions; safe in the shared path.
+        if (stagedProtected > 0) {
+            // Vanilla's own fill refuses protected stacks, so any copy staged above went unused.
+            logStagedUnused(stagedProtected);
+        }
         menu.broadcastFullState();
         return new FillOutcome.Filled(result.copy());
     }
@@ -1497,8 +1706,9 @@ public final class CraftExecutor {
      * rejects, per variant: the whole player inventory container (36 main slots — the pool — plus
      * armour and offhand, reached version-neutrally through {@link Inventory#getContainerSize}), the
      * carried stack, and the open grid's input cells. Rejected stacks are only ever picked from the main
-     * slots (an open station supplies plain items only, so its storage is not counted: a refused copy
-     * pulled out of it mid-job is an arrival, bounded by the produced count); the rest are counted for
+     * slots (an open station is drawn from only through those slots — its protected tier, issue #49,
+     * is staged into them first — so its storage is not counted here: a refused copy pulled out of it
+     * mid-job is an arrival, bounded by the produced count); the rest are counted for
      * the player's-own baseline alone, so moving a stack between them cannot make it look like one of
      * the job's copies. A protected-planned job ({@code allowProtected}) does not count its protected
      * stacks here: to it they are plain material (picked without admission, charged like plain picks),

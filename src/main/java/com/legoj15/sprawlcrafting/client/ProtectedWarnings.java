@@ -49,7 +49,8 @@ public final class ProtectedWarnings {
         }
         return CraftPreview.protectedWarningLines(planned.job(), minecraft.level.getRecipeManager(),
                 minecraft.level.registryAccess(), minecraft.player.getInventory(),
-                DeferredCraftableCache.stationCounts());
+                DeferredCraftableCache.stationCounts(), DeferredCraftableCache.stationProtectedCounts(),
+                DeferredCraftableCache.stationProtectedSamples());
         //?}
     }
 }
