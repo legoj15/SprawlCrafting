@@ -658,8 +658,9 @@ public final class CraftExecutor {
                     usedNetwork |= source instanceof NetworkSource;
                 }
                 if (need > 0) {
-                    // The pre-pass proved coverage; reaching here means it drifted from this loop.
-                    // Fail loud rather than hand out k results for short inputs.
+                    // Unreachable while the pre-pass mirrors this loop. If it drifts, fail loud rather
+                    // than hand out k results for short inputs: the copies already drained and the
+                    // ledger charge are not restored (only the prepared network share is refunded).
                     throw new IllegalStateException("SprawlCrafting batch drain short by " + need + " of " + key);
                 }
             }
