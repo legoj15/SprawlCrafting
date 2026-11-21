@@ -284,3 +284,9 @@ Unbound "Cancel deferred craft" keybind on every tree. The server's `CraftQueueM
 - reviewer (Haiku): PASS WITH NITS, ran the suite and a 7,500-instance differential harness. Its note that the test fixture never put the unpack recipe first exposed a second bug once fixed: a split batch taken apart again gives a clean false shortfall (pre-existing). Fixed by routing split-batch failures through the probe.
 - review_fast (shop26 + glm-flash): both ran repros and agreed on one medium: a probe failure caused by item-assignment order was reported as "missing oak". Fixed: such a failure (contention involving a group with a choice of items) stays "too complex"; their repro is now a test.
 - Follow-up filed: #44 (plans whose length does not grow with quantity).
+
+## #44 plans whose length does not grow with quantity (2026-11-20)
+- implement_single (glm-5.3, no_build) solver-core long counts + modern/1.12.2 shims: built and tests green first try. Orchestrator replaced its shim (refusing any over-int step as "too large" would have regressed #43 trees there) with `Success.intSized(maxSteps)`, which cuts long steps back into int-sized ones under the old 16,384 cap, plus a test (c3fc4ec).
+- implement_single (glm-5.3, no_build) 1.16.5 interleaving executor (RoundSchedule, ROUND_CRAFTS = 2^28): built green first try (5f24fef). It correctly flagged two errors in the orchestrator's test spec (an unbalanced chain; a round size too small to simulate).
+- review_fast (shop26 + deepseek-flash) launched on 29469c6..5f24fef. Jar deployed to the Forge 1.16.5 instance for a playtest (the pre-#44 jar is backed up in the instance's sc-jar-backup/).
+- Not yet ported: the interleaving executor on the modern and 1.12.2 trees (they still plan via intSized).
