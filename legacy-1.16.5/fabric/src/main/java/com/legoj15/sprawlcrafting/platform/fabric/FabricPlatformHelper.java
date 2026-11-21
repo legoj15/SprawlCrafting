@@ -87,6 +87,13 @@ public class FabricPlatformHelper implements IPlatformHelper {
         return false;
     }
 
+    // No crafting station exists on Fabric 1.16.5 (AE2 support is Forge-only), so a station protected
+    // tier cannot exist here either (issue #49): nothing to count, nothing to negotiate.
+    @Override
+    public boolean serverSupportsStationProtected() {
+        return false;
+    }
+
     @Override
     public double blockInteractionDistanceSqr(ServerPlayerEntity player) {
         return VANILLA_INTERACTION_DISTANCE_SQR;

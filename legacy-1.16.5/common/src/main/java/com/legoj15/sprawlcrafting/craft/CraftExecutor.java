@@ -42,7 +42,12 @@ import net.minecraft.util.text.StringTextComponent;
  * says it produced itself (some mods enchant an item on its first inventory tick, after insertion), and
  * — only for a job planned with them after the player confirmed (issue #40) — the protected stacks
  * {@link #isProtected} describes: per cell, a protected copy of the plan's item comes after its plain
- * copies (inventory, then station) but before any alternative item, which a later cell may need alone. The ledger's player-own baseline is a read-only exception to the first: it counts the filter-rejected
+ * copies (inventory, then station) but before any alternative item, which a later cell may need alone.
+ * The same confirmed tier counts a fourth source, an open station's own protected stacks (issue #49),
+ * in per-source order plain inventory, plain station, protected inventory, protected station: the
+ * assignment picks only inventory stacks and plain station stock, so they are first MOVED into the main
+ * inventory ({@link #stageProtectedFromStation}), after which the protected-inventory rule above
+ * consumes them exactly as planned. The ledger's player-own baseline is a read-only exception to the first: it counts the filter-rejected
  * stacks the player holds outside the main slots too (see {@link #countRefused}), never picked from.
  */
 public final class CraftExecutor {
@@ -168,6 +173,10 @@ public final class CraftExecutor {
     public static CraftResult craftOnce(ServerPlayerEntity player, ResourceLocation recipeId,
                                         ProducedLedger<Item, LedgerVariant> ledger, boolean stationPlanned,
                                         List<Item> layout, boolean refuseSpill, boolean allowProtected) {
+        // Phase 0 (issue #49): a protected-planned job whose plan counted the station's protected
+        // stacks can assign them only once they sit in the main inventory, so stage them first — a
+        // mutation, deliberately outside phase 1's mutation-free prepare.
+        stageStationProtected(player, recipeId, ledger, layout, allowProtected);
         // Phase 1: look the recipe up and match every ingredient slot to an inventory slot (or a
         // crafting station's storage) without mutating, so a shortfall discovered at slot N leaves
         // slots 1..N-1 untouched.
@@ -331,6 +340,192 @@ public final class CraftExecutor {
     }
 
     /**
+     * Phase 0 of the craft paths (issue #49): moves protected stacks out of an open station into the
+     * 36 main slots, at most one craft's worth, before the assignment runs. The assignment only picks
+     * inventory stacks and the station's plain stock, so a plan that counted the station's protected
+     * stacks — the fourth source, after plain inventory, plain station and protected inventory — can
+     * be executed only after this move, whereupon the existing protected-inventory tier consumes the
+     * staged copies exactly as planned. No-op unless {@code allowProtected} with a usable station open
+     * that holds protected stacks; every other job pays one boolean check.
+     */
+    private static void stageStationProtected(ServerPlayerEntity player, ResourceLocation recipeId,
+                                              ProducedLedger<Item, LedgerVariant> ledger,
+                                              List<Item> layout, boolean allowProtected) {
+        if (!allowProtected) {
+            return;
+        }
+        StationStorage station = StationStorages.open(player);
+        if (station == null) {
+            return;
+        }
+        // No up-front protectedCounts() scan: it walks the whole storage and this runs before every
+        // craft of a protected job. Only a cell that is actually short asks the station.
+        IRecipe<?> recipe = RecipeIds.byId(player.getServer().getRecipeManager(), recipeId).orElse(null);
+        if (!(recipe instanceof ICraftingRecipe)) {
+            return; // the craft reports RECIPE_GONE on its own
+        }
+        stageProtectedFromStation(player, station, recipe.getIngredients(), layout, ledger);
+    }
+
+    /**
+     * The staging itself (issue #49), one craft's worth. First the layout pass: "preferred item before
+     * any alternative" is the assignment tiers' own rule, so a cell whose use of its preferred item is
+     * not covered by the pool the assignment will read — usable inventory stacks (protected included)
+     * plus the station's plain stock, less what earlier cells already claimed — stages one protected
+     * copy of exactly that item. Then the assignment pass (the only one without a layout, and the
+     * safety net with one): re-assign, and for the ingredient that comes up missing try each item it
+     * accepts until one stages; one round per grid cell (9) bounds it, every successful round covering
+     * one cell's need for good. Stops as soon as nothing more can be staged — then the craft reports
+     * the item missing exactly as it would have without this change.
+     */
+    private static void stageProtectedFromStation(ServerPlayerEntity player, StationStorage station,
+                                                  List<Ingredient> ingredients, List<Item> layout,
+                                                  ProducedLedger<Item, LedgerVariant> ledger) {
+        PlayerInventory inventory = player.inventory;
+        // Items the station provably cannot stage this craft, so it is asked once per item at most.
+        Set<Item> noneLeft = new HashSet<>();
+        boolean layoutChecked = layout != null && layout.size() == nonEmptyCells(ingredients);
+        boolean anyShort = false;
+        if (layoutChecked) {
+            Map<Item, Long> claimed = new HashMap<>();
+            int cell = 0;
+            for (Ingredient ingredient : ingredients) {
+                if (ingredient == null || ingredient.isEmpty()) {
+                    continue;
+                }
+                Item preferred = layout.get(cell++);
+                long covered = preferred == null ? 0L
+                        : usableCount(inventory, preferred, true)
+                                + stationPlainAvailable(station, preferred)
+                                - claimed.getOrDefault(preferred, 0L);
+                if (covered < 1) {
+                    anyShort = true;
+                    stageOne(player, station, noneLeft, preferred, ingredient);
+                }
+                if (preferred != null) {
+                    claimed.merge(preferred, 1L, Long::sum);
+                }
+            }
+        }
+        if (layoutChecked && !anyShort) {
+            return; // every cell's preferred item is covered: skip the extra assignment per craft
+        }
+        for (int round = 0; round < ingredients.size() && round < 9; round++) {
+            Assignment assignment = assign(inventory, ingredients, ledger, station, layout, true);
+            if (assignment.missing == null) {
+                return;
+            }
+            boolean staged = false;
+            for (Item alternative : CraftPlanner.slotAlternatives(assignment.missing)) {
+                if (stageOne(player, station, noneLeft, alternative, assignment.missing)) {
+                    staged = true;
+                    break;
+                }
+            }
+            if (!staged) {
+                return; // nothing this station can hand over (or no room): the missing report stands
+            }
+        }
+    }
+
+    /**
+     * Stages ONE protected copy of {@code item} out of the station and into the main inventory
+     * (issue #49): only when the station hands one over and the inventory provably has
+     * room for the whole stack — an empty main slot, the only room provable before the exact identity
+     * (so its merge partner) is known: {@link #outputRoom}'s merge term would count plain partial
+     * stacks a protected copy can never join. Nothing is extracted without that room, so a staged
+     * stack is never dropped at the feet nor pushed back into the station ({@code insert} refuses
+     * non-plain stacks); a copy the craft ends up not using stays with the player, lost to no one.
+     */
+    private static boolean stageOne(ServerPlayerEntity player, StationStorage station,
+                                    Set<Item> noneLeft, Item item, Ingredient ingredient) {
+        if (item == null || noneLeft.contains(item) || !hasEmptyMainSlot(player.inventory)) {
+            return false;
+        }
+        ItemStack staged;
+        try {
+            staged = station.extractProtected(item, ingredient::test);
+        } catch (RuntimeException | LinkageError e) {
+            Constants.LOG.warn("SprawlCrafting: crafting station protected extract failed, not staging", e);
+            return false;
+        }
+        if (staged.isEmpty()) {
+            noneLeft.add(item);
+            return false;
+        }
+        placeStaged(player, staged);
+        Constants.LOG.debug("SprawlCrafting: staged {} from the crafting station for a protected craft"
+                + " (an unused copy stays in the inventory)", staged.getHoverName());
+        return true;
+    }
+
+    /**
+     * Places a staged protected stack into the 36 main slots (issue #49): merge into an exact-tag
+     * match first, then the empty slot whose presence was confirmed before the extraction. Nothing
+     * runs between the check and this, so the stack always lands; the drop below is the absolute
+     * last resort and should be unreachable.
+     */
+    private static void placeStaged(ServerPlayerEntity player, ItemStack stack) {
+        PlayerInventory inventory = player.inventory;
+        for (int i = 0; i < MAIN_SLOTS && !stack.isEmpty(); i++) {
+            ItemStack existing = inventory.getItem(i);
+            if (!existing.isEmpty() && sameItemSameTag(existing, stack)) {
+                int room = existing.getMaxStackSize() - existing.getCount();
+                if (room > 0) {
+                    int moved = Math.min(room, stack.getCount());
+                    existing.grow(moved);
+                    stack.shrink(moved);
+                }
+            }
+        }
+        for (int i = 0; i < MAIN_SLOTS && !stack.isEmpty(); i++) {
+            if (inventory.getItem(i).isEmpty()) {
+                inventory.setItem(i, copyWithCount(stack, Math.min(stack.getCount(), stack.getMaxStackSize())));
+                stack.shrink(inventory.getItem(i).getCount());
+            }
+        }
+        inventory.setChanged();
+        if (!stack.isEmpty()) {
+            Constants.LOG.warn("SprawlCrafting: staged {} lost its room after extraction; dropping it at"
+                    + " the player's feet", stack.getHoverName());
+            player.drop(stack, false);
+        }
+    }
+
+    /** Whether a main slot is empty: provable room for one whole not-yet-extracted copy (issue #49). */
+    private static boolean hasEmptyMainSlot(PlayerInventory inventory) {
+        for (int i = 0; i < MAIN_SLOTS; i++) {
+            if (inventory.getItem(i).isEmpty()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** The station's plain availability of one item, read as none when its mod throws (issue #49). */
+    private static long stationPlainAvailable(StationStorage station, Item item) {
+        try {
+            return station.available(item, 1);
+        } catch (RuntimeException | LinkageError e) {
+            return 0;
+        }
+    }
+
+    /**
+     * How many of {@code ingredients} are non-empty — the plan's layout is indexed over exactly these
+     * (issue #49's staging pass walks them in the same order).
+     */
+    private static int nonEmptyCells(List<Ingredient> ingredients) {
+        int cells = 0;
+        for (Ingredient ingredient : ingredients) {
+            if (ingredient != null && !ingredient.isEmpty()) {
+                cells++;
+            }
+        }
+        return cells;
+    }
+
+    /**
      * Up to {@code maxCrafts} crafts of the recipe as ONE operation, leaving the same per-item totals
      * (inventory plus station), ledger state and drops (none) as that many successive
      * {@link #craftOnce} calls would; with a station open, outputs can be split differently between the
@@ -353,6 +548,10 @@ public final class CraftExecutor {
                                          ProducedLedger<Item, LedgerVariant> ledger, boolean stationPlanned,
                                          List<Item> layout, int maxCrafts, boolean refuseSpill,
                                          boolean allowProtected) {
+        // Phase 0 as in craftOnce (issue #49), one craft's worth: the batch's k is derived from the
+        // stock the staging raised, and the guard that refuses batching when a non-plain stack is
+        // involved then decides single vs batch on that live pool as always.
+        stageStationProtected(player, recipeId, ledger, layout, allowProtected);
         Plan plan = prepare(player, recipeId, ledger, stationPlanned, layout, allowProtected);
         if (plan == null) {
             return CraftResult.recipeGone();
@@ -897,6 +1096,12 @@ public final class CraftExecutor {
             return FillOutcome.fallback();
         }
         List<Ingredient> cells = gridLayout(recipe, grid.width(), grid.height());
+        // Stage before the probes below (issue #49): they decide who places the grid, and a plan that
+        // counted the station's protected stacks can satisfy this last craft only once those copies
+        // sit in the inventory where every assignment path can pick them.
+        if (cells != null) {
+            stageStationProtected(player, recipeId, ledger, layout, allowProtected);
+        }
         boolean plainFallsShort = cells != null
                 && assign(player.inventory, cells, null, null, layout, false).missing != null;
         boolean needsLedger = plainFallsShort

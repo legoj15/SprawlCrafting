@@ -11,6 +11,7 @@ import com.legoj15.sprawlcrafting.platform.Services;
 import net.minecraft.entity.player.ServerPlayerEntity;
 import net.minecraft.inventory.container.Container;
 import net.minecraft.item.Item;
+import net.minecraft.item.ItemStack;
 
 /**
  * Registry of crafting-station providers: menus that are a 3×3 crafting grid AND show an item storage
@@ -42,6 +43,24 @@ public final class StationStorages {
          * most once per client tick (the caller caches).
          */
         Map<Item, Long> clientCounts(Container menu);
+
+        /**
+         * Client: protected-stack counts of the storage {@code menu} shows (the client's mirror of
+         * {@link StationStorage#protectedCounts()}, issue #49), or null when {@code menu} is not a
+         * usable station. Called at most once per client tick (the caller caches). Default: null (no
+         * protected tier).
+         */
+        default Map<Item, Long> clientProtectedCounts(Container menu) {
+            return null;
+        }
+
+        /**
+         * Client: one count-1 sample per item of {@link #clientProtectedCounts(Container)} (issue #49),
+         * or null alongside it. Default: null.
+         */
+        default Map<Item, ItemStack> clientProtectedSamples(Container menu) {
+            return null;
+        }
 
         /** Every station menu class, for recipe-viewer transfer-handler registration (JEI 7 keys by class). */
         List<Class<? extends Container>> menus();
@@ -122,6 +141,51 @@ public final class StationStorages {
             Map<Item, Long> counts = provider.clientCounts(menu);
             if (counts != null) {
                 return counts;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Client mirror of the open station's protected counts (issue #49), or null (see
+     * {@link Provider#clientProtectedCounts}). A throwing station reads as "no protected stacks", the
+     * same isolation {@link #open} gives its entry call, so a broken station mod cannot take the render
+     * tick down with it.
+     */
+    public static Map<Item, Long> clientProtectedCounts(Container menu) {
+        for (Provider provider : PROVIDERS) {
+            Map<Item, Long> counts;
+            try {
+                counts = provider.clientProtectedCounts(menu);
+            } catch (RuntimeException | LinkageError e) {
+                if (FAILED_OPEN.add(provider)) {
+                    Constants.LOG.warn("SprawlCrafting: crafting station protected-count check failed,"
+                            + " treating it as none", e);
+                }
+                continue;
+            }
+            if (counts != null) {
+                return counts;
+            }
+        }
+        return null;
+    }
+
+    /** Client mirror of the open station's protected samples (issue #49), or null; isolated as above. */
+    public static Map<Item, ItemStack> clientProtectedSamples(Container menu) {
+        for (Provider provider : PROVIDERS) {
+            Map<Item, ItemStack> samples;
+            try {
+                samples = provider.clientProtectedSamples(menu);
+            } catch (RuntimeException | LinkageError e) {
+                if (FAILED_OPEN.add(provider)) {
+                    Constants.LOG.warn("SprawlCrafting: crafting station protected-sample check failed,"
+                            + " treating it as none", e);
+                }
+                continue;
+            }
+            if (samples != null) {
+                return samples;
             }
         }
         return null;

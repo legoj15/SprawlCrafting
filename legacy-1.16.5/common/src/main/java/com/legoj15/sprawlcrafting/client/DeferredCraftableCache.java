@@ -14,6 +14,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.entity.player.ClientPlayerEntity;
 import net.minecraft.inventory.container.Container;
 import net.minecraft.item.Item;
+import net.minecraft.item.ItemStack;
 import net.minecraft.item.crafting.IRecipe;
 import net.minecraft.item.crafting.RecipeManager;
 import net.minecraft.util.ResourceLocation;
@@ -27,8 +28,9 @@ import net.minecraft.util.ResourceLocation;
  *
  * <p>Offers are suppressed entirely when the server lacks the mod ({@code serverHasMod}): a start packet
  * could not be delivered there, so showing yellow would be a lie. The same rule gates the protected
- * tier (issue #40): a second session that also counts the player's protected stacks is consulted only
- * when the server has the protected channel ({@code canStartProtectedCraft}) and the inventory holds
+ * tier (issue #40): a second session that also counts the player's protected stacks — and, when the
+ * server negotiated the station-protected marker (issue #49), the open station's — is consulted only
+ * when the server has the protected channel ({@code canStartProtectedCraft}) and either source holds
  * any, and a recipe only that session can make is {@code DEFERRED} (never direct) and remembered in
  * {@code protectedOnly}, so its confirm click sends the protected start packet.
  */
@@ -42,6 +44,8 @@ public final class DeferredCraftableCache {
     private static RecipeManager recipeManager;
     /** The {@link #stationCounts()} instance the sessions were built with (compared by reference). */
     private static Map<Item, Long> sessionStation;
+    /** The {@link #stationProtectedCounts()} instance the sessions were built with (issue #49). */
+    private static Map<Item, Long> sessionStationProtected;
     /** Recipes we marked craftable that vanilla did NOT — these get the yellow outline. */
     private static final Set<ResourceLocation> deferredOnly = new HashSet<>();
     /** Of those, the recipes only a protected-including plan can make (issue #40). */
@@ -51,6 +55,11 @@ public final class DeferredCraftableCache {
     private static long stationTick = Long.MIN_VALUE;
     private static Map<Item, Long> stationCounts = Collections.emptyMap();
     private static boolean stationUsable;
+    /** The protected mirrors' own cache slots (issue #49), refreshed with the same once-per-tick rule. */
+    private static Container stationProtectedMenu;
+    private static long stationProtectedTick = Long.MIN_VALUE;
+    private static Map<Item, Long> stationProtectedCounts = Collections.emptyMap();
+    private static Map<Item, ItemStack> stationProtectedSamples = Collections.emptyMap();
 
     private DeferredCraftableCache() {
     }
@@ -99,6 +108,64 @@ public final class DeferredCraftableCache {
     public static boolean stationUsable() {
         stationCounts();
         return stationUsable;
+    }
+
+    /**
+     * The protected-stack counts of the open crafting station (issue #49), empty for none — cached
+     * and identity-kept exactly like {@link #stationCounts()}. Gated one step further than it, too: a
+     * server without the station-protected marker would plan a protected start from the plain and
+     * inventory-protected pools only and refuse it, so these count only when both protected starts
+     * ({@code canStartProtectedCraft}) and station-protected planning
+     * ({@code serverSupportsStationProtected}) are negotiated.
+     */
+    public static Map<Item, Long> stationProtectedCounts() {
+        refreshStationProtected();
+        return stationProtectedCounts;
+    }
+
+    /**
+     * One count-1 sample per item of {@link #stationProtectedCounts()} (issue #49), same cache and
+     * gate; only read while the counts are non-empty, so the no-protected-station case costs one
+     * scan, not two.
+     */
+    public static Map<Item, ItemStack> stationProtectedSamples() {
+        refreshStationProtected();
+        return stationProtectedSamples;
+    }
+
+    /** The once-per-tick (and per menu change) refresh behind both protected mirrors (issue #49). */
+    private static void refreshStationProtected() {
+        Minecraft minecraft = Minecraft.getInstance();
+        ClientPlayerEntity player = minecraft.player;
+        if (player == null || minecraft.level == null) {
+            stationProtectedCounts = Collections.emptyMap();
+            stationProtectedSamples = Collections.emptyMap();
+            return;
+        }
+        Container menu = player.containerMenu;
+        long tick = minecraft.level.getGameTime();
+        if (menu != stationProtectedMenu || tick != stationProtectedTick) {
+            Map<Item, Long> counts = null;
+            if (minecraft.getConnection() != null && Services.PLATFORM.canStartProtectedCraft()
+                    && Services.PLATFORM.serverSupportsStationProtected()) {
+                counts = StationStorages.clientProtectedCounts(menu);
+            }
+            Map<Item, Long> nextCounts = counts == null ? Collections.<Item, Long>emptyMap() : counts;
+            // The samples' items are exactly the counts' (the provider scans both in one pass), so the
+            // second scan runs only when there is something to sample.
+            Map<Item, ItemStack> samples = nextCounts.isEmpty() ? Collections.<Item, ItemStack>emptyMap()
+                    : StationStorages.clientProtectedSamples(menu);
+            Map<Item, ItemStack> nextSamples = samples == null
+                    ? Collections.<Item, ItemStack>emptyMap() : samples;
+            if (!nextCounts.equals(stationProtectedCounts)) {
+                stationProtectedCounts = nextCounts;
+            }
+            if (!nextSamples.equals(stationProtectedSamples)) {
+                stationProtectedSamples = nextSamples;
+            }
+            stationProtectedMenu = menu;
+            stationProtectedTick = tick;
+        }
     }
 
     public static boolean isSolvable(IRecipe<?> recipe, GridContext requestGrid) {
@@ -175,10 +242,15 @@ public final class DeferredCraftableCache {
         session = null;
         protectedSession = null;
         sessionStation = null;
+        sessionStationProtected = null;
         stationMenu = null;
         stationTick = Long.MIN_VALUE;
         stationCounts = Collections.emptyMap();
         stationUsable = false;
+        stationProtectedMenu = null;
+        stationProtectedTick = Long.MIN_VALUE;
+        stationProtectedCounts = Collections.emptyMap();
+        stationProtectedSamples = Collections.emptyMap();
         deferredOnly.clear();
         protectedOnly.clear();
     }
@@ -194,20 +266,25 @@ public final class DeferredCraftableCache {
         RecipeManager recipes = minecraft.level.getRecipeManager();
         // An open crafting station's storage (AE2 Crafting Terminal) joins the pool, as on the server.
         Map<Item, Long> station = stationCounts();
+        Map<Item, Long> stationProtected = stationProtectedCounts();
         if (session == null || generation != inventoryGeneration
-                || requestGrid != grid || recipes != recipeManager || station != sessionStation) {
+                || requestGrid != grid || recipes != recipeManager || station != sessionStation
+                || stationProtected != sessionStationProtected) {
             session = CraftPlanner.session(recipes, player.inventory, requestGrid, station);
-            // The second pass over the same pool plus the protected stacks (issue #40), built only
-            // when the server can honour a protected start and the inventory holds any: everything
-            // else keeps the plain answer. Any change that flips either (an inventory generation, a
-            // new connection) also invalidates this whole block, so it cannot go stale.
+            // The second pass over the same pool plus the protected stacks (issue #40) — inventory
+            // ones, and the station's too (issue #49) — built only when the server can honour a
+            // protected start and either source holds any: everything else keeps the plain answer.
+            // Any change that flips either (an inventory generation, a new connection, the station's
+            // protected map changing identity) also invalidates this whole block, so it cannot go stale.
             protectedSession = Services.PLATFORM.canStartProtectedCraft()
-                    && CraftPlanner.hasProtected(player.inventory)
-                    ? CraftPlanner.session(recipes, player.inventory, requestGrid, station, true) : null;
+                    && (CraftPlanner.hasProtected(player.inventory) || !stationProtected.isEmpty())
+                    ? CraftPlanner.session(recipes, player.inventory, requestGrid, station,
+                            stationProtected, true) : null;
             inventoryGeneration = generation;
             grid = requestGrid;
             recipeManager = recipes;
             sessionStation = station;
+            sessionStationProtected = stationProtected;
             deferredOnly.clear();
             protectedOnly.clear();
         }

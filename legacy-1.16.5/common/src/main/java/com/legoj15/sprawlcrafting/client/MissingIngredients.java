@@ -32,9 +32,13 @@ public final class MissingIngredients {
         }
         // With a crafting station open (AE2 Crafting Terminal) its storage counts as already gathered.
         // Protected stacks (enchanted/renamed, #40) count whenever the server can honour a protected
-        // start: a confirmed craft consumes them, so the list must not ask for what is held (#48).
+        // start: a confirmed craft consumes them, so the list must not ask for what is held (#48) —
+        // including the station's protected stacks when that server also negotiated the
+        // station-protected marker (#49); the counts accessor is already gated to exactly that.
         return CraftPlanner.session(mc.level.getRecipeManager(), mc.player.inventory, grid,
-                DeferredCraftableCache.stationCounts(), Services.PLATFORM.canStartProtectedCraft())
+                DeferredCraftableCache.stationCounts(),
+                DeferredCraftableCache.stationProtectedCounts(),
+                Services.PLATFORM.canStartProtectedCraft())
                 .shortfall(recipe);
     }
 

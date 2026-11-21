@@ -5,6 +5,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
+import com.legoj15.sprawlcrafting.Constants;
 import com.legoj15.sprawlcrafting.craft.CraftPlanner.PlanOutcome;
 
 import net.minecraft.entity.player.ServerPlayerEntity;
@@ -84,21 +85,32 @@ public final class CraftRequests {
             }
         }
         if ((outcome.kind() == PlanOutcome.Kind.UNSOLVABLE || outcome.kind() == PlanOutcome.Kind.TOO_COMPLEX)
-                && allowProtected && CraftPlanner.hasProtected(player.inventory)) {
-            // The confirmed fallback (#40): count the protected stacks of the 36 main slots too, in the
-            // same order as the plain passes — the inventory alone first, so a job it covers never
-            // depends on the station, then with an open station's counts, which makes the job
-            // station-dependent (it pauses, not cancels, when the station goes away).
-            PlanOutcome withProtected = CraftPlanner.plan(player, recipe, grid,
-                    Collections.<Item, Long>emptyMap(), true);
-            stationDependent = false;
-            if (!withProtected.isPlanned() && station != null) {
-                withProtected = CraftPlanner.plan(player, recipe, grid, stationCounts, true);
-                stationDependent = withProtected.isPlanned();
-            }
-            if (withProtected.isPlanned()) {
-                withProtected.job().setUsesProtected(true);
-                outcome = withProtected;
+                && allowProtected) {
+            // The confirmed fallback (#40, widened to the station's protected stacks in #49): count the
+            // protected stacks too, in per-source order — plain inventory, plain station, protected
+            // inventory, protected station. The inventory's protected pass first (skipped when the
+            // inventory holds no protected stack), so a job it covers never depends on the station;
+            // then with an open station's plain and protected counts together, which makes the job
+            // station-dependent (it pauses, not cancels, when the station goes away). The station's
+            // protected counts are a storage scan, so they are read once — here, on a confirmed
+            // request that already failed every plain pass.
+            boolean inventoryProtected = CraftPlanner.hasProtected(player.inventory);
+            Map<Item, Long> stationProtected = station != null
+                    ? protectedCountsOf(station) : Collections.<Item, Long>emptyMap();
+            if (inventoryProtected || !stationProtected.isEmpty()) {
+                PlanOutcome withProtected = inventoryProtected
+                        ? CraftPlanner.plan(player, recipe, grid, Collections.<Item, Long>emptyMap(),
+                                Collections.<Item, Long>emptyMap(), true)
+                        : null;
+                stationDependent = false;
+                if ((withProtected == null || !withProtected.isPlanned()) && station != null) {
+                    withProtected = CraftPlanner.plan(player, recipe, grid, stationCounts, stationProtected, true);
+                    stationDependent = withProtected.isPlanned();
+                }
+                if (withProtected != null && withProtected.isPlanned()) {
+                    withProtected.job().setUsesProtected(true);
+                    outcome = withProtected;
+                }
             }
         }
         if (outcome.isPlanned()) {
@@ -115,6 +127,22 @@ public final class CraftRequests {
 
     private static void notify(ServerPlayerEntity player, ITextComponent message) {
         player.displayClientMessage(message, false);
+    }
+
+    /**
+     * {@link StationStorage#protectedCounts()} read as "no protected stacks" when the station's mod
+     * throws (issue #49): the protected fallback then simply has no station tier to try, exactly like
+     * a station that holds none.
+     */
+    private static Map<Item, Long> protectedCountsOf(StationStorage station) {
+        try {
+            Map<Item, Long> counts = station.protectedCounts();
+            return counts != null ? counts : Collections.<Item, Long>emptyMap();
+        } catch (RuntimeException | LinkageError e) {
+            Constants.LOG.warn("SprawlCrafting: crafting station protected-count read failed,"
+                    + " treating it as none", e);
+            return Collections.emptyMap();
+        }
     }
 
     public static ITextComponent describeRejection(IRecipe<?> recipe, PlanOutcome outcome) {

@@ -170,9 +170,14 @@ public final class Ae2Station implements StationStorages.Provider {
     }
 
     /**
-     * Whether {@code stack} is AE2-equal to the fresh stack of its item: the only identity the station uses.
-     * Amount-free: in 8.4.7 {@code AEItemStack.equals} is {@code isSameType}, which compares only the shared
-     * item definition (javap), so a size-1 canonical matches a network entry of any size.
+     * Whether {@code stack} is AE2-equal to the fresh stack of its item: the only plain identity the
+     * station uses. In 8.4.7 {@code AEItemStack.equals} is {@code isSameType}, which is tag-sensitive —
+     * the full ItemStack comparison, item, damage and NBT (only the amount is left out, so a size-1
+     * canonical matches a network entry of any size) — so this is identity-exact: a worn, enchanted,
+     * renamed or capability-carrying copy is a different AE2 key and never plain. What keeps enchanted
+     * and renamed entries out of {@code counts()}/{@code clientCounts} is nevertheless
+     * {@code usableAsIngredient} (the protected tier, #49, counts them separately in
+     * {@code protectedCounts()}); damaged ones are never material at all.
      */
     private static boolean plain(IStorageChannel<IAEItemStack> channel, IAEItemStack stack) {
         IAEItemStack canonical = canonical(channel, stack.getItem());
@@ -233,6 +238,64 @@ public final class Ae2Station implements StationStorages.Provider {
             }
         }
         return counts;
+    }
+
+    /**
+     * Client side of {@link StationStorage#protectedCounts()} (issue #49): the same synced repo as
+     * {@link #clientCounts}, selecting the protected entries instead — shown by the view filter,
+     * {@code isProtected}, and NOT plain (a protected copy is its own AE2 key). This side cannot probe
+     * the network, so the listing rule of {@link #clientCounts} applies to these too.
+     */
+    @Override
+    public Map<Item, Long> clientProtectedCounts(Container menu) {
+        ProtectedClientScan scan = clientProtectedScan(menu);
+        return scan == null ? null : scan.counts;
+    }
+
+    /** {@link #clientProtectedCounts} plus one count-1 sample per item, in one repo scan (issue #49). */
+    @Override
+    public Map<Item, ItemStack> clientProtectedSamples(Container menu) {
+        ProtectedClientScan scan = clientProtectedScan(menu);
+        return scan == null ? null : scan.samples;
+    }
+
+    /** Both protected client mirrors of one repo pass, or null when {@code menu} is not a usable station. */
+    private static ProtectedClientScan clientProtectedScan(Container menu) {
+        // The client only has the synced power flag; an unpowered terminal has no counts.
+        if (!(menu instanceof CraftingTermContainer)) {
+            return null;
+        }
+        CraftingTermContainer terminal = (CraftingTermContainer) menu;
+        IClientRepo<IAEItemStack> repo = terminal.getClientRepo();
+        if (!terminal.isPowered() || repo == null) {
+            return null;
+        }
+        IStorageChannel<IAEItemStack> channel = terminal.getStorageChannel();
+        IPartitionList<IAEItemStack> filter = viewFilter(terminal);
+        ProtectedClientScan scan = new ProtectedClientScan();
+        for (GridInventoryEntry<IAEItemStack> entry : repo.getAllEntries()) {
+            IAEItemStack stack = entry.getStack();
+            if (stack == null || entry.getStoredAmount() <= 0 || !shown(filter, stack)
+                    || !CraftExecutor.isProtected(stack.getDefinition()) || plain(channel, stack)) {
+                continue;
+            }
+            long stored = entry.getStoredAmount();
+            scan.counts.merge(stack.getItem(), stored >= Integer.MAX_VALUE ? Long.MAX_VALUE : stored,
+                    Ae2Station::saturatingAdd);
+            ItemStack definition = stack.getDefinition();
+            if (definition != null && !scan.samples.containsKey(stack.getItem())) {
+                ItemStack sample = definition.copy();
+                sample.setCount(1);
+                scan.samples.put(stack.getItem(), sample);
+            }
+        }
+        return scan;
+    }
+
+    /** The two protected client mirrors of one scan (issue #49). */
+    private static final class ProtectedClientScan {
+        final Map<Item, Long> counts = new HashMap<>();
+        final Map<Item, ItemStack> samples = new HashMap<>();
     }
 
     @Override
@@ -429,6 +492,111 @@ public final class Ae2Station implements StationStorages.Provider {
             }
             IAEItemStack got = monitor.extractItems(request, Actionable.SIMULATE, source);
             return got != null && got.getStackSize() >= PROBE;
+        }
+
+        /**
+         * The protected entries of the storage list (issue #49): shown by the view filter,
+         * {@code isProtected} on the definition, and not plain — a protected copy is its own AE2 key,
+         * never the canonical one (an item whose fresh stack itself is enchanted would be plain here,
+         * and its copies stay the plain pool's problem, which refuses them).
+         */
+        private boolean protectedEntry(IAEItemStack stack) {
+            return stack != null && stack.getStackSize() > 0 && shown(filter, stack)
+                    && CraftExecutor.isProtected(stack.getDefinition()) && !plain(channel, stack);
+        }
+
+        /** {@link #deliverable} over an exact stored identity, never the canonical key (issue #49). */
+        private long deliverableProtected(IAEItemStack stored, long limit) {
+            if (!shown(filter, stored)) {
+                return 0;
+            }
+            IAEItemStack request = stored.copy().setStackSize(limit);
+            IAEItemStack got = Platform.poweredExtraction(energy, monitor, request, source, Actionable.SIMULATE);
+            return got == null ? 0 : Math.max(0, Math.min(got.getStackSize(), limit));
+        }
+
+        /** {@link #count} for one protected identity: the same rules, probed on its own key (issue #49). */
+        private long protectedCount(IAEItemStack stack) {
+            long deliverable = deliverableProtected(stack, stack.getStackSize());
+            if (deliverable > 0 && stack.getStackSize() >= Integer.MAX_VALUE) {
+                IAEItemStack request = stack.copy().setStackSize(PROBE);
+                IAEItemStack got = monitor.extractItems(request, Actionable.SIMULATE, source);
+                if (got != null && got.getStackSize() >= PROBE) {
+                    return Long.MAX_VALUE;
+                }
+            }
+            return deliverable;
+        }
+
+        @Override
+        public Map<Item, Long> protectedCounts() {
+            Map<Item, Long> counts = new HashMap<>();
+            if (!usable(menu)) {
+                return counts;
+            }
+            for (IAEItemStack stack : monitor.getStorageList()) {
+                if (protectedEntry(stack)) {
+                    long count = protectedCount(stack);
+                    if (count > 0) {
+                        counts.merge(stack.getItem(), count, Ae2Station::saturatingAdd);
+                    }
+                }
+            }
+            return counts;
+        }
+
+        @Override
+        public Map<Item, ItemStack> protectedSamples() {
+            Map<Item, ItemStack> samples = new HashMap<>();
+            if (!usable(menu)) {
+                return samples;
+            }
+            for (IAEItemStack stack : monitor.getStorageList()) {
+                if (protectedEntry(stack) && !samples.containsKey(stack.getItem())) {
+                    ItemStack definition = stack.getDefinition();
+                    if (definition != null) {
+                        ItemStack sample = definition.copy();
+                        sample.setCount(1);
+                        samples.put(stack.getItem(), sample);
+                    }
+                }
+            }
+            return samples;
+        }
+
+        @Override
+        public ItemStack extractProtected(Item item, java.util.function.Predicate<ItemStack> accepts) {
+            if (item == null || !usable(menu)) {
+                return ItemStack.EMPTY;
+            }
+            // Pick the entry first, draw after the iteration: a MODULATE extraction fires storage
+            // events, and whether the monitor's list tolerates that mid-iteration is its business.
+            IAEItemStack match = null;
+            for (IAEItemStack stack : monitor.getStorageList()) {
+                if (!protectedEntry(stack) || stack.getItem() != item) {
+                    continue;
+                }
+                ItemStack definition = stack.getDefinition();
+                if (definition == null || !accepts.test(definition)) {
+                    continue; // not an identity this cell's ingredient would take
+                }
+                match = stack;
+                break;
+            }
+            if (match == null) {
+                return ItemStack.EMPTY;
+            }
+            // Identity-exact (issue #49): the request is this stored entry's own copy at size 1,
+            // never the canonical key — that names the plain identity and would draw a plain stack.
+            IAEItemStack got = Platform.poweredExtraction(energy, monitor, match.copy().setStackSize(1),
+                    source, Actionable.MODULATE);
+            if (got == null || got.getStackSize() <= 0) {
+                return ItemStack.EMPTY; // a powered but starved network may not deliver even one
+            }
+            ItemStack out = got.getDefinition() != null ? got.getDefinition().copy()
+                    : match.getDefinition().copy();
+            out.setCount(1);
+            return out;
         }
 
         @Override
