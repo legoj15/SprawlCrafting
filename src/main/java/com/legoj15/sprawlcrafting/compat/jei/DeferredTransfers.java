@@ -40,7 +40,8 @@ public final class DeferredTransfers {
     /**
      * The same yellow state for a recipe only a protected-including plan can make (issue #40): the
      * tooltip adds which special items would be consumed, and a click sends the protected start.
-     * Shared with the station handler (compat/ae2) and REI's mirror of the deferred button;
+     * Shared with the station handler (compat/ae2); REI gets the same lines through
+     * {@code client.ProtectedWarnings};
      * {@code grid} costs the warning lines' plan, as at the clicked grid.
      */
     public static IRecipeTransferError protectedDeferredAvailable(RecipeHolder<CraftingRecipe> recipe,

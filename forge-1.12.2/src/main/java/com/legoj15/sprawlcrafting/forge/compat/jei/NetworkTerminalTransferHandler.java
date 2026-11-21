@@ -127,7 +127,8 @@ public final class NetworkTerminalTransferHandler extends DeferredCraftTransferH
             return ((CraftPlanner.PlanOutcome.Planned) outcome).job().steps().size() == 1
                     ? CraftPlanner.Craftability.DIRECT : CraftPlanner.Craftability.DEFERRED;
         }
-        return ClientPlanCache.canDeferCraft(player, GridContext.CRAFTING_TABLE, result)
-                ? CraftPlanner.Craftability.DEFERRED : CraftPlanner.Craftability.UNSOLVABLE;
+        // No recipe object: plain only, as DeferredCraftTransferHandler's by-result path (#40) — a
+        // protected-only result has no plan to name its special items, so it is not offered.
+        return CraftPlanner.Craftability.UNSOLVABLE;
     }
 }

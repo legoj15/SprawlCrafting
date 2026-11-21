@@ -130,10 +130,4 @@ public final class SprawlNetwork {
         com.legoj15.sprawlcrafting.forge.client.EngineWatchdog.engineRequestSent();
         CHANNEL2.sendToServer(new StartProtectedCraftMessage(recipeId));
     }
-
-    /** {@link #startProtectedByRecipe(ResourceLocation)} for the JEI hook's by-result confirm. */
-    public static void startProtectedByResult(ItemStack result) {
-        com.legoj15.sprawlcrafting.forge.client.EngineWatchdog.engineRequestSent();
-        CHANNEL2.sendToServer(new StartProtectedCraftMessage(result));
-    }
 }

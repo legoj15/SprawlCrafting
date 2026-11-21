@@ -24,8 +24,7 @@ import net.minecraftforge.fml.common.network.simpleimpl.MessageContext;
  * <p>C2S-only on CHANNEL2 at the next free discriminator, for the same reason as
  * {@link CancelCraftMessage}: the main channel's ids 0-2 and CHANNEL2's 0-4 (4 = cancel) are
  * frozen, and an unknown discriminator of a KNOWN channel is a kick — so this must only ever
- * travel upstream, and
- * only to a server that advertised {@link ServerHelloMessage#CAP_PROTECTED} (the client gates the
+ * travel upstream, and only to a server that advertised {@link ServerHelloMessage#CAP_PROTECTED} (the client gates the
  * send on that bit).
  */
 public class StartProtectedCraftMessage implements IMessage {

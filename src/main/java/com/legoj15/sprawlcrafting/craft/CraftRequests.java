@@ -31,12 +31,8 @@ public final class CraftRequests {
         record Rejected(PlanOutcome outcome) implements StartOutcome {}
     }
 
-    public static StartOutcome tryStart(ServerPlayer player, RecipeHolder<?> holder) {
-        return tryStart(player, holder, false);
-    }
-
     /**
-     * {@link #tryStart(ServerPlayer, RecipeHolder)} with the protected tier (issue #40):
+     * Plans and starts a job for {@code holder}, with the protected tier (issue #40):
      * {@code allowProtected} is the confirmed request from the protected channel, whose plan may also
      * count the player's protected stacks (enchanted and/or renamed, never damaged) once the plain
      * pool — inventory, then an open station's storage — has fallen short. A request that still fails

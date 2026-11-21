@@ -149,20 +149,16 @@ public class DeferredCraftTransferHandler<C extends Container> implements IRecip
                     SprawlNetwork.startByRecipe(recipe.getRegistryName());
                 }
             } else {
-                boolean plainCan = session.canDeferCraft(result);
-                if (!plainCan && !ClientPlanCache.canDeferCraft(player, grid, result)) {
+                // Plain only (#40): without a recipe object there is no plan to name the special
+                // items in a warning, and consuming them unannounced is exactly what the protected
+                // tier must never do. A protected-only result is not offered here.
+                if (!session.canDeferCraft(result)) {
                     if (SprawlConfig.needsSystem && SprawlConfig.jeiIntegration) {
                         PendingGatherScreen.open(session.shortfallByResult(result));
                     }
                     return null;
                 }
-                if (plainCan) {
-                    SprawlNetwork.startByResult(result);
-                } else {
-                    // Makeable only with the protected tier (#40); the JEI hook had no recipe
-                    // object, so the server re-plans by result with the tier enabled.
-                    SprawlNetwork.startProtectedByResult(result);
-                }
+                SprawlNetwork.startByResult(result);
             }
             return null;
         }
@@ -197,7 +193,7 @@ public class DeferredCraftTransferHandler<C extends Container> implements IRecip
             return new MissingResourcesError(session.shortfall(recipe),
                     missingSlots(recipeLayout, player, session));
         }
-        if (ClientPlanCache.canDeferCraft(player, grid, result)) {
+        if (session.canDeferCraft(result)) { // plain only: see the click path (#40)
             JeiTintState.put(recipeLayout, JeiTintState.Tint.DEFERRED);
             return null;
         }
