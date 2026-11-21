@@ -214,6 +214,10 @@ final class Ae2NetworkView implements NetworkTerminals.View {
         if (input == null) {
             return false;
         }
+        // A SIMULATE insert can report up to twice the real room (AE2 offers the item to the storages
+        // that already hold it, then to every storage again, and nothing is stored in between), so
+        // the probe asks for double and requires all of it.
+        input.setStackSize(2L * stack.getCount());
         IAEItemStack leftover = Platform.poweredInsert(energy, cell, input, source, Actionable.SIMULATE);
         return leftover == null || leftover.getStackSize() <= 0;
     }

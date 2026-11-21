@@ -1281,6 +1281,24 @@ public final class CraftExecutor {
         return true;
     }
 
+    /**
+     * How many of {@code stack} the 36 main slots take now (merge room plus empty slots, capped at
+     * the stack's count): the share {@link #insertIntoMainInventory} places before offering the
+     * rest to an open network.
+     */
+    static int mainInventoryRoom(InventoryPlayer inventory, ItemStack stack) {
+        long room = 0;
+        for (int i = 0; i < MAIN && room < stack.getCount(); i++) {
+            ItemStack existing = inventory.mainInventory.get(i);
+            if (existing.isEmpty()) {
+                room += stack.getMaxStackSize();
+            } else if (sameItem(existing, stack)) {
+                room += Math.max(0, existing.getMaxStackSize() - existing.getCount());
+            }
+        }
+        return (int) Math.min(room, stack.getCount());
+    }
+
     /** Same item, same metadata, same NBT — count-independent (for merge/fit checks). */
     static boolean sameItem(ItemStack a, ItemStack b) {
         return a.getItem() == b.getItem() && a.getMetadata() == b.getMetadata()

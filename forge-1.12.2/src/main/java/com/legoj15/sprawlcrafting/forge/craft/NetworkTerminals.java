@@ -113,10 +113,11 @@ public final class NetworkTerminals {
 
         /**
          * Server only. Whether the network would take all of {@code stack} now (a simulated insert,
-         * nothing moves). The default says yes: a view that cannot simulate is trusted to take it.
+         * nothing moves). The default says no (a view that cannot simulate never invites a spill);
+         * the client mirror keeps it, and is never asked.
          */
         default boolean accepts(ItemStack stack) {
-            return true;
+            return stack.isEmpty();
         }
     }
 

@@ -292,10 +292,11 @@ public final class CraftQueueManager {
      * Whether one craft of {@code step} still has somewhere to put its output: the 36 main slots
      * ({@link CraftExecutor#fitsInMainInventory}'s rule — merge room, then empty slots; slots the
      * craft's own consumption would free are not counted, the executor's assignment is not visible
-     * here) or, with a usable network terminal open, its network when a simulated insert says it
-     * takes the whole output. Asked only of an interleaved job's crafts: the refusal is what lets
-     * the schedule shrink its batch around a full store instead of spilling the output at the
-     * player's feet.
+     * here), and with a usable network terminal open, the network for the share the slots cannot
+     * take (the executor's own order), when a simulated insert says it takes that share. Asked only
+     * of an interleaved job's crafts: the refusal is what lets the schedule shrink its batch around
+     * a full store instead of spilling the output at the player's feet. A failing probe counts as
+     * no room (the job shrinks or stops; nothing is lost).
      */
     private static boolean hasRoomFor(EntityPlayerMP player, CraftStep step) {
         ItemStack output = stepOutput(step);
@@ -307,7 +308,17 @@ public final class CraftQueueManager {
             return false;
         }
         NetworkTerminals.View network = NetworkTerminals.view(player);
-        return network != null && network.accepts(output);
+        if (network == null) {
+            return false;
+        }
+        ItemStack overflow = output.copy();
+        overflow.shrink(CraftExecutor.mainInventoryRoom(player.inventory, output));
+        try {
+            return network.accepts(overflow);
+        } catch (RuntimeException | LinkageError e) {
+            LogManager.getLogger("SprawlCrafting").warn("SprawlCrafting: network room probe failed", e);
+            return false;
+        }
     }
 
     /**
