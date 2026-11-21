@@ -138,7 +138,7 @@ public final class CraftExecutor {
         // moved into the main inventory first, and the assignment below then consumes them through
         // the ordinary protected-inventory path. Staging mutates, so the plan is re-made after it.
         int staged = stageProtectedFromStation(player, plan.station(), plan.ingredients(), plan.layout(),
-                plan.ledger(), plan.allowProtected());
+                plan.ledger(), plan.allowProtected(), plan.assignment());
         if (staged > 0) {
             Plan fresh = prepare(player, recipeId, ledger, stationPlanned, layout, allowProtected);
             if (fresh == null) {
@@ -331,7 +331,7 @@ public final class CraftExecutor {
         // decide whether even one craft's picks may repeat (a staged protected copy is a fallback
         // pick, which clears preferredFilled and runs the craft alone).
         int staged = stageProtectedFromStation(player, plan.station(), plan.ingredients(), plan.layout(),
-                plan.ledger(), plan.allowProtected());
+                plan.ledger(), plan.allowProtected(), plan.assignment());
         if (staged > 0) {
             Plan fresh = prepare(player, recipeId, ledger, stationPlanned, layout, allowProtected);
             if (fresh == null) {
@@ -378,20 +378,13 @@ public final class CraftExecutor {
     private static int stageProtectedFromStation(ServerPlayer player, StationStorage station,
                                                  List<Ingredient> ingredients, List<Item> layout,
                                                  ProducedLedger<Item, LedgerVariant> ledger,
-                                                 boolean allowProtected) {
+                                                 boolean allowProtected, Assignment current) {
         if (!allowProtected || station == null || ingredients.isEmpty()) {
             return 0;
         }
-        Map<Item, Long> protectedStock;
-        try {
-            protectedStock = station.protectedCounts();
-        } catch (RuntimeException | LinkageError e) {
-            Constants.LOG.warn("SprawlCrafting: crafting station protected scan failed, not staging from it", e);
-            return 0;
-        }
-        if (protectedStock.isEmpty()) {
-            return 0;
-        }
+        // No up-front protectedCounts() scan: it walks the whole storage, and this runs before every
+        // craft of a protected job. Only a cell that is actually short asks the station (extractProtected),
+        // and noneLeft keeps one craft from asking twice for the same item.
         Inventory inventory = player.getInventory();
         // The station's plain availability, asked at most once per item per staging (a lookup each).
         Map<Item, Long> plainStock = new HashMap<>();
@@ -434,7 +427,10 @@ public final class CraftExecutor {
         }
         // The layout staged what it could; an assignment still missing something gets one protected
         // copy per pass, each fixing one cell's shortfall (at most one pass per grid cell).
-        Assignment assignment = assign(inventory, ingredients, ledger, station, layout, allowProtected);
+        // The caller's assignment still holds when the layout pass staged nothing: reuse it rather
+        // than assigning twice per craft.
+        Assignment assignment = staged == 0 && current != null ? current
+                : assign(inventory, ingredients, ledger, station, layout, allowProtected);
         for (int pass = 0; pass < GRID_CELLS && assignment.missing() != null; pass++) {
             Ingredient missing = assignment.missing();
             boolean stagedOne = false;
@@ -500,12 +496,12 @@ public final class CraftExecutor {
     }
 
     /**
-     * Whether the main inventory can take one whole stack of {@code item} (issue #49): the
-     * plain-stack read of {@link #outputRoom}, which cannot see a protected copy's own partial stacks
-     * (their components differ) — the safe side, a copy that might not merge is simply not drawn.
+     * Whether the main inventory has an empty slot for a staged copy (issue #49). A plain-stack room
+     * read would count merges into plain stacks of the item, which a protected copy (different tag or
+     * components) cannot join, and the copy would then drop at the feet.
      */
     private static boolean roomForOne(Inventory inventory, Item item) {
-        return outputRoom(inventory, null, new ItemStack(item), 1, true, null) >= 1;
+        return inventory.getFreeSlot() >= 0;
     }
 
     /** One debug line for staged copies (issue #49) the craft ended up not using: they stay with the player. */
@@ -1087,7 +1083,7 @@ public final class CraftExecutor {
         // the protected probe can then pick this manual layout over vanilla's plain fill.
         int stagedProtected = cells == null ? 0
                 : stageProtectedFromStation(player, StationStorages.open(player), cells, layout, ledger,
-                        allowProtected);
+                        allowProtected, null);
         boolean plainFallsShort = cells != null
                 && assign(player.getInventory(), cells, null, null, layout, false).missing() != null;
         boolean needsLedger = plainFallsShort
