@@ -1264,9 +1264,38 @@ public final class CraftExecutor {
             }
         }
         if (!stack.isEmpty()) {
+            noteDrop(stack);
             player.dropItem(stack, false);
         }
         return stored;
+    }
+
+    /** The first stack dropped at the feet since the last {@link #takeDropped}; server thread only. */
+    private static ItemStack firstDrop = ItemStack.EMPTY;
+
+    /**
+     * Records the first stack an {@link #insertIntoMainInventory} dropped at the player's feet since
+     * the last {@link #takeDropped}; later drops leave it alone — one is enough to trip the wire.
+     * Every overflow path shares the record (result, remainders, network refunds): any drop during
+     * a job's craft says the same thing, that nothing had room for it.
+     */
+    private static void noteDrop(ItemStack overflow) {
+        if (!firstDrop.isEmpty()) {
+            return;
+        }
+        firstDrop = overflow.copy();
+    }
+
+    /**
+     * The first stack dropped at the player's feet since the last call (then forgotten), or
+     * {@link ItemStack#EMPTY}. The queue manager clears this before each craft and reads it after
+     * (issue #45): a bulk craft whose output dropped stops the job there, so a full inventory costs
+     * one craft's spill, never a spill repeated every craft of the burst.
+     */
+    static ItemStack takeDropped() {
+        ItemStack dropped = firstDrop;
+        firstDrop = ItemStack.EMPTY;
+        return dropped;
     }
 
     /** Non-mutating check that every stack would fit into the 36 main inventory slots together. */

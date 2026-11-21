@@ -185,8 +185,9 @@ public final class CraftQueueManager {
      * tick). The clock is checked after a craft, never before, so a job always makes at least one
      * craft of progress even when its {@code deadline} (nanoTime) has already passed. An interleaved
      * job's crafts each re-derive the schedule's next batch, so one burst spans batches and steps
-     * alike; its crafts also pass the no-room gate below, which a sequential job's never do (they
-     * keep the spill-at-the-feet rule this tree has always had).
+     * alike; its crafts also pass the no-room gate below, which a sequential job's never do (a bulk
+     * craft's own dropped output stops it instead, and a paced craft keeps the spill-at-the-feet
+     * rule this tree has always had).
      */
     private static void craftBurst(EntityPlayerMP player, CraftJob job, boolean bulk, long deadline, boolean gridChecked) {
         ItemStack lastCrafted = ItemStack.EMPTY;
@@ -242,8 +243,14 @@ public final class CraftQueueManager {
                         output.isEmpty() ? job.currentStep().recipeId().toString() : output.getDisplayName()));
                 return;
             }
+            // The drop tripwire (issue #45): a bulk step has no room pre-check here — one run before
+            // the craft cannot see the slots the craft's own consumption frees, so it would refuse
+            // crafts that fit — so the drop itself is the report. Forget anything dropped before
+            // this craft, then read what this one dropped after it.
+            CraftExecutor.takeDropped();
             CraftExecutor.CraftResult result = CraftExecutor.craftOnce(player, job.currentStep().recipeId(),
                     job.produced(), job.currentCraftLayout(), job.usesProtected());
+            ItemStack dropped = CraftExecutor.takeDropped();
             if (result instanceof CraftExecutor.CraftResult.Success) {
                 CraftExecutor.CraftResult.Success success = (CraftExecutor.CraftResult.Success) result;
                 // Dependence can be learned mid-job: a craft that actually drew from the chest or the
@@ -261,6 +268,20 @@ public final class CraftQueueManager {
                     sync(player, job, CraftProgressMessage.State.FINISHED, lastCrafted);
                     notify(player, message("sprawlcrafting.craft.finished", TextFormatting.GREEN,
                             job.targetResult().getDisplayName()));
+                    return;
+                }
+                // A bulk craft's output landed at the feet: the inventory and any open network are
+                // full, and continuing would drop every remaining craft's result the same way — the
+                // job stops for the player to make room instead of spilling. The craft itself stands
+                // (its items are real and its bookkeeping above is done); a paced craft keeps the
+                // spill this tree has always had, a few items at the feet being expected there.
+                if (bulk && !dropped.isEmpty()) {
+                    logNoRoom(player, job, dropped);
+                    ACTIVE.remove(player.getUniqueID());
+                    sync(player, job, CraftProgressMessage.State.CANCELLED, ItemStack.EMPTY);
+                    notify(player, message("sprawlcrafting.craft.no_room", TextFormatting.RED,
+                            job.targetResult().getDisplayName(),
+                            dropped.getDisplayName()));
                     return;
                 }
                 // An interleaved job's craft boundaries are not step boundaries: the schedule
