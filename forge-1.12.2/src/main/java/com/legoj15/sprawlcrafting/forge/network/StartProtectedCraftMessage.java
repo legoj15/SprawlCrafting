@@ -16,10 +16,11 @@ import net.minecraftforge.fml.common.network.simpleimpl.MessageContext;
 /**
  * C2S: the player confirmed a deferred craft whose plan needs the player's protected stacks
  * (enchanted and/or renamed, never damaged; issue #40) — the plain pool fell short, and the preview
- * said which special items would be used. Carries whichever identity the confirm UI had, exactly
- * like the two plain start messages it mirrors: a recipe id (the recipe book and the JEI hook that
- * recovered the recipe) or a result stack (the JEI hook that could not). The server re-plans
- * authoritatively with the protected tier enabled, so nothing else rides along.
+ * said which special items would be used. This client only ever sends the recipe id (the recipe
+ * book and the JEI hook that recovered the recipe): a by-result confirm has no plan to warn from,
+ * so it stays plain-only. The codec still reads a result stack so the wire shape stays as it first
+ * shipped, and the server handles one. The server re-plans authoritatively with the protected
+ * tier enabled, so nothing else rides along.
  *
  * <p>C2S-only on CHANNEL2 at the next free discriminator, for the same reason as
  * {@link CancelCraftMessage}: the main channel's ids 0-2 and CHANNEL2's 0-4 (4 = cancel) are
@@ -38,11 +39,6 @@ public class StartProtectedCraftMessage implements IMessage {
     /** By-recipe form: the recipe book's and JEI's confirm, which know the recipe. */
     public StartProtectedCraftMessage(ResourceLocation recipeId) {
         this.recipeId = recipeId;
-    }
-
-    /** By-result form: JEI's fallback confirm, which recovered only the output stack. */
-    public StartProtectedCraftMessage(ItemStack result) {
-        this.result = result;
     }
 
     @Override

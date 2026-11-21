@@ -108,9 +108,9 @@ public final class NetworkTerminalTransferHandler extends DeferredCraftTransferH
      * output. Protected-aware (issue #40), like the base handler's own paths: a recipe only the
      * player's protected stacks can make is {@code DEFERRED} here too, so the terminal offers the
      * yellow deferred button (warning tooltip, protected start on click) instead of routing it to
-     * AE2's handler, which would grey it out or try to fill the grid from plain stock only. The
-     * by-result fallback keeps the plain session's direct/deferred split and widens only its
-     * shortfalls, reusing {@link ClientPlanCache}'s protected tier rather than a second classify.
+     * AE2's handler, which would grey it out or try to fill the grid from plain stock only. With no
+     * recipe object the result is classified from the plain session only (one step = direct, more =
+     * deferred, otherwise unsolvable): without a plan there is no warning, so no protected craft.
      */
     private static CraftPlanner.Craftability classify(IRecipeLayout recipeLayout, EntityPlayer player) {
         ItemStack result = outputStack(recipeLayout);

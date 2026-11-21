@@ -128,18 +128,6 @@ public final class ClientPlanCache {
         return outcome; // the plain rejection, with its own message semantics
     }
 
-    /**
-     * Whether {@code result} can be deferred-crafted from current stock, counting the protected
-     * tier too (issue #40) — the JEI "+" fallback, which has no recipe object to classify.
-     */
-    public static boolean canDeferCraft(EntityPlayer player, GridContext grid, ItemStack result) {
-        if (get(player, grid).canDeferCraft(result)) {
-            return true;
-        }
-        CraftPlanner.Session protectedTier = protectedSession(player, grid);
-        return protectedTier != null && protectedTier.canDeferCraft(result);
-    }
-
     private static int inventorySignature(EntityPlayer player) {
         int hash = 1;
         for (int i = 0; i < CraftPlanner.MAIN_INVENTORY_SIZE; i++) {
