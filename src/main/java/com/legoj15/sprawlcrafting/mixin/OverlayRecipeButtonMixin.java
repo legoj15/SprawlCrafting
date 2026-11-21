@@ -5,6 +5,7 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
 
 import com.legoj15.sprawlcrafting.client.GatherCandidate;
+import com.legoj15.sprawlcrafting.client.MissingIngredients;
 import com.legoj15.sprawlcrafting.client.MissingIngredientsView;
 //? if >=1.21.11 {
 /*import net.minecraft.world.item.crafting.display.RecipeDisplayId;*/
@@ -39,7 +40,7 @@ public abstract class OverlayRecipeButtonMixin implements GatherCandidate {
     @Override
     public boolean sprawlcrafting$tryOpenGatherList() {
         if (isCraftable || recipe == null
-                || !com.legoj15.sprawlcrafting.client.MissingIngredients.canRequestByDisplay()) {
+                || !MissingIngredients.canRequestByDisplay()) {
             return false; // craftable (vanilla's left-click), or a server that can't answer (#42)
         }
         MissingIngredientsView.open(recipe);

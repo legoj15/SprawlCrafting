@@ -113,7 +113,7 @@ public class DeferredCraftingReiTransferHandler implements TransferHandler {
             return button;
         }
         if (craftability == Craftability.UNSOLVABLE && grid == GridContext.CRAFTING_TABLE
-                && SprawlConfig.get().needsSystem()) {
+                && SprawlConfig.get().needsSystem() && MissingIngredients.canRequestByRecipe()) {
             // Mirror JEI's orange button: an unmakeable recipe's transfer button opens the gather list
             // instead of REI's dead red "Not enough materials". Informational, so available mid-job.
             // Gated to the 3×3 table: on the 2×2, classify==UNSOLVABLE also covers "needs a bigger

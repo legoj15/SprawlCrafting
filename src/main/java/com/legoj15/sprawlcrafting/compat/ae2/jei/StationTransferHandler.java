@@ -176,7 +176,7 @@ public class StationTransferHandler<C extends AbstractContainerMenu>
             }
             return DeferredTransfers.gatherListError(holder);
         }
-        // Helper off: AE2's own missing report (or its partial transfer on the click), same shape as above.
+        // Helper off, or a server that can't answer the gather request (#42): AE2's own missing report (or its partial transfer on the click), same shape as above.
         return doTransfer || ClientJobTracker.hasActiveJob()
                 ? busyOr(() -> stock.transferRecipe(container, recipe, recipeSlots, player, maxTransfer, doTransfer))
                 : simulated;*/

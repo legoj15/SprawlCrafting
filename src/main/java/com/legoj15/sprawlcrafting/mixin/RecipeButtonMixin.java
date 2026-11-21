@@ -12,6 +12,7 @@ import com.legoj15.sprawlcrafting.Constants;
 import com.legoj15.sprawlcrafting.client.DeferredClickState;
 import com.legoj15.sprawlcrafting.client.DeferredCraftableCache;
 import com.legoj15.sprawlcrafting.client.GatherCandidate;
+import com.legoj15.sprawlcrafting.client.MissingIngredients;
 import com.legoj15.sprawlcrafting.client.MissingIngredientsView;
 import com.legoj15.sprawlcrafting.config.SprawlConfig;
 import com.legoj15.sprawlcrafting.craft.GridContext;
@@ -231,7 +232,7 @@ public abstract class RecipeButtonMixin implements GatherCandidate {
         if (id == null || collection.isCraftable(id)) {
             return false; // craftable (incl. our deferred yellow): not a red gather candidate
         }
-        if (!isOnlyOption() || !com.legoj15.sprawlcrafting.client.MissingIngredients.canRequestByDisplay()) {
+        if (!isOnlyOption() || !MissingIngredients.canRequestByDisplay()) {
             return false; // grouped recipe (vanilla's variant overlay), or a server that can't answer (#42)
         }
         MissingIngredientsView.open(id);
@@ -252,7 +253,7 @@ public abstract class RecipeButtonMixin implements GatherCandidate {
     /** Appends the "right-click to see what you need" hint to a red recipe's tooltip. */
     private void sprawlcrafting$appendGatherHint(CallbackInfoReturnable<List<Component>> cir) {
         if (!SprawlConfig.get().needsSystem()
-                || !com.legoj15.sprawlcrafting.client.MissingIngredients.canRequestByDisplay()) {
+                || !MissingIngredients.canRequestByDisplay()) {
             return; // helper disabled or the server can't answer (#42): right-click stays vanilla, no hint
         }
         List<Component> lines = new java.util.ArrayList<>(cir.getReturnValue());
