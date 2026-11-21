@@ -108,6 +108,37 @@ public final class CraftQueueManager {
         if (job == null || !job.tick()) {
             return;
         }
+        // The full-grid gate for the step the tick starts on runs before the burst budget is granted, so a
+        // job paused for a table at tick start takes no slice of it; craftBurst runs the gate for a 3x3
+        // step an interleaved burst first reaches later. gridChecked: the gate already ran and passed.
+        boolean gridChecked = job.currentStep().needsFullGrid();
+        if (gridChecked && fullGridBlocked(player, job)) {
+            return;
+        }
+        if (!job.isBulkStep()) {
+            // One craft per due tick, whatever the clock says: it never draws on the shared burst budget.
+            craftBurst(player, job, false, 0L, gridChecked);
+            return;
+        }
+        // The window is keyed on the SERVER tick, NOT player.tickCount: that is per-entity and resets to 0
+        // on death/respawn (see DeferredCraftSync.maybeSync, which hit exactly that wedge).
+        long start = System.nanoTime();
+        long deadline = start + BURSTS.grant(player.level().getServer().getTickCount(),
+                CraftQueueManager::bulkJobCount);
+        try {
+            craftBurst(player, job, true, deadline, gridChecked);
+        } finally {
+            BURSTS.charge(System.nanoTime() - start);
+        }
+    }
+
+    /**
+     * The full-grid gate: when the current step needs a 3x3 grid and none is available, holds the
+     * job, reports it paused and returns true. tick() runs it for the starting step before the burst
+     * budget is granted; craftBurst runs it for a 3x3 step first reached mid-burst, since an interleaved
+     * job's schedule moves between steps from batch to batch.
+     */
+    private static boolean fullGridBlocked(ServerPlayer player, CraftJob job) {
         // 3×3 steps only run with a crafting table in reach. The full scan runs when due (every half
         // second, which is every craft of a paced step); a bulk step bursts every tick in between, so
         // those ticks re-validate just the table the last scan found (cheap) and pause the moment it
@@ -119,36 +150,23 @@ public final class CraftQueueManager {
         // A usable open crafting station (AE2 Crafting Terminal, which has its own 3×3 grid but is no
         // recipe-book menu) also counts like a table in reach; the check is the open menu's class plus its
         // live link status, cheap enough for every burst tick.
-        if (job.currentStep().needsFullGrid() && !CraftingGrids.isFullGrid(CraftingGrids.find(player.containerMenu))) {
-            if (job.reachCheckDue()) {
-                BlockPos table = CraftingTableReach.findInReach(player);
-                if (table == null && !hasOpenStation(player)) {
-                    job.holdForRetry();
-                    sync(player, job, pausedState(job), ItemStack.EMPTY);
-                    return;
-                }
-                job.markReachChecked(table);
-            } else if (!CraftingTableReach.isStillInReach(player, job.reachTable()) && !hasOpenStation(player)) {
+        if (!job.currentStep().needsFullGrid() || CraftingGrids.isFullGrid(CraftingGrids.find(player.containerMenu))) {
+            return false;
+        }
+        if (job.reachCheckDue()) {
+            BlockPos table = CraftingTableReach.findInReach(player);
+            if (table == null && !hasOpenStation(player)) {
                 job.holdForRetry();
                 sync(player, job, pausedState(job), ItemStack.EMPTY);
-                return;
+                return true;
             }
+            job.markReachChecked(table);
+        } else if (!CraftingTableReach.isStillInReach(player, job.reachTable()) && !hasOpenStation(player)) {
+            job.holdForRetry();
+            sync(player, job, pausedState(job), ItemStack.EMPTY);
+            return true;
         }
-        if (!job.isBulkStep()) {
-            // One craft per due tick, whatever the clock says: it never draws on the shared burst budget.
-            craftBurst(player, job, false, 0L);
-            return;
-        }
-        // The window is keyed on the SERVER tick, NOT player.tickCount: that is per-entity and resets to 0
-        // on death/respawn (see DeferredCraftSync.maybeSync, which hit exactly that wedge).
-        long start = System.nanoTime();
-        long deadline = start + BURSTS.grant(player.level().getServer().getTickCount(),
-                CraftQueueManager::bulkJobCount);
-        try {
-            craftBurst(player, job, true, deadline);
-        } finally {
-            BURSTS.charge(System.nanoTime() - start);
-        }
+        return false;
     }
 
     /** Active jobs that burst this tick and so split its budget (see {@link CraftJob#burstsThisTick()}). */
@@ -173,9 +191,18 @@ public final class CraftQueueManager {
      * clock is checked after a batch, never before, so a job always makes at least one craft of
      * progress even when its {@code deadline} (nanoTime) has already passed.
      */
-    private static void craftBurst(ServerPlayer player, CraftJob job, boolean bulk, long deadline) {
+    private static void craftBurst(ServerPlayer player, CraftJob job, boolean bulk, long deadline, boolean gridChecked) {
         ItemStack lastCrafted = ItemStack.EMPTY;
         while (true) {
+            // The full-grid gate, once per burst: the first time the burst reaches a step that needs a
+            // 3x3 grid, unless tick() already ran it (the world does not change between batches of one
+            // tick, so one pass covers the rest of the burst).
+            if (!gridChecked && job.currentStep().needsFullGrid()) {
+                if (fullGridBlocked(player, job)) {
+                    return;
+                }
+                gridChecked = true;
+            }
             // If the final craft is due and the player has a compatible crafting grid open, lay the
             // recipe out in that grid for them to grab (a real vanilla craft) instead of auto-crafting
             // it. Any case that can't cleanly hand off falls through to the normal auto-craft below.
