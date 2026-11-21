@@ -33,6 +33,21 @@ public interface IPlatformHelper {
     void sendProgress(ServerPlayerEntity player, CraftProgressPacket packet);
 
     /**
+     * Whether {@code player}'s client has the craft-progress-counts channel
+     * ({@link CraftProgressPacket#COUNTS_ID}), so it decodes that channel's VarLong {@code done}/
+     * {@code total} layout. Any other client gets the main channel's VarInt counts, scaled down for an
+     * over-int job ({@code CraftJob#wireDone/wireTotal}), so its toast caps at "x / 2.15B" (issue #46).
+     */
+    boolean canReceiveProgressCounts(ServerPlayerEntity player);
+
+    /**
+     * S2C progress snapshot carrying the real long craft counts, on the counts channel
+     * ({@link CraftProgressPacket#COUNTS_ID}). Implementations no-op when
+     * {@link #canReceiveProgressCounts} is false.
+     */
+    void sendProgressCounts(ServerPlayerEntity player, CraftProgressPacket packet);
+
+    /**
      * Whether {@code player}'s client has the progress-states-v2 marker channel
      * ({@link com.legoj15.sprawlcrafting.network.ProgressStatesV2}), so it can decode the progress states
      * appended after the original five ({@code PAUSED_STATION}). Channel presence alone is not enough: a

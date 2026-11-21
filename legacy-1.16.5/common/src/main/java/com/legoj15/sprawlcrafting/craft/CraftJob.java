@@ -371,9 +371,11 @@ public final class CraftJob {
     }
 
     /**
-     * {@link #craftsDone()} for the int-valued progress packet: exact up to {@link Integer#MAX_VALUE}
-     * total crafts, scaled down proportionally with {@link #wireTotal()} beyond that so the ratio stays
-     * right and nothing wraps negative.
+     * {@link #craftsDone()} for the main channel's int-valued progress packet: exact up to
+     * {@link Integer#MAX_VALUE} total crafts, scaled down proportionally with {@link #wireTotal()}
+     * beyond that so the ratio stays right and nothing wraps negative. Issue #46: this is now only the
+     * legacy fallback for a client without the counts channel — a capable client gets the real long
+     * counts on that channel instead, so its toast does not read "x / 2.15B".
      */
     public int wireDone() {
         return scaleToInt(craftsDone());

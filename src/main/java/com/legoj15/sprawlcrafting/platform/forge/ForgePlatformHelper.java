@@ -49,9 +49,9 @@ public class ForgePlatformHelper implements IPlatformHelper {
     // proves the peer has the original messages, so it must never vouch for a capability that is
     // told apart by its own id: ProgressStatesV2Payload (the marker for newer progress states) is not
     // registered on this line, and a 1.0.x client has the channel yet cannot decode those states. It
-    // answers false, so the server always sends such a client the original state. CancelCraftPayload
-    // and StartProtectedCraftPayload each ride their own channel on that line, so each answers for
-    // itself.
+    // answers false, so the server always sends such a client the original state. CancelCraftPayload,
+    // StartProtectedCraftPayload and CraftProgressCountsPayload each ride their own channel on that
+    // line, so each answers for itself.
     private static boolean remoteHas(Connection connection, ResourceLocation payloadId) {
         //? if >=1.20.5 {
         return NetworkContext.get(connection).getRemoteChannels().contains(payloadId);
@@ -64,6 +64,9 @@ public class ForgePlatformHelper implements IPlatformHelper {
         }
         if (com.legoj15.sprawlcrafting.network.StartProtectedCraftPayload.ID.equals(payloadId)) {
             return ForgeNetwork.isProtectedRemotePresent(connection);
+        }
+        if (com.legoj15.sprawlcrafting.network.CraftProgressCountsPayload.ID.equals(payloadId)) {
+            return ForgeNetwork.isCountsRemotePresent(connection);
         }
         return ForgeNetwork.isRemotePresent(connection);*/
         //?}
@@ -93,7 +96,12 @@ public class ForgePlatformHelper implements IPlatformHelper {
         //? if >=1.20.5 {
         ForgeNetwork.channel().send(payload, player.connection.getConnection());
         //?} else {
-        /*ForgeNetwork.channel().send(PacketDistributor.PLAYER.with(() -> player), payload);*/
+        /*// On Forge 47 the counts payload rides its own channel (main's discriminators are frozen).
+        if (payload instanceof com.legoj15.sprawlcrafting.network.CraftProgressCountsPayload) {
+            ForgeNetwork.countsChannel().send(PacketDistributor.PLAYER.with(() -> player), payload);
+            return;
+        }
+        ForgeNetwork.channel().send(PacketDistributor.PLAYER.with(() -> player), payload);*/
         //?}
     }
 

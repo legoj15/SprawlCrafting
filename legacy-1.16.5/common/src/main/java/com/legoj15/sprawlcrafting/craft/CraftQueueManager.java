@@ -341,7 +341,15 @@ public final class CraftQueueManager {
         if (state == CraftProgressPacket.State.PAUSED_STATION && !Services.PLATFORM.canReceiveProgressStatesV2(player)) {
             state = CraftProgressPacket.State.PAUSED;
         }
-        // done/total stay int on the wire (mod-1.0.3 layout); wireDone/wireTotal scale an over-int job down.
+        // A client that registered the counts channel gets the real long counts (issue #46): chat already
+        // prints them, and the int-scaled toast reading "x / 2.15B" next to that was the bug. Any other
+        // client keeps the exact mod-1.0.3 bytes: done/total as VarInt, with wireDone/wireTotal scaling an
+        // over-int job down so the ratio stays right.
+        if (Services.PLATFORM.canReceiveProgressCounts(player)) {
+            Services.PLATFORM.sendProgressCounts(player, new CraftProgressPacket(
+                    state, job.targetResult().copy(), current.copy(), job.craftsDone(), job.totalCrafts()));
+            return;
+        }
         Services.PLATFORM.sendProgress(player, new CraftProgressPacket(
                 state, job.targetResult().copy(), current.copy(), job.wireDone(), job.wireTotal()));
     }

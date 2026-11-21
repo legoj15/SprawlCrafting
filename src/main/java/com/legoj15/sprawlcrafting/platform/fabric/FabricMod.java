@@ -7,6 +7,7 @@ import com.legoj15.sprawlcrafting.craft.CraftRequests;
 import com.legoj15.sprawlcrafting.craft.DeferredCraftSync;
 import com.legoj15.sprawlcrafting.network.CancelCraftPayload;
 import com.legoj15.sprawlcrafting.network.CraftPreviewPayload;
+import com.legoj15.sprawlcrafting.network.CraftProgressCountsPayload;
 import com.legoj15.sprawlcrafting.network.CraftProgressPayload;
 import com.legoj15.sprawlcrafting.network.CraftingScreenStatePayload;
 import com.legoj15.sprawlcrafting.network.DeferredCraftableSyncPayload;
@@ -51,6 +52,10 @@ public class FabricMod implements ModInitializer {
         s2c().register(
                 com.legoj15.sprawlcrafting.network.ProgressStatesV2Payload.TYPE,
                 com.legoj15.sprawlcrafting.network.ProgressStatesV2Payload.STREAM_CODEC);
+        // The progress snapshot with real long counts (#46); the server checks canReceive and falls
+        // back to the scaled-int legacy payload above for a client that lacks it.
+        s2c().register(
+                CraftProgressCountsPayload.TYPE, CraftProgressCountsPayload.STREAM_CODEC);
         ServerPlayNetworking.registerGlobalReceiver(StartDeferredCraftPayload.TYPE,
                 (payload, context) -> CraftRequests.handleStartRequest(context.player(), payload.recipeId()));
         ServerPlayNetworking.registerGlobalReceiver(CraftingScreenStatePayload.TYPE,

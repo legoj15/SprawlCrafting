@@ -16,9 +16,13 @@ import net.minecraftforge.fml.relauncher.SideOnly;
 
 /**
  * S2C: streams a deferred-craft job's progress to the client HUD flyout. Mirrors the modern
- * {@code CraftProgressPayload}. The {@link Handler}'s {@code onMessage} is
- * {@code @SideOnly(Side.CLIENT)} — FML strips the body on a dedicated server, so the handler
- * class is safe to load on both sides (required for discriminator registration).
+ * {@code CraftProgressPayload}. Its done/total are ints, exact only up to
+ * {@link Integer#MAX_VALUE} total crafts; the long-count form a counts-capable client gets
+ * instead is {@link CraftProgressCountsMessage} (issue #46) — this message stays byte-for-byte
+ * what every older client receives (main-channel ids and layouts are frozen). The
+ * {@link Handler}'s {@code onMessage} is {@code @SideOnly(Side.CLIENT)} — FML strips the body on
+ * a dedicated server, so the handler class is safe to load on both sides (required for
+ * discriminator registration).
  */
 public class CraftProgressMessage implements IMessage {
 
@@ -111,7 +115,8 @@ public class CraftProgressMessage implements IMessage {
             Minecraft.getMinecraft().addScheduledTask(new Runnable() {
                 @Override
                 public void run() {
-                    ClientCraftState.update(message);
+                    ClientCraftState.update(message.state(), message.target(), message.current(),
+                            message.done(), message.total());
                 }
             });
             return null;

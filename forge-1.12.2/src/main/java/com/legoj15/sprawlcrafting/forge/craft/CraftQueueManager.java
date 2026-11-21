@@ -6,6 +6,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.IntSupplier;
 
+import com.legoj15.sprawlcrafting.forge.network.CraftProgressCountsMessage;
 import com.legoj15.sprawlcrafting.forge.network.CraftProgressMessage;
 import com.legoj15.sprawlcrafting.forge.network.SprawlNetwork;
 import com.legoj15.solver.CountFormat;
@@ -322,8 +323,17 @@ public final class CraftQueueManager {
     private static void sync(EntityPlayerMP player, CraftJob job,
                              CraftProgressMessage.State state, ItemStack current) {
         job.markSynced();
-        // done/total stay int on the frozen main channel; wireDone/wireTotal scale an over-int job down.
-        SprawlNetwork.sendProgress(player, new CraftProgressMessage(
-                state, job.targetResult().copy(), current.copy(), job.wireDone(), job.wireTotal()));
+        // A client that advertised the counts capability (issue #46) gets the real long counts on
+        // the v2 channel — an over-int job then shows its true progress, not a scaled 2.15B. Every
+        // other client keeps the frozen main-channel form: done/total stay int there, and
+        // wireDone/wireTotal scale an over-int job down.
+        if (ClientCraftingView.progressCounts(player.getUniqueID())) {
+            SprawlNetwork.sendProgressCounts(player, new CraftProgressCountsMessage(
+                    state, job.targetResult().copy(), current.copy(),
+                    job.craftsDone(), job.totalCrafts()));
+        } else {
+            SprawlNetwork.sendProgress(player, new CraftProgressMessage(
+                    state, job.targetResult().copy(), current.copy(), job.wireDone(), job.wireTotal()));
+        }
     }
 }

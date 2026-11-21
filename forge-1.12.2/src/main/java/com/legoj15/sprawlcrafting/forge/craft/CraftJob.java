@@ -350,7 +350,9 @@ public final class CraftJob {
     /**
      * {@link #craftsDone()} for the int-valued progress message: exact up to {@link Integer#MAX_VALUE}
      * total crafts, scaled down proportionally with {@link #wireTotal()} beyond that so the ratio stays
-     * right and nothing wraps negative. (Main-channel message ids and layouts are frozen.)
+     * right and nothing wraps negative. Since issue #46 this is only the fallback for clients without
+     * the counts capability — a client that advertised it gets the real longs over the v2 channel.
+     * (Main-channel message ids and layouts are frozen.)
      */
     public int wireDone() {
         return scaleToInt(craftsDone());

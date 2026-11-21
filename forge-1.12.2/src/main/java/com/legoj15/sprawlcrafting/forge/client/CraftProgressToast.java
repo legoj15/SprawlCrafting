@@ -52,8 +52,8 @@ public final class CraftProgressToast implements IToast {
         CraftProgressMessage.State state = ClientCraftState.state;
         ItemStack target = ClientCraftState.target;
         ItemStack current = ClientCraftState.current;
-        int done = ClientCraftState.done;
-        int total = ClientCraftState.total;
+        long done = ClientCraftState.done;
+        long total = ClientCraftState.total;
         boolean cancelHint = hintState(state) && ToastCancelClick.mouseOverHint();
 
         toastGui.getMinecraft().getTextureManager().bindTexture(TEXTURE_TOASTS);
@@ -77,8 +77,9 @@ public final class CraftProgressToast implements IToast {
         }
         toastGui.getMinecraft().fontRenderer.drawString(line, 30, 18, lineColor);
 
-        // Thin progress bar along the toast's bottom edge, tinted by state.
-        float fraction = total > 0 ? Math.min(1.0F, (float) done / total) : 0.0F;
+        // Thin progress bar along the toast's bottom edge, tinted by state. The ratio divides in
+        // floating point from the longs (issue #46): both counts can exceed Integer.MAX_VALUE.
+        float fraction = total > 0L ? Math.min(1.0F, (float) done / total) : 0.0F;
         Gui.drawRect(3, 28, 3 + (int) ((WIDTH - 6) * fraction), 30, statusColor(state) | 0xFF000000);
         GlStateManager.color(1.0F, 1.0F, 1.0F, 1.0F);
 

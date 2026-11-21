@@ -66,6 +66,19 @@ public class ForgeMod {
             ForgeMod::acceptsVersion);
 
     /**
+     * The craft-progress-counts channel (issue #46): the progress snapshot with {@code done}/{@code total}
+     * as VarLong, so an over-int job's toast shows real counts instead of the scaled ints the main
+     * channel's mod-1.0.3 layout carries. Same presence-marker role as {@link #PROGRESS_STATES_V2} — a
+     * peer that has it decodes the long layout, any other keeps the main channel — but this one carries
+     * the message itself. Same lenient predicates, so it stays optional both ways.
+     */
+    public static final SimpleChannel PROGRESS_COUNTS = NetworkRegistry.newSimpleChannel(
+            CraftProgressPacket.COUNTS_ID,
+            () -> PROTOCOL,
+            ForgeMod::acceptsVersion,
+            ForgeMod::acceptsVersion);
+
+    /**
      * The player-initiated cancel (issue #31) rides its own channel instead of a fourth id on the main
      * one: the main channel's ids 0-2 are frozen, and an older peer cannot be handed id 3. Same lenient
      * predicates and protocol as the main channel, so both sides keep treating it as optional.
@@ -117,6 +130,11 @@ public class ForgeMod {
                 ForgeMod::handleScreenState, Optional.of(NetworkDirection.PLAY_TO_SERVER));
         CHANNEL.registerMessage(2, CraftProgressPacket.class,
                 CraftProgressPacket::write, CraftProgressPacket::read,
+                ForgeMod::handleProgress, Optional.of(NetworkDirection.PLAY_TO_CLIENT));
+        // The same packet on the counts channel, long counts and all (issue #46); the client side of
+        // this is just handleProgress again — a snapshot is a snapshot whichever channel carried it.
+        PROGRESS_COUNTS.registerMessage(0, CraftProgressPacket.class,
+                CraftProgressPacket::writeCounts, CraftProgressPacket::readCounts,
                 ForgeMod::handleProgress, Optional.of(NetworkDirection.PLAY_TO_CLIENT));
         CANCEL_CRAFT.registerMessage(0, CancelCraftPacket.class,
                 CancelCraftPacket::write, CancelCraftPacket::read,

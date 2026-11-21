@@ -53,6 +53,21 @@ public class ForgePlatformHelper implements IPlatformHelper {
         }
     }
 
+    // The counts channel's own presence check, like canReceiveProgressStatesV2: a mod-1.0.x client has
+    // the main channel but would choke on the VarLong layout, so this channel is what says it decodes it.
+    @Override
+    public boolean canReceiveProgressCounts(ServerPlayerEntity player) {
+        return player.connection != null
+                && ForgeMod.PROGRESS_COUNTS.isRemotePresent(player.connection.getConnection());
+    }
+
+    @Override
+    public void sendProgressCounts(ServerPlayerEntity player, CraftProgressPacket packet) {
+        if (canReceiveProgressCounts(player)) {
+            ForgeMod.PROGRESS_COUNTS.send(PacketDistributor.PLAYER.with(() -> player), packet);
+        }
+    }
+
     @Override
     public boolean canReceiveProgressStatesV2(ServerPlayerEntity player) {
         return player.connection != null

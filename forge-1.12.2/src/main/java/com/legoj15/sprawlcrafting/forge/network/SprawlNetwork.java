@@ -35,7 +35,8 @@ public final class SprawlNetwork {
             NetworkRegistry.INSTANCE.newSimpleChannel(SprawlCrafting.MOD_ID);
 
     /** v2 channel (this release): server-side grid placement, the hello/screen-state handshake,
-     *  and the capability-gated cancel-craft request (issue #31). */
+     *  the capability-gated cancel-craft request (issue #31), and the capability-gated long
+     *  progress counts (issue #46). */
     public static final SimpleNetworkWrapper CHANNEL2 =
             NetworkRegistry.INSTANCE.newSimpleChannel(SprawlCrafting.MOD_ID + "2");
 
@@ -61,14 +62,23 @@ public final class SprawlNetwork {
      * {@link ServerHelloMessage#CAP_PROTECTED} (the client gates the send on that bit).
      */
     private static final int ID2_START_PROTECTED = 5;
+    /**
+     * S2C-only, the mirror of the two rules above (issue #46): the long-count form of
+     * {@link CraftProgressMessage}. An older v2 client knows CHANNEL2 without id 6 — and an
+     * unknown discriminator of a KNOWN channel is a kick — so it must only ever travel downstream,
+     * and only to a client that advertised {@link ClientHelloMessage#CAP_PROGRESS_COUNTS} in its
+     * hello ({@code CraftQueueManager} gates the send on that bit).
+     */
+    private static final int ID2_PROGRESS_COUNTS = 6;
 
     /** Common preInit (both sides): all message discriminators + their handlers. Every message
      *  must be registered here, even S2C ones, because the server needs the discriminator to encode
      *  outbound packets. The Side parameter controls which side's pipeline receives the handler; it
-     *  does NOT gate discriminator registration. CraftProgressMessage.Handler is safe to class-load
-     *  on a dedicated server: its onMessage body is {@code @SideOnly(Side.CLIENT)}, so FML strips
-     *  it, and the handler never fires because no messages arrive through the CLIENT pipeline on a
-     *  dedicated server. */
+     *  does NOT gate discriminator registration. Both progress handlers
+     *  ({@code CraftProgressMessage.Handler}, {@code CraftProgressCountsMessage.Handler}) are safe
+     *  to class-load on a dedicated server: their onMessage bodies are
+     *  {@code @SideOnly(Side.CLIENT)}, so FML strips them, and the handlers never fire because no
+     *  messages arrive through the CLIENT pipeline on a dedicated server. */
     public static void initCommon() {
         CHANNEL.registerMessage(CraftProgressMessage.Handler.class,
                 CraftProgressMessage.class, ID_PROGRESS, Side.CLIENT);
@@ -88,10 +98,21 @@ public final class SprawlNetwork {
                 CancelCraftMessage.class, ID2_CANCEL_CRAFT, Side.SERVER);
         CHANNEL2.registerMessage(StartProtectedCraftMessage.Handler.class,
                 StartProtectedCraftMessage.class, ID2_START_PROTECTED, Side.SERVER);
+        CHANNEL2.registerMessage(CraftProgressCountsMessage.Handler.class,
+                CraftProgressCountsMessage.class, ID2_PROGRESS_COUNTS, Side.CLIENT);
     }
 
     public static void sendProgress(EntityPlayerMP player, CraftProgressMessage message) {
         CHANNEL.sendTo(message, player);
+    }
+
+    /**
+     * Progress with the real long counts, for a client that advertised
+     * {@link ClientHelloMessage#CAP_PROGRESS_COUNTS} (issue #46) — the caller must have checked
+     * that bit, which is what keeps the id safe for the older v2 clients that lack it.
+     */
+    public static void sendProgressCounts(EntityPlayerMP player, CraftProgressCountsMessage message) {
+        CHANNEL2.sendTo(message, player);
     }
 
     public static void startByResult(ItemStack result) {

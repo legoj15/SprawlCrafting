@@ -58,6 +58,23 @@ public class FabricPlatformHelper implements IPlatformHelper {
         ServerPlayNetworking.send(player, CraftProgressPacket.ID, buf);
     }
 
+    // The counts channel's own presence check, like canReceive for the main one: a mod-1.0.x client has
+    // the main channel but would choke on the VarLong layout, so this channel is what says it decodes it.
+    @Override
+    public boolean canReceiveProgressCounts(ServerPlayerEntity player) {
+        return ServerPlayNetworking.canSend(player, CraftProgressPacket.COUNTS_ID);
+    }
+
+    @Override
+    public void sendProgressCounts(ServerPlayerEntity player, CraftProgressPacket packet) {
+        if (!canReceiveProgressCounts(player)) {
+            return;
+        }
+        PacketBuffer buf = PacketByteBufs.create();
+        packet.writeCounts(buf);
+        ServerPlayNetworking.send(player, CraftProgressPacket.COUNTS_ID, buf);
+    }
+
     // No crafting-station provider exists on Fabric 1.16.5 (AE2 support is Forge-only), so no job here is
     // ever station-dependent and nothing on this loader asks either question with a station open.
     @Override

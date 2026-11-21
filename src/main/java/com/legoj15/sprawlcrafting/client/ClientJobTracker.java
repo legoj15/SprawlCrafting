@@ -14,6 +14,11 @@ import net.minecraft.sounds.SoundEvents;
  * lifecycle owner of the single {@link CraftProgressToast}: a toast is added when a job
  * becomes visible and reused for every update until it hides itself (terminal state
  * displayed for a moment, or state gone).
+ *
+ * <p>The snapshot's counts are {@code long} (issue #46): real when the server sent
+ * {@code CraftProgressCountsPayload} (this client registered it), scaled to int range by
+ * {@code CraftJob.wireDone/wireTotal} otherwise — one and the same per server, so the
+ * craft-advance comparison below never mixes the two.
  */
 public final class ClientJobTracker {
 

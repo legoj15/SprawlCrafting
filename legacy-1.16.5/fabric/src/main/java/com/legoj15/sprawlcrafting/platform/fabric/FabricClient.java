@@ -27,6 +27,14 @@ public class FabricClient implements ClientModInitializer {
                     final CraftProgressPacket packet = CraftProgressPacket.read(buf);
                     client.execute(() -> ClientJobTracker.accept(packet));
                 });
+        // The same snapshot with real long counts (issue #46): registering this receiver also declares
+        // the channel to the server, whose canSend check then routes over-int jobs here instead of the
+        // main channel's scaled VarInt counts.
+        ClientPlayNetworking.registerGlobalReceiver(CraftProgressPacket.COUNTS_ID,
+                (client, handler, buf, sender) -> {
+                    final CraftProgressPacket packet = CraftProgressPacket.readCounts(buf);
+                    client.execute(() -> ClientJobTracker.accept(packet));
+                });
         // Tell the server which crafting grid is on screen (only while a job is active), so a
         // deferred craft's final step can be handed off to it for the player to grab.
         ClientTickEvents.END_CLIENT_TICK.register(client -> CraftingScreenWatcher.clientTick());

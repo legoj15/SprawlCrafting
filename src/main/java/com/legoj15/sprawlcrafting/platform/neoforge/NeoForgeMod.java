@@ -12,6 +12,7 @@ import com.legoj15.sprawlcrafting.craft.CraftRequests;
 import com.legoj15.sprawlcrafting.craft.DeferredCraftSync;
 import com.legoj15.sprawlcrafting.network.CancelCraftPayload;
 import com.legoj15.sprawlcrafting.network.CraftPreviewPayload;
+import com.legoj15.sprawlcrafting.network.CraftProgressCountsPayload;
 import com.legoj15.sprawlcrafting.network.CraftProgressPayload;
 import com.legoj15.sprawlcrafting.network.CraftingScreenStatePayload;
 import com.legoj15.sprawlcrafting.network.DeferredCraftableSyncPayload;
@@ -99,6 +100,13 @@ public class NeoForgeMod {
                 ProgressStatesV2Payload.TYPE,
                 ProgressStatesV2Payload.STREAM_CODEC,
                 (payload, context) -> { });
+        // The long-count snapshot (#46): registering it is what tells the server this client takes
+        // real longs (it falls back to the scaled-int legacy payload otherwise). Lambda body, not a
+        // method reference: keeps the client-only tracker class from loading on the dedicated server.
+        registrar.playToClient(
+                CraftProgressCountsPayload.TYPE,
+                CraftProgressCountsPayload.STREAM_CODEC,
+                (payload, context) -> ClientJobTracker.accept(payload.toProgressPayload()));
 
         // 26.x server-driven recipe-book layer (1.21.1 computes it client-side, no payloads).
         //? if >=1.21.11 {

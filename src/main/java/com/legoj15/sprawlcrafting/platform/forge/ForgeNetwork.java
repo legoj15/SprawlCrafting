@@ -6,6 +6,7 @@ import com.legoj15.sprawlcrafting.craft.ClientCraftingView;
 import com.legoj15.sprawlcrafting.craft.CraftQueueManager;
 import com.legoj15.sprawlcrafting.craft.CraftRequests;
 import com.legoj15.sprawlcrafting.network.CancelCraftPayload;
+import com.legoj15.sprawlcrafting.network.CraftProgressCountsPayload;
 import com.legoj15.sprawlcrafting.network.CraftProgressPayload;
 import com.legoj15.sprawlcrafting.network.CraftingScreenStatePayload;
 import com.legoj15.sprawlcrafting.network.StartDeferredCraftPayload;
@@ -60,7 +61,8 @@ import net.minecraftforge.network.simple.SimpleChannel;*/
  * everything, including {@code ABSENT} (peer lacks the channel) and {@code ACCEPTVANILLA} (vanilla peer), so it is optional both ways. Presence is per channel on that
  * line, not per payload ({@link #isRemotePresent}). {@code CancelCraftPayload} arrived after that
  * freeze, so on this line it rides its own {@code sprawlcrafting:cancel_craft} channel (discriminator 0)
- * built with the same predicates, and answers presence through {@link #isCancelRemotePresent}.
+ * built with the same predicates, and answers presence through {@link #isCancelRemotePresent}. So do
+ * {@code StartProtectedCraftPayload} (#40) and {@code CraftProgressCountsPayload} (#46).
  */
 final class ForgeNetwork {
 
@@ -158,6 +160,10 @@ final class ForgeNetwork {
                 .addMain(com.legoj15.sprawlcrafting.network.ProgressStatesV2Payload.TYPE,
                         widen(com.legoj15.sprawlcrafting.network.ProgressStatesV2Payload.STREAM_CODEC),
                         (payload, context) -> { })
+                // The long-count snapshot (#46): its own payload id, so canReceive tells a client that
+                // takes real longs apart from one on the scaled-int legacy payload.
+                .addMain(CraftProgressCountsPayload.TYPE, widen(CraftProgressCountsPayload.STREAM_CODEC),
+                        (payload, context) -> ClientJobTracker.accept(payload.toProgressPayload()))
                 //? if >=1.21.11 {
                 /*.addMain(DeferredCraftableSyncPayload.TYPE, widen(DeferredCraftableSyncPayload.STREAM_CODEC),
                         (payload, context) -> DeferredCraftableCache.accept(payload.displayIds(), payload.recipeIds()))
@@ -203,6 +209,8 @@ final class ForgeNetwork {
     private static SimpleChannel cancelChannel;
 
     private static SimpleChannel protectedChannel;
+
+    private static SimpleChannel countsChannel;
 
     private ForgeNetwork() {
     }
@@ -283,6 +291,23 @@ final class ForgeNetwork {
                     }
                 })
                 .add();
+        // The long-count progress snapshot (#46) rides its own channel for the same reason as the
+        // cancel and the protected start: main's discriminators are frozen, and this channel's
+        // presence on the peer is what tells the server the client takes real long counts (an older
+        // client keeps getting the scaled-int legacy payload on main).
+        countsChannel = NetworkRegistry.ChannelBuilder
+                .named(ResourceLocation.fromNamespaceAndPath(Constants.MOD_ID, "craft_progress_counts"))
+                .networkProtocolVersion(() -> PROTOCOL)
+                .clientAcceptedVersions(version -> true)
+                .serverAcceptedVersions(version -> true)
+                .simpleChannel();
+        countsChannel.messageBuilder(CraftProgressCountsPayload.class, 0, NetworkDirection.PLAY_TO_CLIENT)
+                .encoder(CraftProgressCountsPayload::write)
+                .decoder(CraftProgressCountsPayload::read)
+                // Lambda body, not a method reference: keeps the client-only tracker class from loading
+                // on the dedicated server.
+                .consumerMainThread((payload, context) -> ClientJobTracker.accept(payload.toProgressPayload()))
+                .add();
     }
 
     static SimpleChannel channel() {
@@ -295,6 +320,10 @@ final class ForgeNetwork {
 
     static SimpleChannel protectedChannel() {
         return protectedChannel;
+    }
+
+    static SimpleChannel countsChannel() {
+        return countsChannel;
     }
 
     // Whether the peer on this connection registered the channel. A vanilla or modless peer never does,
@@ -313,6 +342,12 @@ final class ForgeNetwork {
     // protected tier) never negotiates it, so the client never offers protected crafts against it.
     static boolean isProtectedRemotePresent(Connection connection) {
         return protectedChannel.isRemotePresent(connection);
+    }
+
+    // Same, for the counts payload's own channel (#46): a client on an older jar (before the long
+    // counts) never negotiates it, so the server keeps sending it the scaled-int legacy payload.
+    static boolean isCountsRemotePresent(Connection connection) {
+        return countsChannel.isRemotePresent(connection);
     }*/
     //?}
 }

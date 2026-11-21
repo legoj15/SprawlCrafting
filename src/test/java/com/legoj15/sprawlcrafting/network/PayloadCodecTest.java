@@ -223,9 +223,27 @@ class PayloadCodecTest {
         assertEquals(0, b.readableBytes(), "codec must consume the whole buffer");
     }
 
+    @Test
+    void craftProgressCountsTailCarriesOverIntCounts() {
+        // The counts payload (#46) exists to carry done/total past Integer.MAX_VALUE as VarLongs;
+        // its ItemStack head needs a bootstrapped registry (see the class javadoc), so the round-trip
+        // covers the registry-free Counts tail that the payload's own codec composes. 282429536481
+        // (9^12) and Long.MAX_VALUE (a saturated job total) both overflow the int range, so a VarInt
+        // swap fails here — by throwing on encode or decoding the wrong values.
+        CraftProgressCountsPayload.Counts original = new CraftProgressCountsPayload.Counts(
+                282_429_536_481L, Long.MAX_VALUE);
+        ByteBuf b = buf();
+        CraftProgressCountsPayload.Counts.STREAM_CODEC.encode(b, original);
+        assertEquals(original, CraftProgressCountsPayload.Counts.STREAM_CODEC.decode(b));
+        assertEquals(0, b.readableBytes(), "codec must consume the whole buffer");
+    }
+
     // --- CraftProgressPayload.State: the one hand-rolled enum codec on the wire ---
 
-    /** Mirror of the private STATE_CODEC (CraftProgressPayload.java:34) — same idMapper shape. */
+    /**
+     * Mirror of CraftProgressPayload.STATE_CODEC — same idMapper shape. A mirror, not the field: reading
+     * the payload's static initializes the class, whose ItemStack codecs need a bootstrapped registry.
+     */
     private static final StreamCodec<ByteBuf, CraftProgressPayload.State> STATE_CODEC =
             ByteBufCodecs.idMapper(
                     i -> CraftProgressPayload.State.values()[i], CraftProgressPayload.State::ordinal);

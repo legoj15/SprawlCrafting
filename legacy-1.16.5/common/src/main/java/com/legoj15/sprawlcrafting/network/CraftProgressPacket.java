@@ -12,10 +12,23 @@ import com.legoj15.sprawlcrafting.Constants;
  * half second and at each step boundary while a large step runs in bursts, on pause retries, and on
  * terminal transitions; the client just renders the latest snapshot. 1.16.5 port of the modern {@code CraftProgressPayload} (same fields,
  * same ordinal-keyed state wire format).
+ *
+ * <p>The craft counts travel in one of two layouts, picked by {@code CraftQueueManager.sync}: the
+ * main channel's {@link #write} (mod-1.0.3 bytes, counts as VarInt) for any client, or the counts
+ * channel's {@link #writeCounts} (counts as VarLong) for a client that registered {@link #COUNTS_ID}
+ * — an over-int job otherwise reaches such a client scaled to "x / 2.15B" (issue #46).
  */
 public final class CraftProgressPacket {
 
     public static final ResourceLocation ID = Constants.id("craft_progress");
+
+    /**
+     * The counts channel (issue #46): the same progress snapshot, but {@code done}/{@code total} as
+     * VarLong so an over-int job shows its real counts. Its presence on the client IS the capability —
+     * the same marker-channel idea as {@link ProgressStatesV2} for the appended states: a client that
+     * registered it decodes the long layout, any other keeps getting the main channel's exact old bytes.
+     */
+    public static final ResourceLocation COUNTS_ID = Constants.id("craft_progress_counts");
 
     public enum State {
         // Wire format is ordinal-keyed — only ever APPEND new states, never reorder. PAUSED_STATION (a
@@ -33,10 +46,10 @@ public final class CraftProgressPacket {
     private final State state;
     private final ItemStack target;
     private final ItemStack current;
-    private final int done;
-    private final int total;
+    private final long done;
+    private final long total;
 
-    public CraftProgressPacket(State state, ItemStack target, ItemStack current, int done, int total) {
+    public CraftProgressPacket(State state, ItemStack target, ItemStack current, long done, long total) {
         this.state = state;
         this.target = target;
         this.current = current;
@@ -57,29 +70,50 @@ public final class CraftProgressPacket {
         return current;
     }
 
-    public int done() {
+    public long done() {
         return done;
     }
 
-    public int total() {
+    public long total() {
         return total;
     }
 
+    /** The mod-1.0.3 main-channel layout — byte-identical to what a mod-1.0.x peer already decodes. */
     public void write(PacketBuffer buf) {
         buf.writeVarInt(state.ordinal());
         buf.writeItem(target);
         buf.writeItem(current);
-        buf.writeVarInt(done);
-        buf.writeVarInt(total);
+        // Only ever called with int-range counts: the server builds the legacy packet from
+        // CraftJob.wireDone/wireTotal, which scale an over-int job down. toIntExact turns an
+        // accidental real count into a loud send-time error instead of a silently wrapped negative.
+        buf.writeVarInt(Math.toIntExact(done));
+        buf.writeVarInt(Math.toIntExact(total));
     }
 
     public static CraftProgressPacket read(PacketBuffer buf) {
-        int ordinal = buf.readVarInt();
+        return new CraftProgressPacket(state(buf.readVarInt()), buf.readItem(), buf.readItem(),
+                buf.readVarInt(), buf.readVarInt());
+    }
+
+    /** The counts-channel layout (issue #46): same header, but {@code done}/{@code total} as VarLong. */
+    public void writeCounts(PacketBuffer buf) {
+        buf.writeVarInt(state.ordinal());
+        buf.writeItem(target);
+        buf.writeItem(current);
+        buf.writeVarLong(done);
+        buf.writeVarLong(total);
+    }
+
+    public static CraftProgressPacket readCounts(PacketBuffer buf) {
+        return new CraftProgressPacket(state(buf.readVarInt()), buf.readItem(), buf.readItem(),
+                buf.readVarLong(), buf.readVarLong());
+    }
+
+    private static State state(int ordinal) {
         State[] states = State.values();
         if (ordinal < 0 || ordinal >= states.length) {
             throw new IllegalArgumentException("Unknown craft state ordinal " + ordinal);
         }
-        return new CraftProgressPacket(states[ordinal], buf.readItem(), buf.readItem(),
-                buf.readVarInt(), buf.readVarInt());
+        return states[ordinal];
     }
 }

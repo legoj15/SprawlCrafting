@@ -5,6 +5,7 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
+import com.legoj15.sprawlcrafting.network.CraftProgressCountsPayload;
 import com.legoj15.sprawlcrafting.network.CraftProgressPayload;
 import com.legoj15.sprawlcrafting.network.ProgressStatesV2Payload;
 import com.legoj15.sprawlcrafting.platform.Services;
@@ -377,8 +378,14 @@ public final class CraftQueueManager {
                 && !Services.PLATFORM.canReceive(player, ProgressStatesV2Payload.ID)) {
             state = CraftProgressPayload.State.PAUSED;
         }
-        // The progress fields stay int on the wire (mod-1.0.3 layout); wireDone/wireTotal scale a job
-        // of more than Integer.MAX_VALUE crafts down proportionally rather than wrapping.
+        // A client that registered the counts payload (#46) gets the real long counts; the legacy
+        // payload's stay int on the wire (mod-1.0.3 layout), so wireDone/wireTotal scale a job of more
+        // than Integer.MAX_VALUE crafts down proportionally rather than wrapping.
+        if (Services.PLATFORM.canReceive(player, CraftProgressCountsPayload.ID)) {
+            Services.PLATFORM.sendToPlayer(player, new CraftProgressCountsPayload(
+                    state, job.targetResult().copy(), current.copy(), job.craftsDone(), job.totalCrafts()));
+            return;
+        }
         Services.PLATFORM.sendToPlayer(player, new CraftProgressPayload(
                 state, job.targetResult().copy(), current.copy(), job.wireDone(), job.wireTotal()));
     }

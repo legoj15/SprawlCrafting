@@ -118,7 +118,9 @@ public class CraftProgressToast implements IToast {
         int y = 27;
         AbstractGui.fill(poseStack, left, y, right, y + 2, BAR_BACK_COLOR);
         if (job.total() > 0) {
-            int filled = (int) ((right - left) * (float) job.done() / job.total());
+            // Ratio in floating point first: the counts are longs that can reach the saturation marker,
+            // and an integer multiply of (right - left) by done would overflow long before that (issue #46).
+            int filled = (int) ((right - left) * ((double) job.done() / job.total()));
             AbstractGui.fill(poseStack, left, y, left + filled, y + 2, BAR_COLOR);
         }
     }

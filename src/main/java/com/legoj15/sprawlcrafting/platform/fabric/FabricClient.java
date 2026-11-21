@@ -9,6 +9,7 @@ import com.legoj15.sprawlcrafting.client.MissingIngredients;
 import com.legoj15.sprawlcrafting.client.ToastCancelClick;
 import com.legoj15.sprawlcrafting.config.SprawlConfig;
 import com.legoj15.sprawlcrafting.network.CraftPreviewPayload;
+import com.legoj15.sprawlcrafting.network.CraftProgressCountsPayload;
 import com.legoj15.sprawlcrafting.network.CraftProgressPayload;
 import com.legoj15.sprawlcrafting.network.DeferredCraftableSyncPayload;
 import com.legoj15.sprawlcrafting.network.ProtectedCraftableSyncPayload;
@@ -35,6 +36,10 @@ public class FabricClient implements ClientModInitializer {
         // PAUSED_STATION (see ProgressStatesV2Payload).
         ClientPlayNetworking.registerGlobalReceiver(com.legoj15.sprawlcrafting.network.ProgressStatesV2Payload.TYPE,
                 (payload, context) -> { });
+        // The long-count snapshot (#46): registering it is what tells the server this client takes
+        // real longs; the payload converts to the tracker's one type on receipt.
+        ClientPlayNetworking.registerGlobalReceiver(CraftProgressCountsPayload.TYPE,
+                (payload, context) -> ClientJobTracker.accept(payload.toProgressPayload()));
         //?} else {
         /*// Pre-1.20.5: channel id + raw buffer, delivered on the netty thread — decode there, then
         // hand the snapshot to the render thread.
@@ -42,6 +47,14 @@ public class FabricClient implements ClientModInitializer {
                 (client, handler, buf, responseSender) -> {
                     CraftProgressPayload payload = CraftProgressPayload.read(buf);
                     client.execute(() -> ClientJobTracker.accept(payload));
+                });
+        // The long-count snapshot (#46) on its own raw channel, registered so the server's
+        // canReceive answers true for its id (a 1.0.x client never declares it and keeps the
+        // scaled-int legacy payload).
+        ClientPlayNetworking.registerGlobalReceiver(CraftProgressCountsPayload.ID,
+                (client, handler, buf, responseSender) -> {
+                    CraftProgressCountsPayload payload = CraftProgressCountsPayload.read(buf);
+                    client.execute(() -> ClientJobTracker.accept(payload.toProgressPayload()));
                 });*/
         //?}
         // 26.x: receive the server-computed deferred-craftable set + plan previews. 1.21.1 computes

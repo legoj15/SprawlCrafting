@@ -374,15 +374,16 @@ public final class CraftJob {
     }
 
     /**
-     * {@link #craftsDone()} for the int-valued progress wire field: exact up to {@link Integer#MAX_VALUE}
-     * total crafts, scaled down proportionally with {@link #wireTotal()} beyond that so the toast's
-     * ratio stays right and nothing wraps negative.
+     * {@link #craftsDone()} for the legacy payload's int-valued wire fields — since #46 only the
+     * fallback for a client without {@code CraftProgressCountsPayload} (which carries the real longs):
+     * exact up to {@link Integer#MAX_VALUE} total crafts, scaled down proportionally with
+     * {@link #wireTotal()} beyond that so the toast's ratio stays right and nothing wraps negative.
      */
     public int wireDone() {
         return scaleToInt(craftsDone());
     }
 
-    /** {@link #totalCrafts()} for the int-valued progress wire field; see {@link #wireDone()}. */
+    /** {@link #totalCrafts()} for the legacy payload's int wire fields; see {@link #wireDone()}. */
     public int wireTotal() {
         return scaleToInt(totalCrafts);
     }
