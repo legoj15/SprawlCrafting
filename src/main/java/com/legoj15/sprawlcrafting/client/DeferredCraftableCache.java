@@ -78,15 +78,26 @@ public final class DeferredCraftableCache {
     }
 
     /**
-     * The count-1 samples behind {@link #stationProtectedCounts()} (issue #49), same cache and
-     * identity rule; they feed the confirmation warning lines.
+     * The count-1 samples behind {@link #stationProtectedCounts()} (issue #49), for the confirmation
+     * warning lines. Scanned on demand, at most once per client tick and menu: only a preview or a
+     * recipe-viewer tooltip asks, so the per-tick refresh does not pay for them.
      */
     public static Map<Item, net.minecraft.world.item.ItemStack> stationProtectedSamples() {
         refreshStation();
+        if (samplesMenu != stationMenu || samplesTick != stationTick) {
+            Map<Item, net.minecraft.world.item.ItemStack> samples = stationProtectedCounts.isEmpty()
+                    ? null : StationStorages.clientProtectedSamples(stationMenu);
+            stationProtectedSamples = samples == null ? Map.of() : samples;
+            samplesMenu = stationMenu;
+            samplesTick = stationTick;
+        }
         return stationProtectedSamples;
     }
 
-    /** The one refresh behind every station view above: at most one scan per client tick per menu. */
+    private static AbstractContainerMenu samplesMenu;
+    private static long samplesTick = Long.MIN_VALUE;
+
+    /** The refresh behind the counts above: one plain and one protected scan per client tick per menu. */
     private static void refreshStation() {
         Minecraft minecraft = Minecraft.getInstance();
         LocalPlayer player = minecraft.player;
@@ -107,11 +118,6 @@ public final class DeferredCraftableCache {
             Map<Item, Long> nextProtected = protectedCounts == null ? Map.of() : protectedCounts;
             if (!nextProtected.equals(stationProtectedCounts)) {
                 stationProtectedCounts = nextProtected;
-            }
-            Map<Item, net.minecraft.world.item.ItemStack> samples = StationStorages.clientProtectedSamples(menu);
-            Map<Item, net.minecraft.world.item.ItemStack> nextSamples = samples == null ? Map.of() : samples;
-            if (!nextSamples.equals(stationProtectedSamples)) {
-                stationProtectedSamples = nextSamples;
             }
             stationMenu = menu;
             stationTick = tick;
@@ -298,6 +304,7 @@ public final class DeferredCraftableCache {
         stationUsable = false;
         stationProtectedCounts = Map.of();
         stationProtectedSamples = Map.of();
+        samplesMenu = null;
         deferredOnly.clear();
         protectedOnly.clear();
     }
