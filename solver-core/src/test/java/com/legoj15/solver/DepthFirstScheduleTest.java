@@ -339,6 +339,34 @@ class DepthFirstScheduleTest {
         assertEquals(1, storage.finalBatches, "exactly one final batch");
     }
 
+    /**
+     * A full storage where the first branch the target demands cannot place even one craft (A, made
+     * from raws), while another branch consumes stock already held (9 b -> c frees room): the
+     * refusal must send the walk to the other branch, whose crafts make the room A needs, rather
+     * than report the storage full and cancel.
+     */
+    @Test
+    void aRefusedBranchFallsBackToABranchThatDrainsTheStorage() {
+        // step0: raw -> b (1 craft); step1: raw -> a; step2: 9 b -> c; step3: a + c -> target.
+        Plan plan = new Plan(
+                new long[] {1, 10, 10, 10},
+                Arrays.asList(
+                        runs(new SlotLayout<>(1, items("raw"))),
+                        runs(new SlotLayout<>(10, items("raw"))),
+                        runs(new SlotLayout<>(10, items("b", "b", "b", "b", "b", "b", "b", "b", "b"))),
+                        runs(new SlotLayout<>(10, items("a", "c")))),
+                Arrays.asList("b", "a", "c", "target"),
+                new int[] {1, 1, 1, 1});
+        plan.held.put("b", 89L);
+        FakeStorage storage = new FakeStorage(plan, 89L); // exactly full
+        DepthFirstSchedule<String> schedule = new DepthFirstSchedule<>(
+                plan.crafts, plan.layouts, plan.results, plan.resultCounts, plan.held);
+        storage.drive(schedule, 10_000L);
+        for (int i = 0; i < plan.crafts.length; i++) {
+            assertEquals(plan.crafts[i], storage.done[i], "step " + i + " reached its exact total");
+        }
+    }
+
     private static List<SlotLayout<String>> runs(SlotLayout<String>... runList) {
         return new ArrayList<>(Arrays.asList(runList));
     }

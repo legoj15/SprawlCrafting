@@ -60,6 +60,11 @@ public final class DepthFirstSchedule<K> {
     private int unfinished;
     private long totalDone;
     private long cap = MAX_CAP;
+    /**
+     * Steps refused a single craft for want of room ({@link #noRoom}); {@link #demand} routes around
+     * them, so another branch can run and free space. Cleared by any {@link #performed}.
+     */
+    private final Set<Integer> blocked = new HashSet<>();
     /** The cached current batch, computed lazily and cleared by {@link #performed}/{@link #noRoom}. */
     private boolean haveBatch;
     private int currentStep = -1;
@@ -222,6 +227,7 @@ public final class DepthFirstSchedule<K> {
         if (n == currentBatch && currentBatch >= Math.max(1L, cap / volume(step))) {
             cap = Math.min(MAX_CAP, cap * 2);
         }
+        blocked.clear();
         haveBatch = false;
     }
 
@@ -239,7 +245,11 @@ public final class DepthFirstSchedule<K> {
         }
         long volume = volume(step);
         if (currentBatch == 1 && cap <= volume) {
-            return false;
+            // Not even one craft of this step fits: try every other branch before calling the storage
+            // full, since one that consumes held stock frees the room this step needs.
+            blocked.add(step);
+            haveBatch = false;
+            return current() >= 0;
         }
         cap = Math.max(1L, Math.min(cap, saturate(currentBatch, volume)) / 2);
         haveBatch = false;
@@ -287,6 +297,9 @@ public final class DepthFirstSchedule<K> {
         }
         long remaining = crafts[top] - done[top];
         Choice next = demand(top, remaining, new HashSet<Integer>());
+        if (next == null) {
+            return null; // every branch the target needs is refused room
+        }
         if (next.step == top && next.batch == remaining) {
             skipOpenSteps();
         }
@@ -317,10 +330,12 @@ public final class DepthFirstSchedule<K> {
      *             the depth by the step count and breaks self-feeding cycles
      */
     private Choice demand(int i, long want, Set<Integer> path) {
+        boolean starved = false; // an input's producers are all blocked
         long b = want;
         b = Math.min(b, crafts[i] - done[i]);
         b = Math.min(b, Math.max(1L, cap / volume(i)));
         b = Math.min(b, runLeft(i));
+        long take = b; // b routes the demand; take is what the held stock lets this batch run
         for (Map.Entry<K, Long> entry : runUses[i].get(runOf(i)).entrySet()) {
             long have = stock.get(entry.getKey());
             if (have == Long.MAX_VALUE) {
@@ -339,25 +354,40 @@ public final class DepthFirstSchedule<K> {
             }
             if (p >= 0) {
                 path.add(i);
+                Choice deeper;
                 try {
-                    return demand(p, ceilDiv(need - have, Math.max(1, resultCounts[p])), path);
+                    deeper = demand(p, ceilDiv(need - have, Math.max(1, resultCounts[p])), path);
                 } finally {
                     path.remove(i);
                 }
+                if (deeper != null) {
+                    return deeper;
+                }
+                starved = true; // everything below p is refused room: try the other inputs
+            } else if (producerOf(entry.getKey(), path, true) >= 0) {
+                starved = true; // its only producers are blocked
             }
-            b = have / entry.getValue(); // nothing can make more of it: take what is held
+            take = Math.min(take, have / entry.getValue()); // run on what is held
         }
-        return new Choice(i, Math.max(1L, b));
+        if (take == 0 && starved) {
+            return null; // this step cannot run until room frees up
+        }
+        return new Choice(i, Math.max(1L, take));
     }
 
     /** The first plan-order step off {@code path} that produces {@code item} and has crafts left. */
     private int producerOf(K item, Set<Integer> path) {
+        return producerOf(item, path, false);
+    }
+
+    /** {@link #producerOf(Object, Set)}, with blocked steps skipped unless {@code includeBlocked}. */
+    private int producerOf(K item, Set<Integer> path, boolean includeBlocked) {
         int[] making = producers.get(item);
         if (making == null) {
             return -1;
         }
         for (int p : making) {
-            if (done[p] < crafts[p] && !path.contains(p)) {
+            if (done[p] < crafts[p] && !path.contains(p) && (includeBlocked || !blocked.contains(p))) {
                 return p;
             }
         }
