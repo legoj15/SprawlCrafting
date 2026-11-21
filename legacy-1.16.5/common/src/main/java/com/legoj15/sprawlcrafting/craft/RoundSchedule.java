@@ -140,6 +140,11 @@ final class RoundSchedule {
         }
         long endedRound = round; // full targets there (r == N) or in a drain pass: no progress is final
         boolean progressed = progressedThisPass; // read before advancePass resets it
+        if (!progressed && round < rounds) {
+            // Every attempted step was short and none made a craft: the stock is what it is, and later
+            // ordinary rounds would only ask the same steps again. Go straight to the full targets.
+            round = rounds - 1;
+        }
         advancePass();
         if (endedRound >= rounds && !progressed) {
             stuck = true;

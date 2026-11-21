@@ -135,4 +135,20 @@ class RoundScheduleTest {
         schedule.performed(1);
         assertTrue(schedule.finished());
     }
+
+    /**
+     * A genuine shortage early in a long job cancels after a couple of passes, not after walking every
+     * remaining round with a failed call per round.
+     */
+    @Test
+    void aShortageWithNoProgressSkipsToTheFinalRound() {
+        RoundSchedule schedule = new RoundSchedule(new long[] {1_000_000L}, 1);
+        assertTrue(schedule.interleaved());
+        int defers = 0;
+        while (schedule.defer()) {
+            defers++;
+            assertTrue(defers < 10, "a starved job must not walk its million rounds");
+        }
+        assertFalse(schedule.finished());
+    }
 }
