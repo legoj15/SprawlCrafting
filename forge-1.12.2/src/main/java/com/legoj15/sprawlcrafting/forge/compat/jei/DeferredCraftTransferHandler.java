@@ -12,6 +12,7 @@ import com.legoj15.sprawlcrafting.forge.SprawlConfig;
 import com.legoj15.sprawlcrafting.forge.client.ClientPlanCache;
 import com.legoj15.sprawlcrafting.forge.client.DeferredClickState;
 import com.legoj15.sprawlcrafting.forge.client.PendingGatherScreen;
+import com.legoj15.sprawlcrafting.forge.client.ProtectedConfirm;
 import com.legoj15.sprawlcrafting.forge.client.ServerPresence;
 import com.legoj15.sprawlcrafting.forge.craft.CraftExecutor;
 import com.legoj15.sprawlcrafting.forge.craft.ExternalSlots;
@@ -62,7 +63,8 @@ import net.minecraft.util.text.TextFormatting;
  * (directly or via intermediates). The direct fast-path fill derives its grid geometry from the
  * container's slots, so it works for any of these container shapes. A recipe makeable only by
  * consuming the player's protected stacks (issue #40) counts as deferred here too: its hover
- * tooltip warns which special items the click would use, and the click sends the protected start.
+ * tooltip warns which special items the click would use, and the click arms the two-step
+ * confirm (issue #53) — the second click on the same recipe sends the protected start.
  */
 public class DeferredCraftTransferHandler<C extends Container> implements IRecipeTransferHandler<C> {
 
@@ -144,7 +146,14 @@ public class DeferredCraftTransferHandler<C extends Container> implements IRecip
             if (recipe != null) {
                 if (ClientPlanCache.isProtectedOnly(recipe)) {
                     // The confirmed plan consumed protected stacks (#40): the protected start
-                    // packet, only ever sent to a server that advertised the capability.
+                    // packet, only ever sent to a server that advertised the capability. Issue
+                    // #53: the first click only arms the recipe (red button, click-again
+                    // tooltip); the second click on the same recipe is the confirmed send. The
+                    // arming click returns the cosmetic error so JEI keeps its recipe screen
+                    // open, unlike null (JEI 4's "transfer succeeded" signal).
+                    if (!ProtectedConfirm.confirmOrArm(recipe.getRegistryName(), recipeLayout)) {
+                        return new ProtectedDeferredError(grid, recipe);
+                    }
                     SprawlNetwork.startProtectedByRecipe(recipe.getRegistryName());
                 } else {
                     SprawlNetwork.startByRecipe(recipe.getRegistryName());
@@ -211,15 +220,16 @@ public class DeferredCraftTransferHandler<C extends Container> implements IRecip
     }
 
     /**
-     * The yellow state for a recipe only the protected tier can make (issue #40): the deferred
-     * invite, plus the special-items warning in place of the gather list. An
-     * {@link mezz.jei.api.recipe.transfer.IRecipeTransferError} is the only tooltip hook JEI 4
-     * offers, and JEI greys out every errored button — so this extends
+     * The yellow (red while armed, issue #53) state for a recipe only the protected tier can
+     * make (issue #40): the deferred invite, plus the special-items warning in place of the
+     * gather list. An {@link mezz.jei.api.recipe.transfer.IRecipeTransferError} is the only
+     * tooltip hook JEI 4 offers, and JEI greys out every errored button — so this extends
      * {@link MissingResourcesError} (whose type {@code RecipeTransferButtonMixin} re-enables) to
      * stay clickable while carrying its own hover text. The warning lines are recomputed on every
      * hover, as legacy-1.16.5's own ProtectedDeferredError does: JEI may keep the error object
      * across inventory changes, so lines built once (at validation) would go stale and name items
-     * the live pool no longer needs. One plan per hover against the cached client session; the
+     * the live pool no longer needs — the same reason the armed/unarmed confirm line is read at
+     * draw time, not baked in. One plan per hover against the cached client session; the
      * click re-plans authoritatively on the server anyway.
      */
     private static final class ProtectedDeferredError extends MissingResourcesError {
@@ -259,6 +269,11 @@ public class DeferredCraftTransferHandler<C extends Container> implements IRecip
                     // The warning is advisory; the click re-plans server-side regardless.
                 }
             }
+            // Issue #53: say what the next click does — the arm is read live because this same
+            // error object can outlive the arming click (and its 3s window).
+            lines.add(ProtectedConfirm.isArmed(recipe.getRegistryName())
+                    ? TextFormatting.RED + I18n.format("sprawlcrafting.recipe.protected.confirm_again")
+                    : TextFormatting.GOLD + I18n.format("sprawlcrafting.recipe.protected.confirm_twice"));
             return lines;
         }
     }

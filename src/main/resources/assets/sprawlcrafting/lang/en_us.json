@@ -26,6 +26,8 @@
   "sprawlcrafting.preview.hint": "Craftable from raw resources, click to preview",
   "sprawlcrafting.recipe.deferred": "Craftable from raw resources!",
   "sprawlcrafting.recipe.deferred.click": "Click to queue the deferred craft",
+  "sprawlcrafting.recipe.protected.confirm_twice": "Click twice to confirm",
+  "sprawlcrafting.recipe.protected.confirm_again": "Click again to use your special items",
   "sprawlcrafting.preview.header": "Craft %s from raw resources:",
   "sprawlcrafting.preview.step": "%s× %s",
   "sprawlcrafting.preview.confirm": "Click again to start",

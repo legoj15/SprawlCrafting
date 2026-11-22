@@ -66,6 +66,12 @@ public class GuiIconButtonSmallMixin {
                 GlStateManager.color(red, green * 0.45F, 0.0F, alpha);
                 return;
             }
+            if (tint == JeiTintState.Tint.CONFIRM) {
+                // Red while a protected-only recipe is armed (#53): the next click spends the
+                // player's special items, matching modern's armed-button highlight.
+                GlStateManager.color(red, green * 0.25F, blue * 0.25F, alpha);
+                return;
+            }
         }
         GlStateManager.color(red, green, blue, alpha);
     }

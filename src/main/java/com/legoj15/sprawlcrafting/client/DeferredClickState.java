@@ -41,6 +41,7 @@ public final class DeferredClickState {
      * versions — those viewers supply the recipe, so the identifier path always works).
      */
     public static void sendStartPacket(RecipeHolder<?> holder) {
+        ProtectedConfirm.clear(); // a plain start disarms any armed special-items craft (#53)
         // Routed through the platform helper: the raw vanilla send works on NeoForge but not on
         // Fabric, so each loader uses its own C2S networking API.
         Services.PLATFORM.sendToServer(new StartDeferredCraftPayload(RecipeIds.id(holder)));

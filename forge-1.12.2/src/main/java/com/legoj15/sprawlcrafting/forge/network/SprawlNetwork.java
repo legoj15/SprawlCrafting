@@ -116,16 +116,19 @@ public final class SprawlNetwork {
     }
 
     public static void startByResult(ItemStack result) {
+        com.legoj15.sprawlcrafting.forge.client.ProtectedConfirm.clear(); // a plain start disarms (#53)
         com.legoj15.sprawlcrafting.forge.client.EngineWatchdog.engineRequestSent();
         CHANNEL.sendToServer(new StartDeferredCraftByResultMessage(result));
     }
 
     public static void startByRecipe(ResourceLocation recipeId) {
+        com.legoj15.sprawlcrafting.forge.client.ProtectedConfirm.clear(); // a plain start disarms (#53)
         com.legoj15.sprawlcrafting.forge.client.EngineWatchdog.engineRequestSent();
         CHANNEL.sendToServer(new StartDeferredCraftMessage(recipeId));
     }
 
     public static void placeRecipe(ResourceLocation recipeId, int windowId, boolean maxTransfer) {
+        com.legoj15.sprawlcrafting.forge.client.ProtectedConfirm.clear(); // a plain start disarms (#53)
         CHANNEL2.sendToServer(new PlaceRecipeMessage(recipeId, windowId, maxTransfer));
     }
 

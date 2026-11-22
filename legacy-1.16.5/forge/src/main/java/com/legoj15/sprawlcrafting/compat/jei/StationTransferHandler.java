@@ -7,6 +7,7 @@ import com.legoj15.sprawlcrafting.client.DeferredClickState;
 import com.legoj15.sprawlcrafting.client.DeferredCraftableCache;
 import com.legoj15.sprawlcrafting.client.MissingIngredients;
 import com.legoj15.sprawlcrafting.client.MissingIngredientsView;
+import com.legoj15.sprawlcrafting.client.ProtectedConfirm;
 import com.legoj15.sprawlcrafting.config.SprawlConfig;
 import com.legoj15.sprawlcrafting.craft.CraftPlanner.Craftability;
 import com.legoj15.sprawlcrafting.craft.GridContext;
@@ -77,11 +78,17 @@ public class StationTransferHandler<C extends Container> implements IRecipeTrans
             if (craftability == Craftability.DIRECT && stock != null) {
                 return stock.transferRecipe(container, recipe, layout, player, maxTransfer, doTransfer);
             }
-            // A recipe only the protected tier can make (issue #40) confirms through the protected
-            // start packet; the button tooltip carries the special-items warning.
+            // A recipe only the protected tier can make (issue #40) needs the player's explicit
+            // consent, so its click arms the two-step confirm (issue #53): nothing is sent until
+            // a second click on the same recipe. The arming click returns ARMED_CLICK (USER_FACING,
+            // so JEI keeps its recipe screen open; see DeferredCraftingTransferHandler). The button tooltip carries the
+            // special-items warning either way.
             boolean protectedCraft = DeferredCraftableCache.isProtectedOnly(craft);
             if (doTransfer) {
                 if (protectedCraft) {
+                    if (!ProtectedConfirm.confirmOrArm(craft.getId())) {
+                        return DeferredCraftingTransferHandler.ARMED_CLICK;
+                    }
                     DeferredClickState.sendProtectedStartPacket(craft);
                 } else {
                     DeferredClickState.sendStartPacket(craft);

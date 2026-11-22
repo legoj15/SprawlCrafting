@@ -7,10 +7,12 @@ import com.legoj15.sprawlcrafting.client.DeferredClickState;
 import com.legoj15.sprawlcrafting.client.DeferredCraftableCache;
 import com.legoj15.sprawlcrafting.client.MissingIngredients;
 import com.legoj15.sprawlcrafting.client.MissingIngredientsView;
+import com.legoj15.sprawlcrafting.client.ProtectedConfirm;
 import com.legoj15.sprawlcrafting.compat.jei.DeferredTransfers;
 import com.legoj15.sprawlcrafting.config.SprawlConfig;
 import com.legoj15.sprawlcrafting.craft.CraftPlanner.Craftability;
 import com.legoj15.sprawlcrafting.craft.GridContext;
+import com.legoj15.sprawlcrafting.craft.RecipeIds;
 
 import mezz.jei.api.constants.RecipeTypes;
 import mezz.jei.api.gui.ingredient.IRecipeSlotsView;
@@ -141,11 +143,18 @@ public class StationTransferHandler<C extends AbstractContainerMenu>
             if (ClientJobTracker.hasActiveJob()) {
                 return helper.createUserErrorWithTooltip(Component.translatable("sprawlcrafting.craft.busy"));
             }
-            // A recipe only the protected tier can make (issue #40) confirms through the protected
-            // start packet; the button tooltip carries the special-items warning.
+            // A recipe only the protected tier can make (issue #40) needs the player's explicit
+            // consent, so its click arms the two-step confirm (issue #53): nothing is sent until
+            // a second click on the same recipe. The arming click returns ARMED_CLICK, a USER_FACING
+            // error: JEI closes its recipe screen whenever the click's result allows transfer
+            // (null or COSMETIC), so only a non-transferring type keeps it open. The hover pass
+            // still returns the cosmetic state, so the button stays live and turns red.
             boolean protectedCraft = DeferredCraftableCache.isProtectedOnly(holder);
             if (doTransfer) {
                 if (protectedCraft) {
+                    if (!ProtectedConfirm.confirmOrArm(RecipeIds.id(holder))) {
+                        return DeferredTransfers.ARMED_CLICK;
+                    }
                     DeferredClickState.sendProtectedStartPacket(holder);
                 } else {
                     DeferredClickState.sendStartPacket(holder);
@@ -192,14 +201,21 @@ public class StationTransferHandler<C extends AbstractContainerMenu>
                 // AE2 lays the recipe into the terminal grid straight from the network: stock behaviour.
                 return busyOr(() -> stock.transferRecipe(container, recipe, recipeSlots, player, maxTransfer, doTransfer));
             }
-            // A recipe only the protected tier can make (issue #40) confirms through the protected
-            // start packet; the button tooltip carries the special-items warning. A direct craft is
-            // never protected-only — the plain pool covers it — so it keeps the plain start (AE2 19.x
-            // has no stock handler; its green button starts a single-step job, as before).
+            // A recipe only the protected tier can make (issue #40) needs the player's explicit
+            // consent, so its click arms the two-step confirm (issue #53): nothing is sent until
+            // a second click on the same recipe. The arming click returns ARMED_CLICK, a USER_FACING
+            // error: JEI closes its recipe screen whenever the click's result allows transfer
+            // (null or COSMETIC), so only a non-transferring type keeps it open. The hover pass
+            // still returns the cosmetic state, so the button stays live and turns red. A direct craft is never protected-only —
+            // the plain pool covers it — so it keeps the plain start (AE2 19.x has no stock
+            // handler; its green button starts a single-step job, as before).
             boolean protectedCraft = craftability == Craftability.DEFERRED
                     && DeferredCraftableCache.isProtectedOnly(holder);
             if (doTransfer) {
                 if (protectedCraft) {
+                    if (!ProtectedConfirm.confirmOrArm(RecipeIds.id(holder))) {
+                        return DeferredTransfers.ARMED_CLICK;
+                    }
                     DeferredClickState.sendProtectedStartPacket(holder);
                 } else {
                     DeferredClickState.sendStartPacket(holder);

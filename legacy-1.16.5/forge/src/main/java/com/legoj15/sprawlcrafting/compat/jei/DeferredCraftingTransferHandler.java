@@ -10,6 +10,7 @@ import com.legoj15.sprawlcrafting.client.DeferredCraftableCache;
 import com.legoj15.sprawlcrafting.client.GatherTooltip;
 import com.legoj15.sprawlcrafting.client.MissingIngredients;
 import com.legoj15.sprawlcrafting.client.MissingIngredientsView;
+import com.legoj15.sprawlcrafting.client.ProtectedConfirm;
 import com.legoj15.sprawlcrafting.config.SprawlConfig;
 import com.legoj15.sprawlcrafting.craft.CraftPlanner;
 import com.legoj15.sprawlcrafting.craft.CraftPlanner.Craftability;
@@ -44,6 +45,24 @@ public class DeferredCraftingTransferHandler implements IRecipeTransferHandler<W
 
     private static final IRecipeTransferError DEFERRED_AVAILABLE = new DeferredCraftError();
 
+    /**
+     * What the arming click of a protected-only recipe returns (issue #53). USER_FACING so JEI
+     * treats the click as "not transferred" and keeps its recipe screen open for the confirming
+     * click; never returned from the hover pass, so the button itself stays active.
+     */
+    static final IRecipeTransferError ARMED_CLICK = new IRecipeTransferError() {
+        @Override
+        public Type getType() {
+            return Type.USER_FACING;
+        }
+
+        @Override
+        public void showError(MatrixStack poseStack, int mouseX, int mouseY, IRecipeLayout layout,
+                              int recipeX, int recipeY) {
+            // Never drawn: the hover pass returns the cosmetic protected state instead.
+        }
+    };
+
     private final IRecipeTransferHandler<WorkbenchContainer> vanilla;
 
     public DeferredCraftingTransferHandler(IRecipeTransferHandler<WorkbenchContainer> vanilla) {
@@ -57,7 +76,8 @@ public class DeferredCraftingTransferHandler implements IRecipeTransferHandler<W
 
     /**
      * The same yellow state for a recipe only a protected-including plan can make (issue #40): the
-     * tooltip adds which special items would be consumed, and a click sends the protected start.
+     * tooltip adds which special items would be consumed, and a click arms the two-step confirm
+     * (issue #53) — the second click on the same recipe sends the protected start.
      * Shared with {@link StationTransferHandler}.
      */
     static IRecipeTransferError protectedDeferredAvailable(IRecipe<?> recipe, GridContext grid) {
@@ -102,11 +122,17 @@ public class DeferredCraftingTransferHandler implements IRecipeTransferHandler<W
             if (ClientJobTracker.hasActiveJob()) {
                 return vanillaError; // busy: don't offer to queue another deferred craft
             }
-            // A recipe only the protected tier can make (issue #40) confirms through the protected
-            // start packet, and its tooltip says which special items the plan would consume.
+            // A recipe only the protected tier can make (issue #40) needs the player's explicit
+            // consent, so its click arms the two-step confirm (issue #53): nothing is sent until
+            // a second click on the same recipe. The arming click returns ARMED_CLICK, a USER_FACING
+            // error: JEI closes its recipe screen whenever the click's result allows transfer
+            // (null or COSMETIC), so only a non-transferring type keeps it open.
             boolean protectedCraft = DeferredCraftableCache.isProtectedOnly(craft);
             if (doTransfer) {
                 if (protectedCraft) {
+                    if (!ProtectedConfirm.confirmOrArm(craft.getId())) {
+                        return ARMED_CLICK;
+                    }
                     DeferredClickState.sendProtectedStartPacket(craft);
                 } else {
                     DeferredClickState.sendStartPacket(craft);
@@ -171,8 +197,11 @@ public class DeferredCraftingTransferHandler implements IRecipeTransferHandler<W
         }
     }
 
-    /** Yellow state for a protected-only recipe: the deferred invite plus the special-items warning. */
+    /** Yellow (red while armed, #53) state for a protected-only recipe: the invite plus the special-items warning. */
     private static final class ProtectedDeferredError extends ColoredError {
+
+        /** Red while armed (issue #53): the next click spends the special items. */
+        private static final int TRANSLUCENT_RED = 0x80FF3030;
 
         private final IRecipe<?> recipe;
         private final GridContext grid;
@@ -184,7 +213,10 @@ public class DeferredCraftingTransferHandler implements IRecipeTransferHandler<W
 
         @Override
         int color() {
-            return DeferredCraftError.TRANSLUCENT_YELLOW;
+            // Read live, not captured at construction: the mixin asks every frame, and the arm
+            // can expire (or be confirmed) between two frames.
+            return ProtectedConfirm.isArmed(recipe.getId())
+                    ? TRANSLUCENT_RED : DeferredCraftError.TRANSLUCENT_YELLOW;
         }
 
         @Override
@@ -193,6 +225,8 @@ public class DeferredCraftingTransferHandler implements IRecipeTransferHandler<W
             lines.add(new TranslationTextComponent("sprawlcrafting.recipe.deferred").withStyle(TextFormatting.YELLOW));
             lines.add(new TranslationTextComponent("sprawlcrafting.recipe.deferred.click").withStyle(TextFormatting.GRAY));
             lines.addAll(protectedWarningLines(recipe, grid));
+            lines.add(ProtectedConfirm.isArmed(recipe.getId())
+                    ? ProtectedConfirm.armedLine() : ProtectedConfirm.unarmedLine());
             return lines;
         }
     }

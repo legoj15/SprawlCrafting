@@ -32,6 +32,7 @@ public final class DeferredClickState {
 
     /** Fires the start request for a recipe we hold directly (the JEI transfer button). */
     public static void sendStartPacket(IRecipe<?> recipe) {
+        ProtectedConfirm.clear(); // a plain start disarms any armed special-items craft (#53)
         Services.PLATFORM.sendStartCraft(recipe.getId());
     }
 

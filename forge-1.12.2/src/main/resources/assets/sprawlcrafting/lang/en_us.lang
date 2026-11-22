@@ -42,6 +42,10 @@ sprawlcrafting.recipe.deferred=Craftable from raw resources!
 # recipe.deferred.click is only shown on the JEI protected-craft tooltip today (the recipe book's
 # preview has its own confirm line below); wording matches the modern nodes' twin key exactly.
 sprawlcrafting.recipe.deferred.click=Click to queue the deferred craft
+# Protected-only two-click confirm (issue #53): first click arms (red), second sends. Wording
+# matches the modern nodes' en_us.json twins.
+sprawlcrafting.recipe.protected.confirm_twice=Click twice to confirm
+sprawlcrafting.recipe.protected.confirm_again=Click again to use your special items
 sprawlcrafting.preview.header=Craft %s from raw resources:
 # preview.steps is 1.12.2-only (the modern preview has no per-count header line).
 sprawlcrafting.preview.steps=%s component craft(s):

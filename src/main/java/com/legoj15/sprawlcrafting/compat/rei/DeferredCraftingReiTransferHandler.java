@@ -7,10 +7,12 @@ import com.legoj15.sprawlcrafting.client.DeferredClickState;
 import com.legoj15.sprawlcrafting.client.DeferredCraftableCache;
 import com.legoj15.sprawlcrafting.client.MissingIngredients;
 import com.legoj15.sprawlcrafting.client.MissingIngredientsView;
+import com.legoj15.sprawlcrafting.client.ProtectedConfirm;
 import com.legoj15.sprawlcrafting.client.ProtectedWarnings;
 import com.legoj15.sprawlcrafting.config.SprawlConfig;
 import com.legoj15.sprawlcrafting.craft.CraftPlanner.Craftability;
 import com.legoj15.sprawlcrafting.craft.GridContext;
+import com.legoj15.sprawlcrafting.craft.RecipeIds;
 import com.legoj15.sprawlcrafting.craft.StationStorages;
 
 import me.shedaniel.rei.api.client.registry.transfer.TransferHandler;
@@ -35,6 +37,8 @@ public class DeferredCraftingReiTransferHandler implements TransferHandler {
 
     private static final int TRANSLUCENT_YELLOW = 0x80FFE000;
     private static final int TRANSLUCENT_ORANGE = 0x80FF6A00;
+    /** Red while a protected-only recipe is armed for its confirming click (issue #53). */
+    private static final int TRANSLUCENT_RED = 0x80FF3030;
 
     @Override
     public double getPriority() {
@@ -84,14 +88,20 @@ public class DeferredCraftingReiTransferHandler implements TransferHandler {
 
         Craftability craftability = DeferredCraftableCache.classify(recipe, grid);
         if (craftability == Craftability.DEFERRED && !ClientJobTracker.hasActiveJob()) {
-            // A recipe only the protected tier can make (issue #40) confirms through the protected
-            // start packet, and the tooltip carries the special-items warning (ProtectedWarnings,
-            // the JEI-free line builder shared with JEI so the two viewers cannot drift apart —
-            // never DeferredTransfers itself, whose JEI-typed statics would crash a JEI-less
-            // REI install at class load).
+            // A recipe only the protected tier can make (issue #40) needs the player's explicit
+            // consent, so its click arms the two-step confirm (issue #53): the second click on
+            // the same recipe sends the protected start, and the tooltip carries the
+            // special-items warning (ProtectedWarnings, the JEI-free line builder shared with
+            // JEI so the two viewers cannot drift apart — never DeferredTransfers itself, whose
+            // JEI-typed statics would crash a JEI-less REI install at class load).
             boolean protectedCraft = DeferredCraftableCache.isProtectedOnly(recipe);
             if (context.isActuallyCrafting()) {
                 if (protectedCraft) {
+                    // Arm only: createSuccessful() (with no send) keeps REI's recipe screen open,
+                    // so the confirming second click lands on the same button.
+                    if (!ProtectedConfirm.confirmOrArm(RecipeIds.id(recipe))) {
+                        return Result.createSuccessful();
+                    }
                     DeferredClickState.sendProtectedStartPacket(recipe);
                 } else {
                     DeferredClickState.sendStartPacket(recipe);
@@ -99,9 +109,13 @@ public class DeferredCraftingReiTransferHandler implements TransferHandler {
                 return Result.createSuccessful();
             }
             // Only a "successful" result renders as a clickable transfer button in REI
-            // (createFailed* are display-only); tint it yellow + attach the invite tooltip.
+            // (createFailed* are display-only); tint it yellow (red while a protected recipe is armed, #53) + attach the invite tooltip.
+            // A protected-only recipe is red while armed (issue #53), with the confirm line
+            // appended after the warnings. Both are computed here, per call, never cached: REI
+            // re-runs this for every draw and the arm can expire between two frames.
+            boolean armed = protectedCraft && ProtectedConfirm.isArmed(RecipeIds.id(recipe));
             Result button = Result.createSuccessful()
-                    .color(TRANSLUCENT_YELLOW)
+                    .color(armed ? TRANSLUCENT_RED : TRANSLUCENT_YELLOW)
                     .tooltip(Component.translatable("sprawlcrafting.recipe.deferred").withStyle(ChatFormatting.YELLOW))
                     .tooltip(Component.translatable("sprawlcrafting.recipe.deferred.click").withStyle(ChatFormatting.GRAY));
             // The warning lines cost a full plan per hover: only a protected-only recipe needs them.
@@ -109,6 +123,7 @@ public class DeferredCraftingReiTransferHandler implements TransferHandler {
                 for (Component line : ProtectedWarnings.lines(recipe, grid)) {
                     button.tooltip(line);
                 }
+                button.tooltip(armed ? ProtectedConfirm.armedLine() : ProtectedConfirm.unarmedLine());
             }
             return button;
         }
