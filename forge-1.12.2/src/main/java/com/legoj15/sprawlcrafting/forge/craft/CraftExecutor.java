@@ -1163,7 +1163,11 @@ public final class CraftExecutor {
             return missing == null;
         }
 
-        /** Removes and returns one item for ingredient {@code index}; EMPTY for a gap. */
+        /**
+         * Removes and returns one item for ingredient {@code index}; EMPTY for a gap, or for a station
+         * slot whose real extract refused (#52) — the caller leaves that cell empty for its recipe check
+         * to revert.
+         */
         ItemStack take(int index) {
             if (chosen[index] < 0) {
                 return ItemStack.EMPTY;
