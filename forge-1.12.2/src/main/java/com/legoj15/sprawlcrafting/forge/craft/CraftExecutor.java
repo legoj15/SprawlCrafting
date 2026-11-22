@@ -9,7 +9,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-import net.minecraftforge.items.SlotItemHandler;
 import org.apache.logging.log4j.LogManager;
 
 import com.legoj15.solver.LedgerTally;
@@ -30,6 +29,7 @@ import net.minecraft.item.crafting.IRecipe;
 import net.minecraft.item.crafting.Ingredient;
 import net.minecraft.util.ResourceLocation;
 import net.minecraftforge.common.crafting.IShapedRecipe;
+import net.minecraftforge.items.SlotItemHandler;
 
 /**
  * Performs a single craft of a recipe directly against a player's live inventory: consumes one
@@ -1632,8 +1632,10 @@ public final class CraftExecutor {
         /**
          * What a real take of {@code want} would hand over (#52). A handler-backed slot can refuse
          * or cap an extract while its stack still reads full, so it is asked with a simulated
-         * extract; a plain inventory slot always gives what it holds. The craft paths check this
-         * for every cell before consuming anything, so a short slot costs nothing.
+         * extract; a plain inventory slot always gives what it holds. The auto-craft and batch paths
+         * check this before consuming anything, so a short slot costs nothing; the grid hand-off
+         * instead checks each take ({@link #consumeCounted}) and reverts. A handler whose real
+         * extract still disagrees with this answer is only logged (see consumeCounted).
          */
         @Override
         public int supplyable(int want) {
