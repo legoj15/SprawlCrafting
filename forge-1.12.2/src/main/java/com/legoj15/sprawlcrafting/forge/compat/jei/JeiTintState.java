@@ -36,17 +36,25 @@ public final class JeiTintState {
     }
 
     private static final Map<IRecipeLayout, Tint> TINTS = new WeakHashMap<IRecipeLayout, Tint>();
+    /** Protected-only layouts' recipe names (#53): the red tint asks ProtectedConfirm with the click's key. */
+    private static final Map<IRecipeLayout, Object> PROTECTED_KEYS = new WeakHashMap<IRecipeLayout, Object>();
 
     private JeiTintState() {
     }
 
     /** Records the layout's tint; null clears (a revalidation may flip a recipe back to direct). */
     static void put(IRecipeLayout layout, Tint tint) {
+        PROTECTED_KEYS.remove(layout); // re-recorded by putProtectedKey when still protected-only
         if (tint == null) {
             TINTS.remove(layout);
         } else {
             TINTS.put(layout, tint);
         }
+    }
+
+    /** Records the protected-only recipe behind a DEFERRED layout; call after {@link #put}. */
+    static void putProtectedKey(IRecipeLayout layout, Object recipeKey) {
+        PROTECTED_KEYS.put(layout, recipeKey);
     }
 
     /** Object-typed so the mixin can pass the accessor's field value straight through. */
@@ -56,7 +64,8 @@ public final class JeiTintState {
         // Issue #53: an armed protected-only recipe reads red, checked live because the arm can
         // start or expire between two validations of the same layout. Only over the yellow
         // deferred tint: a revalidation that flipped the layout to plain or gather wins.
-        if (stored == Tint.DEFERRED && ProtectedConfirm.isArmedLayout(layout)) {
+        Object key = stored == Tint.DEFERRED ? PROTECTED_KEYS.get(layout) : null;
+        if (key != null && ProtectedConfirm.isArmed(key)) {
             return Tint.CONFIRM;
         }
         return stored;

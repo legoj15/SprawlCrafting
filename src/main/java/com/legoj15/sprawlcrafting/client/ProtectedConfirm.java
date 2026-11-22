@@ -20,6 +20,8 @@ public final class ProtectedConfirm {
 
     /** How long an armed recipe stays confirmable before the button reverts to yellow. */
     public static final long ARM_WINDOW_MS = 3000;
+    /** A confirm sooner than this after the arm is a double-click, not a deliberate second click. */
+    public static final long MIN_CONFIRM_MS = 250;
 
     private static Object armedKey;
     private static long armedAtMillis;
@@ -35,6 +37,9 @@ public final class ProtectedConfirm {
      */
     public static boolean confirmOrArm(Object key) {
         if (isArmed(key)) {
+            if (Util.getMillis() - armedAtMillis < MIN_CONFIRM_MS) {
+                return false; // double-click: stay armed, keep the original window
+            }
             clear();
             return true;
         }
@@ -51,7 +56,8 @@ public final class ProtectedConfirm {
         if (armedKey == null || !armedKey.equals(key)) {
             return false;
         }
-        if (Util.getMillis() - armedAtMillis > ARM_WINDOW_MS) {
+        long age = Util.getMillis() - armedAtMillis;
+        if (age < 0 || age > ARM_WINDOW_MS) { // negative: the clock stepped back
             clear();
             return false;
         }

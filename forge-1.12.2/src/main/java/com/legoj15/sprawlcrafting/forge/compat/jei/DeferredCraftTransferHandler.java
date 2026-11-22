@@ -151,7 +151,7 @@ public class DeferredCraftTransferHandler<C extends Container> implements IRecip
                     // tooltip); the second click on the same recipe is the confirmed send. The
                     // arming click returns the (non-null) ProtectedDeferredError so JEI keeps its
                     // recipe screen open: JEI 4 closes it only on null, its "transfer succeeded".
-                    if (!ProtectedConfirm.confirmOrArm(recipe.getRegistryName(), recipeLayout)) {
+                    if (!ProtectedConfirm.confirmOrArm(recipe.getRegistryName())) {
                         return new ProtectedDeferredError(grid, recipe);
                     }
                     SprawlNetwork.startProtectedByRecipe(recipe.getRegistryName());
@@ -191,8 +191,12 @@ public class DeferredCraftTransferHandler<C extends Container> implements IRecip
                         ? JeiTintState.Tint.DEFERRED : null);
                 // A protected-only recipe's hover tooltip says which special items the click would
                 // consume (#40); for every other solvable recipe there is nothing to warn about.
-                return ClientPlanCache.isProtectedOnly(recipe)
-                        ? new ProtectedDeferredError(grid, recipe) : null;
+                if (!ClientPlanCache.isProtectedOnly(recipe)) {
+                    return null;
+                }
+                // The red armed tint (#53) is keyed by this recipe, like the click and tooltip.
+                JeiTintState.putProtectedKey(recipeLayout, recipe.getRegistryName());
+                return new ProtectedDeferredError(grid, recipe);
             }
             if (!SprawlConfig.needsSystem) {
                 JeiTintState.put(recipeLayout, null);
