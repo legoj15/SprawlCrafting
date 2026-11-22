@@ -164,7 +164,10 @@ public final class ExternalSlots {
             return false;
         }
         for (Slot slot : container.inventorySlots) {
-            if (takeable(slot, player)) { // same pool as of(): a refusing slot is no chest to wait for
+            // Not takeable(): this answers "is a station with a side inventory open" for the job's
+            // pause-vs-cancel decision. An open station whose slots all refuse must cancel with the
+            // missing item named, not pause asking the player to reopen what is already open.
+            if (isExternal(slot)) {
                 return true;
             }
         }

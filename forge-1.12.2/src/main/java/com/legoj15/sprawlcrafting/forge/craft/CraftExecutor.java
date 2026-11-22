@@ -1171,8 +1171,9 @@ public final class CraftExecutor {
             Source source = sources.get(chosen[index]);
             ItemStack one = source.peek().copy();
             one.setCount(1);
-            source.consumeOne();
-            return one;
+            // A station slot whose real extract refused hands over nothing (#52): the cell stays
+            // empty and the hand-off's recipe check reverts the grid instead of placing a copy.
+            return source.consumeCounted(1) < 1 ? ItemStack.EMPTY : one;
         }
 
         void chargeTo(ProducedLedger<ItemKey, LedgerVariant> ledger) {
@@ -1551,6 +1552,12 @@ public final class CraftExecutor {
             }
         }
 
+        /** {@link #consume}, reporting how many actually left the source; only a station slot can come up short (#52). */
+        default int consumeCounted(int count) {
+            consume(count);
+            return count;
+        }
+
         /** How many of {@code want} a real take would deliver; only a station slot can say fewer than it holds. */
         default int supplyable(int want) {
             return Math.min(want, peek().getCount());
@@ -1639,6 +1646,11 @@ public final class CraftExecutor {
 
         @Override
         public void consume(int count) {
+            consumeCounted(count);
+        }
+
+        @Override
+        public int consumeCounted(int count) {
             int left = count;
             while (left > 0) {
                 ItemStack got = slot.decrStackSize(left);
@@ -1649,10 +1661,11 @@ public final class CraftExecutor {
                     LogManager.getLogger("SprawlCrafting").warn(
                             "Station slot {} gave {} of {} although its simulated extract allowed it",
                             slot.slotNumber, count - left, count);
-                    return;
+                    break;
                 }
                 left -= got.getCount();
             }
+            return count - left;
         }
 
         @Override
