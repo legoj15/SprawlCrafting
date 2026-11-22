@@ -39,8 +39,8 @@ sprawlcrafting.toast.click_to_cancel=Click to cancel
 
 # --- Recipe book / deferred-craft preview ---
 sprawlcrafting.recipe.deferred=Craftable from raw resources!
-# recipe.deferred.click is only shown on the JEI protected-craft tooltip today (the recipe book's
-# preview has its own confirm line below); wording matches the modern nodes' twin key exactly.
+# recipe.deferred.click is unused on 1.12.2 since #53 (protected JEI tooltips show the two-click
+# confirm line instead); kept so the wording matches the modern nodes' twin key exactly.
 sprawlcrafting.recipe.deferred.click=Click to queue the deferred craft
 # Protected-only two-click confirm (issue #53): first click arms (red), second sends. Wording
 # matches the modern nodes' en_us.json twins.

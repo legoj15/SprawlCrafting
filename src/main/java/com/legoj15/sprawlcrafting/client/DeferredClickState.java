@@ -54,6 +54,7 @@ public final class DeferredClickState {
      * was negotiated (the classify/sync gates key on it), so an older server never sees one.
      */
     public static void sendProtectedStartPacket(RecipeHolder<?> holder) {
+        ProtectedConfirm.clear(); // any start disarms; a no-op after a JEI/REI confirm (#53)
         Services.PLATFORM.sendToServer(new StartProtectedCraftPayload(RecipeIds.id(holder)));
     }
 

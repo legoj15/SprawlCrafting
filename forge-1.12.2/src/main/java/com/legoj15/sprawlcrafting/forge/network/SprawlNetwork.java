@@ -151,6 +151,7 @@ public final class SprawlNetwork {
      * knows CHANNEL2 without this discriminator, and an unknown one is a kick.
      */
     public static void startProtectedByRecipe(ResourceLocation recipeId) {
+        com.legoj15.sprawlcrafting.forge.client.ProtectedConfirm.clear(); // any start disarms (#53)
         com.legoj15.sprawlcrafting.forge.client.EngineWatchdog.engineRequestSent();
         CHANNEL2.sendToServer(new StartProtectedCraftMessage(recipeId));
     }

@@ -41,6 +41,7 @@ public final class DeferredClickState {
      * transfer button). No-op unless the server has the protected channel.
      */
     public static void sendProtectedStartPacket(IRecipe<?> recipe) {
+        ProtectedConfirm.clear(); // any start disarms; a no-op after a JEI confirm (#53)
         Services.PLATFORM.sendStartProtectedCraft(recipe.getId());
     }
 
