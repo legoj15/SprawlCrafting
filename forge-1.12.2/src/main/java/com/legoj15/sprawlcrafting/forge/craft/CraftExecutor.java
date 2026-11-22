@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import net.minecraftforge.items.SlotItemHandler;
 import org.apache.logging.log4j.LogManager;
 
 import com.legoj15.solver.LedgerTally;
@@ -192,6 +193,23 @@ public final class CraftExecutor {
         List<Source> sources = assignment.sources;
         int[] chosen = assignment.chosen;
         InventoryPlayer inventory = player.inventory;
+
+        // Phase 1a: every cell's source must actually hand over its share (#52) — a station slot's
+        // handler can refuse an extract while its stack reads full. Checked before anything moves,
+        // so a short slot reports the item missing instead of crafting without it.
+        Map<Integer, Integer> uses = new HashMap<Integer, Integer>();
+        for (int idx : chosen) {
+            if (idx >= 0) {
+                Integer n = uses.get(idx);
+                uses.put(idx, n == null ? 1 : n + 1);
+            }
+        }
+        for (Map.Entry<Integer, Integer> use : uses.entrySet()) {
+            Source source = sources.get(use.getKey());
+            if (source.isExternal() && source.supplyable(use.getValue()) < use.getValue()) {
+                return new CraftResult.MissingIngredient(source.peek().getDisplayName());
+            }
+        }
 
         // Phase 1b: pull every network item this craft needs out of the network up front, all or
         // nothing, so the network can no longer come up short once phase 2 starts consuming (a
@@ -605,7 +623,11 @@ public final class CraftExecutor {
                 if (!sameItem(held, pick.getValue())) {
                     break;
                 }
-                need -= held.getCount();
+                int take = (int) Math.min(need, held.getCount());
+                if (source.supplyable(take) < take) {
+                    break; // a station slot that would hand over less (#52): applyOnce reports it
+                }
+                need -= take;
             }
             if (need > 0) {
                 return applyOnce(player, assignment, result, ledger);
@@ -1529,6 +1551,11 @@ public final class CraftExecutor {
             }
         }
 
+        /** How many of {@code want} a real take would deliver; only a station slot can say fewer than it holds. */
+        default int supplyable(int want) {
+            return Math.min(want, peek().getCount());
+        }
+
         boolean isExternal();
 
         /** A station's connected side inventory (its chest), as opposed to the crafting grid or the player. */
@@ -1596,19 +1623,33 @@ public final class CraftExecutor {
         }
 
         /**
-         * Takes exactly {@code count} or throws. A handler-backed slot can hand over less than asked
-         * (a refused or capped extract) while its stack still reads full; ExternalSlots already
-         * drops slots that refuse outright, so a short take here means the handler changed its
-         * mind mid-craft. Aborting the craft beats producing the output without the input (#52).
+         * What a real take of {@code want} would hand over (#52). A handler-backed slot can refuse
+         * or cap an extract while its stack still reads full, so it is asked with a simulated
+         * extract; a plain inventory slot always gives what it holds. The craft paths check this
+         * for every cell before consuming anything, so a short slot costs nothing.
          */
+        @Override
+        public int supplyable(int want) {
+            if (slot instanceof SlotItemHandler) {
+                SlotItemHandler handlerSlot = (SlotItemHandler) slot;
+                return handlerSlot.getItemHandler().extractItem(handlerSlot.getSlotIndex(), want, true).getCount();
+            }
+            return Math.min(want, peek().getCount());
+        }
+
         @Override
         public void consume(int count) {
             int left = count;
             while (left > 0) {
                 ItemStack got = slot.decrStackSize(left);
-                if (got.isEmpty()) {
-                    throw new IllegalStateException("SprawlCrafting: station slot " + slot.slotNumber
-                            + " gave " + (count - left) + " of " + count + " (its inventory refused the rest)");
+                if (got.isEmpty() || got.getCount() <= 0) {
+                    // Unreachable unless the handler's real extract disagrees with the simulated one
+                    // the preflight read. Warn, never throw: a throw here escapes the tick and stops
+                    // the server, losing the cells this craft already consumed.
+                    LogManager.getLogger("SprawlCrafting").warn(
+                            "Station slot {} gave {} of {} although its simulated extract allowed it",
+                            slot.slotNumber, count - left, count);
+                    return;
                 }
                 left -= got.getCount();
             }

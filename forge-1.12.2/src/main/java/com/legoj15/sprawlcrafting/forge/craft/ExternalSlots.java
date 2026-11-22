@@ -164,7 +164,7 @@ public final class ExternalSlots {
             return false;
         }
         for (Slot slot : container.inventorySlots) {
-            if (isExternal(slot)) {
+            if (takeable(slot, player)) { // same pool as of(): a refusing slot is no chest to wait for
                 return true;
             }
         }
