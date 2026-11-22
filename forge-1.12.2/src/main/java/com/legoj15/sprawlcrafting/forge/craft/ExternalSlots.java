@@ -90,7 +90,7 @@ public final class ExternalSlots {
         boolean staged = hasCompleteCraft(container);
         List<Slot> slots = null;
         for (Slot slot : container.inventorySlots) {
-            if ((isMatrix(slot) && !staged) || (station && isExternal(slot))) {
+            if ((isMatrix(slot) && !staged) || (station && takeable(slot, player))) {
                 if (slots == null) {
                     slots = new ArrayList<Slot>();
                 }
@@ -110,6 +110,18 @@ public final class ExternalSlots {
      */
     private static boolean harvestsSideInventory(Container container) {
         return GridContext.isThreeByThreeCrafter(container) && !NetworkTerminals.isTerminal(container);
+    }
+
+    /**
+     * A side-inventory slot the player can actually take from (issue #52). The station shows every
+     * slot its neighbour's item handler exposes, but the handler may refuse to extract some: a
+     * TConstruct casting table lists its cast slot yet only lets the output go. A
+     * {@code SlotItemHandler} answers {@link Slot#canTakeStack} with a simulated extract, so this
+     * keeps such slots out of planning, the highlight and consumption alike; counted, they were
+     * "consumed" by a decrStackSize that removed nothing and the craft ran anyway (a dupe).
+     */
+    private static boolean takeable(Slot slot, EntityPlayer player) {
+        return isExternal(slot) && slot.canTakeStack(player);
     }
 
     /** Whether the container's craft-result slot currently shows an output (grid matches a recipe). */
@@ -135,7 +147,7 @@ public final class ExternalSlots {
         }
         List<Slot> external = null;
         for (Slot slot : container.inventorySlots) {
-            if (isExternal(slot)) {
+            if (takeable(slot, player)) {
                 if (external == null) {
                     external = new ArrayList<Slot>();
                 }

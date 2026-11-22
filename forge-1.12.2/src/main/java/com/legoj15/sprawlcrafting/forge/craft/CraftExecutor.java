@@ -1592,13 +1592,25 @@ public final class CraftExecutor {
 
         @Override
         public void consumeOne() {
-            slot.decrStackSize(1);
+            consume(1);
         }
 
+        /**
+         * Takes exactly {@code count} or throws. A handler-backed slot can hand over less than asked
+         * (a refused or capped extract) while its stack still reads full; ExternalSlots already
+         * drops slots that refuse outright, so a short take here means the handler changed its
+         * mind mid-craft. Aborting the craft beats producing the output without the input (#52).
+         */
         @Override
         public void consume(int count) {
-            if (count > 0) {
-                slot.decrStackSize(count);
+            int left = count;
+            while (left > 0) {
+                ItemStack got = slot.decrStackSize(left);
+                if (got.isEmpty()) {
+                    throw new IllegalStateException("SprawlCrafting: station slot " + slot.slotNumber
+                            + " gave " + (count - left) + " of " + count + " (its inventory refused the rest)");
+                }
+                left -= got.getCount();
             }
         }
 

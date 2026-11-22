@@ -634,7 +634,9 @@ public final class ServerGridPlacer {
                     continue;
                 }
                 ItemStack taken = inSlot.copy();
-                slot.decrStackSize(1);
+                if (slot.decrStackSize(1).isEmpty()) {
+                    continue; // the slot's handler refused the extract (#52): nothing was taken
+                }
                 return taken;
             }
         }
