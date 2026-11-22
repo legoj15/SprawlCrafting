@@ -419,3 +419,7 @@ Unbound "Cancel deferred craft" keybind on every tree. The server's `CraftQueueM
 ## #41 / #42 fresh re-verification (2026-11-21)
 - #41: Invoke-ServerLaunchProbe.ps1 -Case all on Server1 with the d4ac380-era jar: canonical, gameDir, sc-only, mb-only all PASS, SC loads.
 - #42: 26.1.2-neoforge dev client (McDevBridge) on a modless 26.1.2 server (Start-PlaySession -Modless -OpName Dev; the dev client user is "Dev"): red recipe shows only the vanilla tooltip, right-click stays vanilla, no exception.
+
+## #50 1.16.5 re-verified through McDevBridge (2026-11-21)
+- The legacy 1.16.5 Forge dev client takes McDevBridge by dropping McDevBridge's legacy-1.16.5/forge/build/libs/mcdevbridge-<ver>+mc1.16.5-forge.jar (official names, no reobf) into legacy-1.16.5/forge/run/mods (gitignored). World created via screenclick (no quick play on 1.16.5). Two planks diagonal in the 2x2 grid + coal: torch yellow ('Craftable from raw resources'); two clicks ran 'Crafting Torch - 2 component steps' -> 'Torch done in the crafting grid': grid coal + stick (torch x4 shown), 3 sticks in inventory, exact for 2 planks + 1 coal.
+
