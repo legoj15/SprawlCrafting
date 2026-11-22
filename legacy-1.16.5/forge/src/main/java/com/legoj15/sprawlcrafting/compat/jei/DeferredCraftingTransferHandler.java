@@ -223,7 +223,7 @@ public class DeferredCraftingTransferHandler implements IRecipeTransferHandler<W
         List<ITextComponent> tooltip() {
             List<ITextComponent> lines = new ArrayList<>();
             lines.add(new TranslationTextComponent("sprawlcrafting.recipe.deferred").withStyle(TextFormatting.YELLOW));
-            lines.add(new TranslationTextComponent("sprawlcrafting.recipe.deferred.click").withStyle(TextFormatting.GRAY));
+            // No "click to queue" line: the confirm line below asks for two clicks (#53).
             lines.addAll(protectedWarningLines(recipe, grid));
             lines.add(ProtectedConfirm.isArmed(recipe.getId())
                     ? ProtectedConfirm.armedLine() : ProtectedConfirm.unarmedLine());

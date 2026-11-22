@@ -103,6 +103,7 @@ public final class DeferredClickState {
 
     public static void confirmPending() {
         if (pendingDisplay != null) {
+            ProtectedConfirm.clear(); // any start disarms a JEI/REI special-items arm (#53)
             // A protected-only recipe (#40, the server-synced protected set says so) confirms with
             // the protected start; the preview it came from already carried the warning lines.
             Services.PLATFORM.sendToServer(DeferredCraftableCache.isProtectedOnly(pendingDisplay)

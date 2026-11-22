@@ -116,8 +116,11 @@ public class DeferredCraftingReiTransferHandler implements TransferHandler {
             boolean armed = protectedCraft && ProtectedConfirm.isArmed(RecipeIds.id(recipe));
             Result button = Result.createSuccessful()
                     .color(armed ? TRANSLUCENT_RED : TRANSLUCENT_YELLOW)
-                    .tooltip(Component.translatable("sprawlcrafting.recipe.deferred").withStyle(ChatFormatting.YELLOW))
-                    .tooltip(Component.translatable("sprawlcrafting.recipe.deferred.click").withStyle(ChatFormatting.GRAY));
+                    .tooltip(Component.translatable("sprawlcrafting.recipe.deferred").withStyle(ChatFormatting.YELLOW));
+            if (!protectedCraft) {
+                // A protected recipe gets the two-click confirm line below instead (#53).
+                button.tooltip(Component.translatable("sprawlcrafting.recipe.deferred.click").withStyle(ChatFormatting.GRAY));
+            }
             // The warning lines cost a full plan per hover: only a protected-only recipe needs them.
             if (protectedCraft) {
                 for (Component line : ProtectedWarnings.lines(recipe, grid)) {

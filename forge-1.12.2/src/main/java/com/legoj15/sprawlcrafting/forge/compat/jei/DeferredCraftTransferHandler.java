@@ -149,8 +149,8 @@ public class DeferredCraftTransferHandler<C extends Container> implements IRecip
                     // packet, only ever sent to a server that advertised the capability. Issue
                     // #53: the first click only arms the recipe (red button, click-again
                     // tooltip); the second click on the same recipe is the confirmed send. The
-                    // arming click returns the cosmetic error so JEI keeps its recipe screen
-                    // open, unlike null (JEI 4's "transfer succeeded" signal).
+                    // arming click returns the (non-null) ProtectedDeferredError so JEI keeps its
+                    // recipe screen open: JEI 4 closes it only on null, its "transfer succeeded".
                     if (!ProtectedConfirm.confirmOrArm(recipe.getRegistryName(), recipeLayout)) {
                         return new ProtectedDeferredError(grid, recipe);
                     }
@@ -257,7 +257,7 @@ public class DeferredCraftTransferHandler<C extends Container> implements IRecip
         private List<String> tooltip(Minecraft minecraft) {
             List<String> lines = new ArrayList<String>();
             lines.add(TextFormatting.YELLOW + I18n.format("sprawlcrafting.recipe.deferred"));
-            lines.add(TextFormatting.GRAY + I18n.format("sprawlcrafting.recipe.deferred.click"));
+            // No "click to queue" line: the confirm line below asks for two clicks (#53).
             if (minecraft.player != null) {
                 try {
                     CraftPlanner.PlanOutcome outcome = ClientPlanCache.plan(minecraft.player, grid, recipe);

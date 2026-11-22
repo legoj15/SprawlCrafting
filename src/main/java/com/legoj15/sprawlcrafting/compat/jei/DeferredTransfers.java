@@ -68,7 +68,8 @@ public final class DeferredTransfers {
      * @param doTransfer false while JEI is only asking how to draw the button, true on the click
      * @return {@code inner} unchanged when it is a direct transfer, an internal error, or nothing of ours
      *         applies; else our yellow / orange cosmetic error (null once the click has sent — except a
-     *         protected-only recipe's first click, which arms and returns the cosmetic error, issue #53)
+     *         protected-only recipe's first click, which arms and returns the USER_FACING {@link #ARMED_CLICK},
+     *         issue #53)
      */
     public static IRecipeTransferError resolve(IRecipeTransferError inner, RecipeHolder<CraftingRecipe> holder,
                                                boolean doTransfer) {
@@ -109,10 +110,8 @@ public final class DeferredTransfers {
             // Even deferred crafting can't make it from current resources. Repurpose JEI's otherwise
             // dead red button into a clickable "what would I need to gather" prompt (still available
             // mid-job, since it's informational). On the real click, open our own screen — deferred,
-            // so it runs after JEI's click handling unwinds (no mid-click setScreen). Always return a
-            // non-null COSMETIC error, never null: null is JEI's "transfer succeeded" signal and makes
-            // it close its recipe GUI (synchronously on 26.x's JEI, deferred on 1.21.1's), which would
-            // clobber the screen we just opened.
+            // so it runs after JEI's click handling unwinds (no mid-click setScreen). The hover pass
+            // returns the COSMETIC gather error; the click returns null (see below).
             if (doTransfer) {
                 // The click triggers JEI's own GUI teardown (on 1.21.1's JEI it closes everything),
                 // so opening inline or via Minecraft.execute gets swept away with it. Queue the open
@@ -177,7 +176,9 @@ public final class DeferredTransfers {
 
         @Override
         public void getTooltip(ITooltipBuilder tooltip) {
-            super.getTooltip(tooltip);
+            // Not super's lines: its "click to queue" would contradict the two-click confirm (#53).
+            tooltip.add(Component.translatable("sprawlcrafting.recipe.deferred")
+                    .withStyle(ChatFormatting.YELLOW));
             protectedWarningLines(recipe, grid).forEach(tooltip::add);
             tooltip.add(ProtectedConfirm.isArmed(RecipeIds.id(recipe))
                     ? ProtectedConfirm.armedLine()
