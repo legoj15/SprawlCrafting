@@ -184,6 +184,13 @@ dependencies {
     if (project.hasProperty('sc.ae2')) {
         runtimeOnly rfg.deobf(files(project.property('sc.ae2')))
     }
+    // Dev runs only: -Psc.extraMods=<jar>;<jar> puts other 1.12.2 mod jars (e.g. TConstruct + Mantle
+    // for a Crafting Station test) on the runClient classpath, deobfuscated by RFG.
+    if (project.hasProperty('sc.extraMods')) {
+        project.property('sc.extraMods').toString().split(';').findAll { it }.each { jar ->
+            runtimeOnly rfg.deobf(files(jar))
+        }
+    }
 
     // --- Solver library (shaded into the jar below) ----------------------------------------
     shade "com.legoj15:solver:${solverVersion}"
