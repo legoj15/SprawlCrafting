@@ -678,11 +678,21 @@ function Invoke-ScGithubRelease {
 
 # ─── Multipart helper (curl.exe — precise control over part content-types) ───
 function Invoke-ScMultipart {
-    param([Parameter(Mandatory)][string]$Uri, [string[]]$Headers = @(), [Parameter(Mandatory)][string[]]$Forms)
+    # -TextFields: name -> @{ Text; Type? }. Sent via a temp file (`-F name=<file`) because curl's -F splits an
+    # inline value at ';' (and treats a leading '@'/'<' specially): a changelog line with a semicolon cut the
+    # Modrinth JSON mid-string on the 2.0.0 run. Plain -Forms stay for file parts.
+    param([Parameter(Mandatory)][string]$Uri, [string[]]$Headers = @(), [string[]]$Forms = @(), [hashtable]$TextFields = @{})
     $curlArgs = @('-sS','-w','\n%{http_code}','-X','POST', $Uri)
     foreach ($h in $Headers) { $curlArgs += @('-H', $h) }
+    $tmp = @()
+    foreach ($name in $TextFields.Keys) {
+        $f = [IO.Path]::GetTempFileName(); $tmp += $f
+        [IO.File]::WriteAllText($f, [string]$TextFields[$name].Text, [Text.UTF8Encoding]::new($false))
+        $type = $TextFields[$name].Type
+        $curlArgs += @('-F', "$name=<$f$(if ($type) { ";type=$type" })")
+    }
     foreach ($f in $Forms)   { $curlArgs += @('-F', $f) }
-    $resp = & curl.exe @curlArgs 2>&1
+    try { $resp = & curl.exe @curlArgs 2>&1 } finally { $tmp | ForEach-Object { Remove-Item -LiteralPath $_ -ErrorAction SilentlyContinue } }
     $text = ($resp | Out-String).Trim()
     $parts = $text -split "`n"
     $code = $parts[-1]
@@ -900,7 +910,7 @@ function Invoke-ScCurseForgeUpload {
         -Extra $ExtraGameVersions -LoaderName $loaderNames -Environments $Environments -JavaName $javaName
     $meta = ConvertTo-Json $metaObj -Depth 6 -Compress
     $r = Invoke-ScMultipart -Uri "https://minecraft.curseforge.com/api/projects/$($Config.curseforge.projectId)/upload-file" `
-        -Headers @("X-Api-Token: $token") -Forms @("metadata=$meta", "file=@$Jar;type=application/java-archive")
+        -Headers @("X-Api-Token: $token") -TextFields @{ metadata = @{ Text = $meta } } -Forms @("file=@$Jar;type=application/java-archive")
     if ($r.Code -ne '200') { throw "CurseForge upload failed [$($r.Code)] for $McVersion/${LoaderName}: $($r.Body)" }
     Write-ScOk "CurseForge file id $((ConvertFrom-Json $r.Body).id) ($McVersion/$LoaderName)"
 }
@@ -968,7 +978,7 @@ function Invoke-ScModrinthUpload {
     Test-ScModrinthVocab -McVersion $GameVersions[0] -Loaders $dataObj.loaders -UserAgent $Config.modrinth.userAgent -ApiBase $ApiBase
     $r = Invoke-ScMultipart -Uri "$ApiBase/v2/version" `
         -Headers @("Authorization: $token", "User-Agent: $($Config.modrinth.userAgent)") `
-        -Forms @("data=$data;type=application/json", "file=@$Jar;type=application/java-archive")
+        -TextFields @{ data = @{ Text = $data; Type = 'application/json' } } -Forms @("file=@$Jar;type=application/java-archive")
     if ($r.Code -notin @('200','201')) { throw "Modrinth upload failed [$($r.Code)] for ${VersionNumber}: $($r.Body)" }
     Write-ScOk "Modrinth version $((ConvertFrom-Json $r.Body).id) ($VersionNumber)"
 }
