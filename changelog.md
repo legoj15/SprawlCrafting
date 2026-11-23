@@ -1,14 +1,1 @@
-###### Changes since 1.0.3:
-- Added a "Cancel deferred craft" key (unbound by default; set it under Controls) that stops a running or paused craft up to the last recipe crafted.
-- With a crafting table, inventory or other screen open, clicking the craft's progress popup in the top-right corner also cancels it.
-- Added support for Minecraft Forge beyond 1.12.2.
-- Added support for Minecraft 1.16.5 and 1.20.1 (Fabric and Forge).
-- Added support for Applied Energistics 2's crafting terminals.
-- Added support for Sophisticated Storage crafting grid GUI.
-- {1.12.2} Improved the responsiveness of crafting items using the recipe book.
-- {1.12.2} Recipes that can use substituted items (i.e. planks from different types of trees) no longer try to craft more of a specific type of plank and just uses whatever mix you have first.
-- {1.12.2} When on servers without the mod, the JEI "+" button no longer leaves such a recipe half-filled in the grid.
-- {1.12.2} A long item name in the "Materials needed" screen title no longer runs off the panel.
-- Recipes that need a specific item now craft even if an earlier recipe step uses the same item.
-- Crafts no longer stop with a missing ingredient when another mod enchants, renames or damages an item SprawlCrafting just crafted for the next step (for example, the act of entering the player's inventory grants the item's special properties).
-- When a recipe can't be planned even though you have the materials, the message now says so, instead of "Not enough raw resources (missing: ?)"
+###### Changes since 2.0.0:
