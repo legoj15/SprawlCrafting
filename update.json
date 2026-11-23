@@ -4,36 +4,51 @@
     "1.0.0": "Initial release.",
     "1.0.1": "- 26.2 Support\n- Performance improvements",
     "1.0.2": "- Added 1.12.2 support\n- The 1.12.2 build is now an optional mod \u2014 servers running it no longer kick players who don't have it installed, and you can run it client-side to join servers that don't (the Fabric/NeoForge builds already behaved this way)\n- Removed the /sprawlcrafting command because it shouldn't have made it into the release anyways lol",
-    "1.0.3": "- Added 26.3 support (Fabric and NeoForge)"
+    "1.0.3": "- Added 26.3 support (Fabric and NeoForge)",
+    "2.0.0": "- Added a \"Cancel deferred craft\" key (unbound by default; set it under Controls) that stops a running or paused craft up to the last recipe crafted.\n- With a crafting table, inventory or other screen open, clicking the craft's progress popup in the top-right corner also cancels it.\n- Added support for Minecraft Forge beyond 1.12.2.\n- Added support for Minecraft 1.16.5 and 1.20.1 (Fabric and Forge).\n- Added support for Applied Energistics 2's crafting terminals.\n- Added support for Sophisticated Storage crafting grid GUI.\n- Recipes that need a specific item now craft even if an earlier recipe step uses the same item.\n- Crafts no longer stop with a missing ingredient when another mod enchants, renames or damages an item SprawlCrafting just crafted for the next step (for example, the act of entering the player's inventory grants the item's special properties).\n- When a recipe can't be planned even though you have the materials, the message now says so, instead of \"Not enough raw resources (missing: ?)\""
   },
   "26.1.2": {
     "1.0.0": "Initial release.",
     "1.0.1": "- 26.2 Support\n- Performance improvements",
     "1.0.2": "- Added 1.12.2 support\n- The 1.12.2 build is now an optional mod \u2014 servers running it no longer kick players who don't have it installed, and you can run it client-side to join servers that don't (the Fabric/NeoForge builds already behaved this way)\n- Removed the /sprawlcrafting command because it shouldn't have made it into the release anyways lol",
-    "1.0.3": "- Added 26.3 support (Fabric and NeoForge)"
+    "1.0.3": "- Added 26.3 support (Fabric and NeoForge)",
+    "2.0.0": "- Added a \"Cancel deferred craft\" key (unbound by default; set it under Controls) that stops a running or paused craft up to the last recipe crafted.\n- With a crafting table, inventory or other screen open, clicking the craft's progress popup in the top-right corner also cancels it.\n- Added support for Minecraft Forge beyond 1.12.2.\n- Added support for Minecraft 1.16.5 and 1.20.1 (Fabric and Forge).\n- Added support for Applied Energistics 2's crafting terminals.\n- Added support for Sophisticated Storage crafting grid GUI.\n- Recipes that need a specific item now craft even if an earlier recipe step uses the same item.\n- Crafts no longer stop with a missing ingredient when another mod enchants, renames or damages an item SprawlCrafting just crafted for the next step (for example, the act of entering the player's inventory grants the item's special properties).\n- When a recipe can't be planned even though you have the materials, the message now says so, instead of \"Not enough raw resources (missing: ?)\""
   },
   "26.2": {
     "1.0.1": "- 26.2 Support\n- Performance improvements",
     "1.0.2": "- Added 1.12.2 support\n- The 1.12.2 build is now an optional mod \u2014 servers running it no longer kick players who don't have it installed, and you can run it client-side to join servers that don't (the Fabric/NeoForge builds already behaved this way)\n- Removed the /sprawlcrafting command because it shouldn't have made it into the release anyways lol",
-    "1.0.3": "- Added 26.3 support (Fabric and NeoForge)"
+    "1.0.3": "- Added 26.3 support (Fabric and NeoForge)",
+    "2.0.0": "- Added a \"Cancel deferred craft\" key (unbound by default; set it under Controls) that stops a running or paused craft up to the last recipe crafted.\n- With a crafting table, inventory or other screen open, clicking the craft's progress popup in the top-right corner also cancels it.\n- Added support for Minecraft Forge beyond 1.12.2.\n- Added support for Minecraft 1.16.5 and 1.20.1 (Fabric and Forge).\n- Added support for Applied Energistics 2's crafting terminals.\n- Added support for Sophisticated Storage crafting grid GUI.\n- Recipes that need a specific item now craft even if an earlier recipe step uses the same item.\n- Crafts no longer stop with a missing ingredient when another mod enchants, renames or damages an item SprawlCrafting just crafted for the next step (for example, the act of entering the player's inventory grants the item's special properties).\n- When a recipe can't be planned even though you have the materials, the message now says so, instead of \"Not enough raw resources (missing: ?)\""
   },
   "1.12.2": {
     "1.0.2": "- Added 1.12.2 support\n- The 1.12.2 build is now an optional mod \u2014 servers running it no longer kick players who don't have it installed, and you can run it client-side to join servers that don't (the Fabric/NeoForge builds already behaved this way)\n- Removed the /sprawlcrafting command because it shouldn't have made it into the release anyways lol",
-    "1.0.3": "- Added 26.3 support (Fabric and NeoForge)"
+    "1.0.3": "- Added 26.3 support (Fabric and NeoForge)",
+    "2.0.0": "- Added a \"Cancel deferred craft\" key (unbound by default; set it under Controls) that stops a running or paused craft up to the last recipe crafted.\n- With a crafting table, inventory or other screen open, clicking the craft's progress popup in the top-right corner also cancels it.\n- Added support for Minecraft Forge beyond 1.12.2.\n- Added support for Minecraft 1.16.5 and 1.20.1 (Fabric and Forge).\n- Added support for Applied Energistics 2's crafting terminals.\n- Added support for Sophisticated Storage crafting grid GUI.\n- Improved the responsiveness of crafting items using the recipe book.\n- Recipes that can use substituted items (i.e. planks from different types of trees) no longer try to craft more of a specific type of plank and just uses whatever mix you have first.\n- When on servers without the mod, the JEI \"+\" button no longer leaves such a recipe half-filled in the grid.\n- A long item name in the \"Materials needed\" screen title no longer runs off the panel.\n- Recipes that need a specific item now craft even if an earlier recipe step uses the same item.\n- Crafts no longer stop with a missing ingredient when another mod enchants, renames or damages an item SprawlCrafting just crafted for the next step (for example, the act of entering the player's inventory grants the item's special properties).\n- When a recipe can't be planned even though you have the materials, the message now says so, instead of \"Not enough raw resources (missing: ?)\""
   },
   "26.3": {
-    "1.0.3": "- Added 26.3 support (Fabric and NeoForge)"
+    "1.0.3": "- Added 26.3 support (Fabric and NeoForge)",
+    "2.0.0": "- Added a \"Cancel deferred craft\" key (unbound by default; set it under Controls) that stops a running or paused craft up to the last recipe crafted.\n- With a crafting table, inventory or other screen open, clicking the craft's progress popup in the top-right corner also cancels it.\n- Added support for Minecraft Forge beyond 1.12.2.\n- Added support for Minecraft 1.16.5 and 1.20.1 (Fabric and Forge).\n- Added support for Applied Energistics 2's crafting terminals.\n- Added support for Sophisticated Storage crafting grid GUI.\n- Recipes that need a specific item now craft even if an earlier recipe step uses the same item.\n- Crafts no longer stop with a missing ingredient when another mod enchants, renames or damages an item SprawlCrafting just crafted for the next step (for example, the act of entering the player's inventory grants the item's special properties).\n- When a recipe can't be planned even though you have the materials, the message now says so, instead of \"Not enough raw resources (missing: ?)\""
+  },
+  "1.20.1": {
+    "2.0.0": "- Added a \"Cancel deferred craft\" key (unbound by default; set it under Controls) that stops a running or paused craft up to the last recipe crafted.\n- With a crafting table, inventory or other screen open, clicking the craft's progress popup in the top-right corner also cancels it.\n- Added support for Minecraft Forge beyond 1.12.2.\n- Added support for Minecraft 1.16.5 and 1.20.1 (Fabric and Forge).\n- Added support for Applied Energistics 2's crafting terminals.\n- Added support for Sophisticated Storage crafting grid GUI.\n- Recipes that need a specific item now craft even if an earlier recipe step uses the same item.\n- Crafts no longer stop with a missing ingredient when another mod enchants, renames or damages an item SprawlCrafting just crafted for the next step (for example, the act of entering the player's inventory grants the item's special properties).\n- When a recipe can't be planned even though you have the materials, the message now says so, instead of \"Not enough raw resources (missing: ?)\""
+  },
+  "1.16.5": {
+    "2.0.0": "- Added a \"Cancel deferred craft\" key (unbound by default; set it under Controls) that stops a running or paused craft up to the last recipe crafted.\n- With a crafting table, inventory or other screen open, clicking the craft's progress popup in the top-right corner also cancels it.\n- Added support for Minecraft Forge beyond 1.12.2.\n- Added support for Minecraft 1.16.5 and 1.20.1 (Fabric and Forge).\n- Added support for Applied Energistics 2's crafting terminals.\n- Added support for Sophisticated Storage crafting grid GUI.\n- Recipes that need a specific item now craft even if an earlier recipe step uses the same item.\n- Crafts no longer stop with a missing ingredient when another mod enchants, renames or damages an item SprawlCrafting just crafted for the next step (for example, the act of entering the player's inventory grants the item's special properties).\n- When a recipe can't be planned even though you have the materials, the message now says so, instead of \"Not enough raw resources (missing: ?)\""
   },
   "promos": {
-    "1.21.1-latest": "1.0.3",
-    "1.21.1-recommended": "1.0.3",
-    "26.1.2-latest": "1.0.3",
-    "26.1.2-recommended": "1.0.3",
-    "26.2-recommended": "1.0.3",
-    "26.2-latest": "1.0.3",
-    "1.12.2-recommended": "1.0.3",
-    "1.12.2-latest": "1.0.3",
-    "26.3-recommended": "1.0.3",
-    "26.3-latest": "1.0.3"
+    "1.21.1-latest": "2.0.0",
+    "1.21.1-recommended": "2.0.0",
+    "26.1.2-latest": "2.0.0",
+    "26.1.2-recommended": "2.0.0",
+    "26.2-recommended": "2.0.0",
+    "26.2-latest": "2.0.0",
+    "1.12.2-recommended": "2.0.0",
+    "1.12.2-latest": "2.0.0",
+    "26.3-recommended": "2.0.0",
+    "26.3-latest": "2.0.0",
+    "1.20.1-recommended": "2.0.0",
+    "1.20.1-latest": "2.0.0",
+    "1.16.5-recommended": "2.0.0",
+    "1.16.5-latest": "2.0.0"
   }
 }
