@@ -6,8 +6,7 @@
     "enabled": true,
     "projectId": "ILhtnhcE",
     "projectSlug": "sprawlcrafting",
-    "jeiProjectId": "u6dRKJwZ",
-    "mixinBooterProjectId": "G1ckZuWK",
+    "extraLoaders": { "fabric": ["quilt"] },
     "userAgent": "legoj15/SprawlCrafting-release/1.0 (legoj15@yahoo.com)",
     "tokenEnvVar": "MODRINTH_TOKEN"
   },
@@ -15,13 +14,42 @@
     "enabled": true,
     "projectId": "1575622",
     "projectSlug": "sprawlcrafting",
-    "jeiSlug": "jei",
-    "mixinBooterSlug": "mixin-booter",
+    "extraLoaders": { "fabric": ["Quilt"] },
     "environments": ["Client", "Server"],
     "tagJavaVersion": true,
     "tokenEnvVar": "CURSEFORGE_TOKEN"
   },
   "featuredMc": "26.3",
+  "heldBack": { "loaders": [], "nodes": [], "reason": "" },
+  "dependencies": {
+    "fabric-api": {
+      "type": "required", "modrinth": "P7dR8mSH", "curseforge": "fabric-api",
+      "whenProp": "fabric_version", "loaders": ["fabric"]
+    },
+    "jei": {
+      "type": "optional", "modrinth": "u6dRKJwZ", "curseforge": "jei",
+      "whenProp": "jei_version"
+    },
+    "rei": {
+      "type": "optional", "modrinth": "nfn13YXA", "curseforge": "roughly-enough-items",
+      "whenProp": "rei_version"
+    },
+    "modmenu": {
+      "type": "optional", "modrinth": "mOgUt4GM", "curseforge": "modmenu",
+      "whenProp": "modmenu_version", "loaders": ["fabric"]
+    },
+    "ae2": {
+      "type": "optional", "modrinth": "XxWD5pD3", "curseforge": "applied-energistics-2",
+      "whenProp": "ae2_version"
+    },
+    "sophisticated-storage": {
+      "type": "optional", "modrinth": "hMlaZH8f", "curseforge": "sophisticated-storage",
+      "whenProp": "sophisticated_storage_version"
+    },
+    "mixinbooter": {
+      "type": "required", "modrinth": "G1ckZuWK", "curseforge": "mixin-booter"
+    }
+  },
   "ingameBold": "strip",
   "endOfSupportLines": {},
   "storeGameVersionsByMc": {
@@ -41,7 +69,8 @@
     "cfLoaderName": "Forge",
     "java": "8",
     "buildTask": "reobfJar",
-    "javaHome": "C:\\Program Files\\Java\\jdk-25.0.2+10"
+    "javaHome": "C:\\Program Files\\Java\\jdk-25.0.2+10",
+    "dependencies": ["jei", "ae2", "mixinbooter"]
   },
   "legacyTrees": [
     {
@@ -53,8 +82,8 @@
       "verifyTasks": [":forge:build", ":fabric:build"],
       "buildTasks": [":forge:build", ":fabric:build"],
       "loaders": [
-        { "loader": "forge",  "cfLoaderName": "Forge",  "jei": true  },
-        { "loader": "fabric", "cfLoaderName": "Fabric", "jei": false }
+        { "loader": "forge",  "cfLoaderName": "Forge",  "dependencies": ["jei", "ae2"] },
+        { "loader": "fabric", "cfLoaderName": "Fabric", "dependencies": ["fabric-api", "modmenu"], "extraLoaders": false }
       ]
     }
   ]

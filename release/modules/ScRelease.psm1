@@ -7,10 +7,16 @@
 # Adapted from BuildCraft's BcRelease.psm1, with SprawlCrafting-specific differences:
 #   * SprawlCrafting ships TWO loaders per MC version (fabric + neoforge), so every store upload is
 #     PER-NODE and tags its own loader — BuildCraft was NeoForge-only with one universal jar per MC.
-#   * Every node gets the SAME full changelog (general lines + its own {mc}-tagged lines). There is no
-#     "primary vs backport" framing: every release node is an equal (the modern nodes share one Stonecutter
-#     source, auto-discovered from versions/; the legacy 1.12.2 Forge node and the 1.16.5 Forge+Fabric tree
-#     are separate builds bundling the com.legoj15:solver library from solver-core/, injected via the `legacyForge` / `legacyTrees` config).
+#   * CurseForge gets the per-MC changelog (general lines + that version's {mc}-tagged lines), while every
+#     Modrinth version gets ONE identical unified changelog (tagged lines kept inline as "- (mc) text") —
+#     Modrinth's changelog tab dedupes a repeated text, so it must be byte-identical and the featured nodes
+#     must upload first. There is no "primary vs backport" framing: every release node is an equal (the
+#     modern nodes share one Stonecutter source, auto-discovered from versions/; the legacy 1.12.2 Forge node
+#     and the 1.16.5 Forge+Fabric tree are separate builds bundling the com.legoj15:solver library from
+#     solver-core/, injected via the `legacyForge` / `legacyTrees` config).
+#   * Store dependencies are per NODE (integrations vary by node, not loader): release.json `dependencies`
+#     keyed by a short key, each node object carrying the list of keys it advertises (Get-ScNodes derives
+#     the modern nodes' keys from which whenProp gradle keys their node pins).
 #   * The in-game update manifest is the STANDARD Forge/NeoForge update.json (homepage + per-MC
 #     {version:changelog} + promos), rendered as PLAIN text — not BuildCraft's in-game §-formatted file.
 #
@@ -156,6 +162,9 @@ function Get-ScNodes {
     $rootProps = Read-ScProperties (Join-Path $RepoRoot 'gradle.properties')
     # featuredMc names an MC version (not a node): both loaders of that version are featured on Modrinth.
     $featuredMc = Get-ScProp $Config 'featuredMc'
+    # Store-dependency catalogue (key -> {type, modrinth, curseforge, whenProp?, loaders?}); modern nodes
+    # derive their key list below, the legacy blocks name theirs explicitly.
+    $depsCfg = Get-ScProp $Config 'dependencies'
     $nodes = @()
     foreach ($dir in (Get-ChildItem -Directory (Join-Path $RepoRoot 'versions') | Sort-Object Name)) {
         $pp = Join-Path $dir.FullName 'gradle.properties'
@@ -163,6 +172,21 @@ function Get-ScNodes {
         $p = Read-ScProperties $pp
         $loader = $dir.Name.Substring($dir.Name.LastIndexOf('-') + 1)   # 'fabric' | 'neoforge' | 'forge'
         $cfName = switch ($loader) { 'fabric' { 'Fabric' } 'neoforge' { 'NeoForge' } 'forge' { 'Forge' } default { $loader } }
+        # Integrations vary per NODE: a modern node advertises exactly the config dependencies whose
+        # whenProp gradle key it pins (e.g. no jei_version on the 26.x Forge nodes — no JEI is published
+        # for them) AND whose loaders filter (if any) admits its loader (modmenu is Fabric-only). Entries
+        # with no whenProp (mixinbooter) are legacy-only and never auto-added here.
+        $depKeys = @()
+        if ($depsCfg) {
+            foreach ($dp in $depsCfg.PSObject.Properties) {
+                $when = Get-ScProp $dp.Value 'whenProp'
+                if (-not $when) { continue }
+                if (-not $p.ContainsKey($when)) { continue }
+                $depLoaders = @(Get-ScProp $dp.Value 'loaders' @())
+                if ($depLoaders.Count -and $depLoaders -notcontains $loader) { continue }
+                $depKeys += $dp.Name
+            }
+        }
         $nodes += [pscustomobject]@{
             Node          = $dir.Name
             McVersion     = $p['minecraft_version']     # also the jar +mc tag and the CF/MR game version
@@ -173,10 +197,8 @@ function Get-ScNodes {
             Java          = if ($p.ContainsKey('java_version')) { $p['java_version'] } elseif ($rootProps.ContainsKey('java_version')) { $rootProps['java_version'] } else { $null }
             IsFeatured    = ($p['minecraft_version'] -eq $featuredMc)
             IsLegacy      = $false                      # a standard Stonecutter node (modern jar name + buildAndCollect)
-            # A node integrates with JEI exactly when its props pin jei_version (the 26.x Forge nodes have
-            # none: no JEI is published for them), so the optional JEI dependency is only advertised then.
-            HasJei        = $p.ContainsKey('jei_version')
-            NeedsMixinBooter = $false                   # only the 1.12.2 Forge jar hard-requires MixinBooter
+            Dependencies  = @($depKeys)                 # store-dependency keys this node advertises
+            ExtraLoaders  = $true                       # eligible for config extraLoaders (e.g. Quilt on fabric)
         }
     }
     # The legacy 1.12.2 Forge build lives OUTSIDE versions/ (its own self-contained Gradle build), so the
@@ -202,8 +224,8 @@ function Get-ScNodes {
                 Java          = Get-ScProp $lf 'java' '8'
                 IsFeatured    = ($lfMc -eq $featuredMc)
                 IsLegacy      = $true
-                HasJei        = $true
-                NeedsMixinBooter = $true                # the 1.12.2 client hard-stops without MixinBooter
+                Dependencies  = @(Get-ScProp $lf 'dependencies' @())   # explicit: the legacy props don't carry the whenProp keys
+                ExtraLoaders  = $true
                 BuildDir      = $lfDir
                 VerifyTasks   = @((Get-ScProp $lf 'buildTask' 'reobfJar'))   # no 'test': the solver suite runs in solver-core (step 0)
                 BuildTasks    = @(Get-ScProp $lf 'buildTask' 'reobfJar')
@@ -247,8 +269,9 @@ function Get-ScNodes {
                 Java          = Get-ScProp $lt 'java' '8'
                 IsFeatured    = ($ltMc -eq $featuredMc)
                 IsLegacy      = $true
-                HasJei        = [bool](Get-ScProp $ll 'jei' $false)
-                NeedsMixinBooter = [bool](Get-ScProp $ll 'mixinBooter' $false)
+                Dependencies  = @(Get-ScProp $ll 'dependencies' @())   # explicit per-loader list (no whenProp props to derive from)
+                # A tree loader may opt out of the config's extra loaders (Quilt never supported 1.16.5).
+                ExtraLoaders  = [bool](Get-ScProp $ll 'extraLoaders' $true)
                 BuildDir      = $ltDir
                 VerifyTasks   = $ltVerify
                 BuildTasks    = $ltBuild
@@ -261,6 +284,63 @@ function Get-ScNodes {
         Write-ScWarn "featuredMc '$featuredMc' from config matches no shipping node — nothing will be marked featured on Modrinth."
     }
     return $nodes
+}
+
+# Resolve -OnlyNodes selectors. Each is either a node name ("26.3-fabric": that node only) or an MC
+# version ("26.3": every node on that MC version, so every loader that has one). A selector matching
+# nothing throws — a typo in a resumed run must not silently shrink the set of files published.
+# (Nodes held back by the ship gate are still matched here; the caller then leaves them out.)
+function Select-ScNodes {
+    param([Parameter(Mandatory)]$Nodes, [Parameter(Mandatory)][string[]]$Selectors)
+    $Nodes = @($Nodes)
+    foreach ($sel in $Selectors) {
+        if (-not @($Nodes | Where-Object { $_.Node -eq $sel -or $_.McVersion -eq $sel }).Count) {
+            throw "-OnlyNodes '$sel' matched none of the configured nodes (node names: $(($Nodes.Node) -join ', '); MC versions: $((@($Nodes.McVersion) | Select-Object -Unique) -join ', '))."
+        }
+    }
+    return @($Nodes | Where-Object { $_.Node -in $Selectors -or $_.McVersion -in $Selectors })
+}
+
+# ─── Ship gate ───────────────────────────────────────────────────────────────
+# release.json "heldBack" = { "loaders": [...], "nodes": [...], "reason": "..." } names nodes that are
+# enumerated, built and verified like every other node (the full set still feeds the test stage, the
+# store-config check and the manifest) but are NOT published to GitHub, Modrinth or CurseForge. A run
+# lifts the hold with -ShipHeld <loader|node>[,...]; lifting the entry in the config is the permanent
+# form. A -ShipHeld value matching no held node throws, like an -OnlyNodes typo. Returns Publish (what
+# the store stages may publish), Held (still held), Lifted (held but released for this run) and the
+# config's Reason text. SprawlCrafting has no primary node that "always publishes"; the closest
+# equivalent — a node of featuredMc — is only WARNED about when held (Modrinth just gets no featured
+# version that run) rather than failing the release.
+function Resolve-ScHeldNodes {
+    param([Parameter(Mandatory)]$Config, [Parameter(Mandatory)]$Nodes, [string[]]$Ship = @())
+    $Nodes = @($Nodes)
+    $loaders = @(); $names = @(); $reason = ''
+    if (Test-ScProp $Config 'heldBack') {
+        $hb = $Config.heldBack
+        if (Test-ScProp $hb 'loaders') { $loaders = @($hb.loaders | ForEach-Object { ([string]$_).ToLowerInvariant() }) }
+        if (Test-ScProp $hb 'nodes')   { $names   = @($hb.nodes   | ForEach-Object { ([string]$_).ToLowerInvariant() }) }
+        if (Test-ScProp $hb 'reason')  { $reason  = [string]$hb.reason }
+    }
+    $held = @($Nodes | Where-Object { $_.Loader -in $loaders -or $_.Node.ToLowerInvariant() -in $names })
+    $ship = @($Ship | Where-Object { $_ } | ForEach-Object { $_.Trim().ToLowerInvariant() })
+    foreach ($s in $ship) {
+        if (-not @($held | Where-Object { $_.Loader -eq $s -or $_.Node.ToLowerInvariant() -eq $s }).Count) {
+            $heldNames = if ($held.Count) { ($held.Node) -join ', ' } else { '(none: nothing is held back)' }
+            throw "-ShipHeld '$s' matched no held-back node (held: $heldNames)."
+        }
+    }
+    $liftedNames = @($held | Where-Object { $ship -contains $_.Loader -or $ship -contains $_.Node.ToLowerInvariant() } | ForEach-Object Node)
+    $lifted = @($held | Where-Object { $_.Node -in $liftedNames })
+    $still  = @($held | Where-Object { $_.Node -notin $liftedNames })
+    $stillNames = @($still | ForEach-Object Node)
+    $featured = @($still | Where-Object IsFeatured)
+    if ($featured.Count) { Write-ScWarn "featuredMc node(s) $(($featured.Node) -join ', ') held back — no Modrinth version will be featured this run." }
+    return [pscustomobject]@{
+        Publish = @($Nodes | Where-Object { $_.Node -notin $stillNames })
+        Held    = $still
+        Lifted  = $lifted
+        Reason  = $reason
+    }
 }
 
 function Get-ScJarPath {
@@ -293,22 +373,37 @@ function Get-ScLegacyJarPath {
     return $path
 }
 
+function Get-ScNodeJarPath {
+    # A node's jar path regardless of flavour: the modern Stonecutter jars or a legacy tree's own output.
+    param([Parameter(Mandatory)][string]$RepoRoot, [Parameter(Mandatory)][string]$Version, [Parameter(Mandatory)]$Node)
+    if (Get-ScProp $Node 'IsLegacy' $false) {
+        return (Get-ScLegacyJarPath -RepoRoot $RepoRoot -BuildDir $Node.BuildDir -JarRel $Node.JarRel -Version $Version -McVersion $Node.McVersion)
+    }
+    return (Get-ScJarPath -RepoRoot $RepoRoot -Version $Version -McVersion $Node.McVersion -Loader $Node.MrLoader)
+}
+
 function Test-ScJars {
-    # Resolve every node's jar. Returns { Map = node->path; Missing = path[] }. Does NOT throw — the
-    # orchestrator warns (dry run) or fails (execute) so a dry run can preview the plan unbuilt.
-    param([Parameter(Mandatory)][string]$RepoRoot, [Parameter(Mandatory)][string]$Version, [Parameter(Mandatory)]$Nodes)
+    # Resolve every PUBLISHING node's jar into a node-name -> path map. Throws when one is missing (a
+    # dry run without -AllowMissingJars fails like a real run, so the plan can't quietly assume a jar)
+    # unless -AllowMissing downgrades each miss to a warning and maps the path it WOULD have — for
+    # previewing a release before the build. Held nodes never come through here (their jars are not
+    # required); the orchestrator reports those separately via Get-ScNodeJarPath.
+    param([Parameter(Mandatory)][string]$RepoRoot, [Parameter(Mandatory)][string]$Version, [Parameter(Mandatory)]$Nodes,
+          [switch]$AllowMissing)
     $map = @{}
     $missing = @()
-    foreach ($n in $Nodes) {
-        if (Get-ScProp $n 'IsLegacy' $false) {
-            $jar = Get-ScLegacyJarPath -RepoRoot $RepoRoot -BuildDir $n.BuildDir -JarRel $n.JarRel -Version $Version -McVersion $n.McVersion
-        } else {
-            $jar = Get-ScJarPath -RepoRoot $RepoRoot -Version $Version -McVersion $n.McVersion -Loader $n.MrLoader
-        }
+    foreach ($n in @($Nodes)) {
+        $jar = Get-ScNodeJarPath -RepoRoot $RepoRoot -Version $Version -Node $n
         $map[$n.Node] = $jar
-        if (-not (Test-Path $jar)) { $missing += $jar }
+        if (-not (Test-Path -LiteralPath $jar)) {
+            if ($AllowMissing) { Write-ScWarn "jar not built yet (-AllowMissingJars): $jar" }
+            else { $missing += $jar }
+        }
     }
-    return [pscustomobject]@{ Map = $map; Missing = @($missing) }
+    if ($missing.Count) {
+        throw "Missing shipping jar(s) for $Version — run ``./gradlew buildAndCollect`` (or pass -Build):`n  " + ($missing -join "`n  ")
+    }
+    return $map
 }
 
 # ─── Changelog variants ──────────────────────────────────────────────────────
@@ -366,14 +461,30 @@ function Test-ScChangelogTags {
     }
 }
 
-# Store changelog (CurseForge/Modrinth) for a given MC version: the general (untagged) lines plus that
-# version's own {mc}-tagged lines, in document order, tag stripped. Every SprawlCrafting node gets its
-# full changelog this way (no primary/backport distinction — all versions are first-class). Another
-# version's exclusive {mc} line never leaks here. Neutral fallback only if there are no lines at all.
+# CurseForge changelog for a given MC version: the general (untagged) lines plus that version's own
+# {mc}-tagged lines, in document order, tag stripped. Every CurseForge file of an MC version gets this
+# (no primary/backport distinction — all versions are first-class). Another version's exclusive {mc}
+# line never leaks here. Neutral fallback only if there are no lines at all.
 function Get-ScStoreChangelogForMc {
     param([Parameter(Mandatory)]$ChangelogSplit, [Parameter(Mandatory)][string]$McVersion)
     $lines = @($ChangelogSplit.Entries | Where-Object { $null -eq $_.Tag -or $_.Tag -eq $McVersion } | ForEach-Object Line)
     if (-not $lines.Count) { return "Release for Minecraft $McVersion. See the GitHub release page for details." }
+    return ($lines -join "`n")
+}
+
+# Modrinth changelog, IDENTICAL for every version of one release (every loader, every MC version):
+# every line in document order, a {mc}-tag rendered inline as "- (1.12.2) text" instead of routing the
+# line away. (CurseForge does NOT use this: its files keep Get-ScStoreChangelogForMc, per MC version.)
+# Byte-identity is load-bearing on Modrinth: its changelog tab hides a version's text when an OLDER
+# version on the same page carries the exact same string, so one shared text shows once per release —
+# which is why the orchestrator uploads the featured nodes FIRST. Split-ScChangelogByVersion yields a
+# single .Tag per entry (no multi-version tags), unlike BuildCraft's .Tags array.
+function Get-ScUnifiedStoreChangelog {
+    param([Parameter(Mandatory)]$ChangelogSplit)
+    $lines = @($ChangelogSplit.Entries | ForEach-Object {
+        if ($null -ne $_.Tag) { $_.Line -replace '^- ', "- ($($_.Tag)) " } else { $_.Line }
+    })
+    if (-not $lines.Count) { return 'Compatibility release' }
     return ($lines -join "`n")
 }
 
@@ -437,6 +548,7 @@ function Update-ScManifest {
         [Parameter(Mandatory)][string]$ChangelogBody,
         [string[]]$NodeMcVersions = @(),
         [string]$IngameBold = 'strip',
+        [switch]$PromoteRecommended,
         [switch]$Write
     )
     if (-not (Test-Path $ManifestPath)) { throw "Manifest not found: $ManifestPath" }
@@ -495,8 +607,10 @@ function Update-ScManifest {
         } else {
             $curStable = (Split-ScVersion $pp.Value).IsStable
             # Advance recommended if this build is itself stable (final/hotfix), OR if no stable has
-            # shipped on this line yet (still in the initial prerelease run-up).
-            if ($split.IsStable -or (-not $curStable)) { $pp.Value = $Version }
+            # shipped on this line yet (still in the initial prerelease run-up), OR if this release was
+            # explicitly promoted (-PromoteRecommended): a bugfix-heavy prerelease the author wants
+            # players pulled onto now, overriding the "don't recommend a prerelease" default.
+            if ($split.IsStable -or (-not $curStable) -or $PromoteRecommended) { $pp.Value = $Version }
             # else: a prerelease after a stable already shipped — leave recommended where it is.
         }
     }
@@ -572,6 +686,90 @@ function Invoke-ScMultipart {
     return [pscustomobject]@{ Code = $code; Body = $body }
 }
 
+# ─── Store dependencies & extra loaders ──────────────────────────────────────
+# Resolve a node's dependency keys against release.json's top-level "dependencies" catalogue (key ->
+# { "type": "required"|"optional", "modrinth": "<projectId>", "curseforge": "<slug>", "whenProp"?,
+# "loaders"? }). Returns @{ Key; Type; ModrinthId; CurseForgeSlug } entries, REQUIRED FIRST (both
+# stores list required dependencies ahead of optional ones). A key missing from the catalogue throws;
+# Test-ScStoreConfig catches that up front, this is the belt to its braces.
+function Get-ScStoreDependencyList {
+    param([Parameter(Mandatory)]$Config, [string[]]$Keys = @())
+    $cfg = Get-ScProp $Config 'dependencies'
+    $list = @()
+    foreach ($k in @($Keys)) {
+        $e = if ($cfg) { Get-ScProp $cfg $k } else { $null }
+        if ($null -eq $e) { throw "release.json dependencies has no entry '$k' — a node advertises it but the catalogue lacks it." }
+        $list += [pscustomobject]@{
+            Key           = $k
+            Type          = [string](Get-ScProp $e 'type')
+            ModrinthId    = [string](Get-ScProp $e 'modrinth')
+            CurseForgeSlug = [string](Get-ScProp $e 'curseforge')
+        }
+    }
+    return @(@($list | Where-Object { $_.Type -eq 'required' }) + @($list | Where-Object { $_.Type -ne 'required' }))
+}
+
+# "fabric-api(req), jei(opt), modmenu(opt)" — the preview/log rendering of a dependency list.
+function Get-ScDependencyText {
+    param([Parameter(Mandatory)]$Deps)
+    if (-not @($Deps).Count) { return '(none)' }
+    return (@($Deps) | ForEach-Object { "$($_.Key)($(if ($_.Type -eq 'required') { 'req' } else { 'opt' }))" }) -join ', '
+}
+
+# Extra loaders a node's file is also tagged with (e.g. Quilt on the fabric files, which run on Quilt
+# Loader): config <store>.extraLoaders.<loader> — Modrinth loader ids, or CurseForge loader NAMES. A
+# legacyTrees loader entry opts out per node with "extraLoaders": false (Quilt never supported 1.16.5).
+# Missing entry = none.
+function Get-ScExtraLoaders {
+    param([Parameter(Mandatory)]$Config, [Parameter(Mandatory)][ValidateSet('curseforge','modrinth')][string]$Store,
+          [Parameter(Mandatory)]$Node)
+    if (-not [bool](Get-ScProp $Node 'ExtraLoaders' $true)) { return @() }
+    $s = $Config.$Store
+    if ((Test-ScProp $s 'extraLoaders') -and (Test-ScProp $s.extraLoaders $Node.Loader)) {
+        # ($Node.Loader) in parens: a bare $Node.Loader mid-dot-chain would parse as a property NAME.
+        return @($s.extraLoaders.($Node.Loader) | ForEach-Object { [string]$_ })
+    }
+    return @()
+}
+
+# Everything the store legs read from release.json, checked up front (dry run included) so a bad entry
+# fails before the slow test suite or any upload, not on the 7th file. Held nodes are checked too:
+# lifting the gate later must not be the first time a missing entry shows up.
+function Test-ScStoreConfig {
+    param([Parameter(Mandatory)]$Config, [Parameter(Mandatory)]$Nodes)
+    $cfg = Get-ScProp $Config 'dependencies'
+    if ($null -eq $cfg) { throw 'release.json is missing its top-level "dependencies" object — every node store-dep resolves against it.' }
+    foreach ($dp in $cfg.PSObject.Properties) {
+        foreach ($f in @('type','modrinth','curseforge')) {
+            if (-not (Get-ScProp $dp.Value $f)) { throw "release.json dependencies.$($dp.Name) is missing its '$f' field." }
+        }
+        $t = [string](Get-ScProp $dp.Value 'type')
+        if ($t -notin @('required','optional')) {
+            throw "release.json dependencies.$($dp.Name).type must be 'required' or 'optional' (got '$t')."
+        }
+    }
+    foreach ($n in @($Nodes)) {
+        foreach ($k in @($n.Dependencies)) {
+            if ($null -eq (Get-ScProp $cfg $k)) { throw "Node '$($n.Node)' references dependency key '$k' missing from release.json dependencies." }
+        }
+    }
+    # extraLoaders must be arrays of strings (a bare "quilt" where ["quilt"] was meant would upload a
+    # loader tag per CHARACTER on Modrinth).
+    foreach ($store in @('modrinth','curseforge')) {
+        $s = Get-ScProp $Config $store
+        $xl = Get-ScProp $s 'extraLoaders'
+        if ($null -eq $xl) { continue }
+        foreach ($lp in $xl.PSObject.Properties) {
+            if ($lp.Value -isnot [System.Array]) {
+                throw "release.json ${store}.extraLoaders.$($lp.Name) must be an ARRAY of loader names (e.g. [`"quilt`"] on modrinth, [`"Quilt`"] on curseforge)."
+            }
+            foreach ($v in @($lp.Value)) {
+                if ($v -isnot [string]) { throw "release.json ${store}.extraLoaders.$($lp.Name) has a non-string entry." }
+            }
+        }
+    }
+}
+
 # ─── CurseForge ──────────────────────────────────────────────────────────────
 # CurseForge models EVERYTHING you can tag a file with — Minecraft versions, the modloader, the Java
 # tier, and the Client/Server "environment" indicator — as ordinary entries in ONE flat
@@ -581,16 +779,17 @@ function Invoke-ScMultipart {
 # files from 2026-07-15 onward).
 #
 # This is the PURE resolver: given CF's already-fetched version + version-type lists, it maps the
-# desired names to ids. Minecraft version(s) and the loader are matched by name. Environment
-# ("Client"/"Server") and the Java tier are matched WITHIN their version TYPE (located by the type's
-# stable slug 'environment*' / 'java*') so a bare name like "Server" can't grab an unrelated id. A
-# missing required name throws; a missing Java tier is a recorded warning (CF curates the Java list by
-# hand and lags new JDKs). Returns { Ids = int[]; Warnings = string[] }.
+# desired names to ids. Minecraft version(s) and the loader(s) are matched by name — loader NAMES don't
+# collide across CF types, so an extra loader (e.g. Quilt) resolves like the primary one and a missing
+# one throws. Environment ("Client"/"Server") and the Java tier are matched WITHIN their version TYPE
+# (located by the type's stable slug 'environment*' / 'java*') so a bare name like "Server" can't grab
+# an unrelated id. A missing required name throws; a missing Java tier is a recorded warning (CF curates
+# the Java list by hand and lags new JDKs). Returns { Ids = int[]; Warnings = string[] }.
 function Select-ScCurseForgeVersionIds {
     param(
         [Parameter(Mandatory)]$Versions, [Parameter(Mandatory)]$Types,
         [Parameter(Mandatory)][string]$McVersion, [string[]]$Extra = @(),
-        [string]$LoaderName, [string[]]$Environments = @(), [string]$JavaName
+        [string[]]$LoaderName = @(), [string[]]$Environments = @(), [string]$JavaName
     )
     $typeIdsForSlug = { param([string]$Pattern) @($Types | Where-Object { $_.slug -like $Pattern } | ForEach-Object id) }
     $envTypeIds  = & $typeIdsForSlug 'environment*'
@@ -599,13 +798,14 @@ function Select-ScCurseForgeVersionIds {
     $ids      = [System.Collections.Generic.List[int]]::new()
     $warnings = [System.Collections.Generic.List[string]]::new()
 
-    # Minecraft version(s) + loader — required, matched by name.
-    $required = @($McVersion) + $Extra
-    if ($LoaderName) { $required += $LoaderName }
+    # Minecraft version(s) + loader(s) — required, matched by name. LoaderName carries the node's own
+    # loader plus any extra loaders (e.g. 'Fabric','Quilt'); each resolves like the primary loader.
+    $loaderNames = @($LoaderName | Where-Object { $_ })
+    $required = @($McVersion) + $Extra + $loaderNames
     foreach ($name in ($required | Select-Object -Unique)) {
         $hit = $Versions | Where-Object { $_.name -eq $name } | Select-Object -First 1
         if (-not $hit) {
-            if ($name -eq $LoaderName) { throw "CurseForge has no loader named '$name'." }
+            if ($loaderNames -contains $name) { throw "CurseForge has no loader named '$name'." }
             throw "CurseForge has no game version named '$name' yet — cannot upload. Wait for CF to add it."
         }
         $ids.Add([int]$hit.id)
@@ -630,10 +830,11 @@ function Select-ScCurseForgeVersionIds {
 
 # Network wrapper: fetch CF's version + version-type lists, then delegate to the pure resolver above.
 # Auth via the X-Api-Token HEADER (never token-in-URL, so it can't leak through a logged request line).
+# -LoaderName is the node's CF loader name plus any extra loader names (e.g. 'Fabric','Quilt').
 function Resolve-ScCurseForgeVersionIds {
     param([Parameter(Mandatory)]$Config, [Parameter(Mandatory)][string]$Token,
           [Parameter(Mandatory)][string]$McVersion, [string[]]$Extra = @(),
-          [Parameter(Mandatory)][string]$LoaderName, [string[]]$Environments = @(), [string]$JavaName)
+          [Parameter(Mandatory)][string[]]$LoaderName, [string[]]$Environments = @(), [string]$JavaName)
     $headers  = @{ 'X-Api-Token' = $Token }
     $versions = Invoke-RestMethod -Uri 'https://minecraft.curseforge.com/api/game/versions'      -Headers $headers -Method Get
     $types    = Invoke-RestMethod -Uri 'https://minecraft.curseforge.com/api/game/version-types' -Headers $headers -Method Get
@@ -650,7 +851,7 @@ function Invoke-ScCurseForgeUpload {
         [Parameter(Mandatory)][string]$McVersion, [Parameter(Mandatory)][string]$LoaderName,
         [Parameter(Mandatory)][string]$Jar,
         [string[]]$ExtraGameVersions = @(), [string[]]$Environments = @(), [string]$JavaVersion,
-        [switch]$IncludeJei, [switch]$IncludeMixinBooter, [switch]$Execute
+        [string[]]$DependencyKeys = @(), [string[]]$ExtraLoaders = @(), [switch]$Execute
     )
     $metaObj = [ordered]@{
         changelog     = $Changelog
@@ -658,24 +859,21 @@ function Invoke-ScCurseForgeUpload {
         displayName   = $Title
         releaseType   = $ReleaseType
     }
-    # Relations: JEI is an OPTIONAL integration dep; MixinBooter is a REQUIRED dep for the 1.12.2 Forge jar
-    # (the client hard-stops without it — see forge-1.12.2 ClientProxy.requireMixinBooter). Only the legacy
-    # node passes -IncludeMixinBooter, so modern jars never advertise it.
-    $relations = @()
-    if ($IncludeJei -and (Get-ScProp $Config.curseforge 'jeiSlug')) {
-        $relations += @{ slug = $Config.curseforge.jeiSlug; type = 'optionalDependency' }
-    }
-    if ($IncludeMixinBooter -and (Get-ScProp $Config.curseforge 'mixinBooterSlug')) {
-        $relations += @{ slug = $Config.curseforge.mixinBooterSlug; type = 'requiredDependency' }
-    }
-    if ($relations.Count) { $metaObj.relations = @{ projects = @($relations) } }
+    # Relations from the node's dependency keys (config `dependencies`), required first. What each node
+    # advertises varies per NODE (e.g. mixinbooter only on 1.12.2-forge, whose client hard-stops without
+    # it — see forge-1.12.2 ClientProxy.requireMixinBooter).
+    $depList   = @(Get-ScStoreDependencyList -Config $Config -Keys $DependencyKeys)
+    $relations = @($depList | ForEach-Object { @{ slug = $_.CurseForgeSlug; type = "$($_.Type)Dependency" } })
+    if ($relations.Count) { $metaObj.relations = @{ projects = $relations } }
+    # Extra loader names (e.g. Quilt) tag the file like the primary loader does.
+    $loaderNames = @(@($LoaderName) + @($ExtraLoaders))
     # The Java toolchain version (e.g. "25") becomes CF's tier NAME "Java 25" — capital J, one space, bare major.
     $javaName = if ($JavaVersion) { "Java $JavaVersion" } else { $null }
 
-    Write-ScInfo "CF [$McVersion/$LoaderName]  `"$Title`"  ($ReleaseType)  <- $(Split-Path $Jar -Leaf)"
-    Write-ScInfo "    env=$($Environments -join '+')  java=$(if($javaName){$javaName}else{'(none)'})"
+    Write-ScInfo "CF [$McVersion/$($loaderNames -join '+')]  `"$Title`"  ($ReleaseType)  <- $(Split-Path $Jar -Leaf)"
+    Write-ScInfo "    env=$($Environments -join '+')  java=$(if($javaName){$javaName}else{'(none)'})  deps=$(Get-ScDependencyText $depList)"
     if (-not $Execute) {
-        $names = @($McVersion, $LoaderName) + $ExtraGameVersions + $Environments
+        $names = @($McVersion) + $loaderNames + $ExtraGameVersions + $Environments
         if ($javaName) { $names += $javaName }
         $metaObj.gameVersionNames = $names
         Write-ScDry "POST .../projects/$($Config.curseforge.projectId)/upload-file  metadata=$((ConvertTo-Json $metaObj -Depth 6 -Compress))"
@@ -685,7 +883,7 @@ function Invoke-ScCurseForgeUpload {
     if ("$($Config.curseforge.projectId)" -like 'REPLACE_ME*') { throw 'CurseForge projectId is not set in release.json.' }
     if (-not $token) { throw "CurseForge token env var '$($Config.curseforge.tokenEnvVar)' is not set." }
     $metaObj.gameVersions = Resolve-ScCurseForgeVersionIds -Config $Config -Token $token -McVersion $McVersion `
-        -Extra $ExtraGameVersions -LoaderName $LoaderName -Environments $Environments -JavaName $javaName
+        -Extra $ExtraGameVersions -LoaderName $loaderNames -Environments $Environments -JavaName $javaName
     $meta = ConvertTo-Json $metaObj -Depth 6 -Compress
     $r = Invoke-ScMultipart -Uri "https://minecraft.curseforge.com/api/projects/$($Config.curseforge.projectId)/upload-file" `
         -Headers @("X-Api-Token: $token") -Forms @("metadata=$meta", "file=@$Jar;type=application/java-archive")
@@ -697,14 +895,19 @@ function Invoke-ScCurseForgeUpload {
 function Test-ScModrinthVocab {
     # -SkipHeaderValidation lets us send Modrinth's required descriptive User-Agent (PowerShell
     # otherwise rejects the value's parentheses). The upload path uses curl, which has no such quirk.
-    param([Parameter(Mandatory)][string]$McVersion, [Parameter(Mandatory)][string]$Loader, [string]$UserAgent, [string]$ApiBase = 'https://api.modrinth.com')
+    # -Loaders are Modrinth loader ids ('fabric', 'quilt', 'forge', 'neoforge') — EVERY one sent on the
+    # upload, extras included, must exist in the tag list.
+    param([Parameter(Mandatory)][string]$McVersion, [Parameter(Mandatory)][string[]]$Loaders,
+          [string]$UserAgent, [string]$ApiBase = 'https://api.modrinth.com')
     $h = if ($UserAgent) { @{ 'User-Agent' = $UserAgent } } else { @{} }
     $gv = Invoke-RestMethod -Uri "$ApiBase/v2/tag/game_version" -Headers $h -SkipHeaderValidation
     if (-not ($gv.version | Where-Object { $_ -eq $McVersion })) {
         throw "Modrinth has no game_version '$McVersion' yet — cannot upload."
     }
     $ld = Invoke-RestMethod -Uri "$ApiBase/v2/tag/loader" -Headers $h -SkipHeaderValidation
-    if (-not ($ld.name | Where-Object { $_ -eq $Loader })) { throw "Modrinth loader '$Loader' not found." }
+    foreach ($loader in ($Loaders | Select-Object -Unique)) {
+        if (-not ($ld.name | Where-Object { $_ -eq $loader })) { throw "Modrinth loader '$loader' not found." }
+    }
 }
 
 function Invoke-ScModrinthUpload {
@@ -713,18 +916,15 @@ function Invoke-ScModrinthUpload {
         [Parameter(Mandatory)][string]$VersionNumber, [Parameter(Mandatory)][string]$Changelog,
         [Parameter(Mandatory)][string]$VersionType, [Parameter(Mandatory)][string[]]$GameVersions,
         [Parameter(Mandatory)][string]$Loader, [Parameter(Mandatory)][string]$Jar,
-        [switch]$IncludeJei, [switch]$IncludeMixinBooter, [switch]$Featured,
+        [string[]]$DependencyKeys = @(), [string[]]$ExtraLoaders = @(), [switch]$Featured,
         [string]$ApiBase = 'https://api.modrinth.com', [switch]$Execute
     )
-    # JEI = optional integration dep; MixinBooter = required dep for the 1.12.2 Forge jar only (client
-    # hard-stops without it). Only the legacy node passes -IncludeMixinBooter.
-    $deps = @()
-    if ($IncludeJei -and (Get-ScProp $Config.modrinth 'jeiProjectId')) {
-        $deps += @{ project_id = $Config.modrinth.jeiProjectId; version_id = $null; file_name = $null; dependency_type = 'optional' }
-    }
-    if ($IncludeMixinBooter -and (Get-ScProp $Config.modrinth 'mixinBooterProjectId')) {
-        $deps += @{ project_id = $Config.modrinth.mixinBooterProjectId; version_id = $null; file_name = $null; dependency_type = 'required' }
-    }
+    # Dependencies from the node's dependency keys (config `dependencies`), required first. What a node
+    # advertises varies per NODE (e.g. mixinbooter only on 1.12.2-forge; no deps on the 26.x Forge nodes).
+    $depList = @(Get-ScStoreDependencyList -Config $Config -Keys $DependencyKeys)
+    $deps = @($depList | ForEach-Object {
+        @{ project_id = $_.ModrinthId; version_id = $null; file_name = $null; dependency_type = $_.Type }
+    })
     $dataObj = [ordered]@{
         name           = $Title
         version_number = $VersionNumber
@@ -732,7 +932,8 @@ function Invoke-ScModrinthUpload {
         dependencies   = $deps
         game_versions  = $GameVersions
         version_type   = $VersionType
-        loaders        = @($Loader)
+        # The node's loader plus its extra loaders (e.g. fabric files also run on quilt).
+        loaders        = @(@($Loader) + @($ExtraLoaders))
         featured       = [bool]$Featured
         status         = 'listed'
         project_id     = $Config.modrinth.projectId
@@ -742,6 +943,7 @@ function Invoke-ScModrinthUpload {
     $data = ConvertTo-Json $dataObj -Depth 6 -Compress
 
     Write-ScInfo "MR [$VersionNumber]  `"$Title`"  ($VersionType)  <- $(Split-Path $Jar -Leaf)"
+    Write-ScInfo "    loaders=$($dataObj.loaders -join '+')  deps=$(Get-ScDependencyText $depList)"
     if (-not $Execute) {
         Write-ScDry "POST $ApiBase/v2/version  data=$data"
         return
@@ -749,7 +951,7 @@ function Invoke-ScModrinthUpload {
     $token = [Environment]::GetEnvironmentVariable($Config.modrinth.tokenEnvVar)
     if ("$($Config.modrinth.projectId)" -like 'REPLACE_ME*') { throw 'Modrinth projectId is not set in release.json.' }
     if (-not $token) { throw "Modrinth token env var '$($Config.modrinth.tokenEnvVar)' is not set." }
-    Test-ScModrinthVocab -McVersion $GameVersions[0] -Loader $Loader -UserAgent $Config.modrinth.userAgent -ApiBase $ApiBase
+    Test-ScModrinthVocab -McVersion $GameVersions[0] -Loaders $dataObj.loaders -UserAgent $Config.modrinth.userAgent -ApiBase $ApiBase
     $r = Invoke-ScMultipart -Uri "$ApiBase/v2/version" `
         -Headers @("Authorization: $token", "User-Agent: $($Config.modrinth.userAgent)") `
         -Forms @("data=$data;type=application/json", "file=@$Jar;type=application/java-archive")

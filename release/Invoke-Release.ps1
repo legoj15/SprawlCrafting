@@ -22,8 +22,15 @@
     loaders of one MC version share a block.
 
     Changelog lines of the form "- {MC.VER} text" are routed only to that MC version's manifest block
-    and store upload (tag stripped); GitHub always gets changelog.md verbatim. A tag naming an unknown
-    MC version fails the run up front, dry run included.
+    and CurseForge file (tag stripped). Every Modrinth version instead gets ONE identical changelog —
+    tagged lines kept inline as "- (MC.VER) text" — with the featured-MC nodes uploaded FIRST, because
+    Modrinth's changelog tab shows a repeated text once, on the oldest version carrying it. GitHub
+    always gets changelog.md verbatim. A tag naming an unknown MC version fails the run up front,
+    dry run included.
+
+    Nodes named in release.json "heldBack" are enumerated, built and verified but NOT published; the
+    dry run lists them and why (-ShipHeld lifts it). -OnlyNodes restricts the GitHub jar list and the
+    Modrinth/CurseForge uploads to a subset of nodes.
 
     SAFE BY DEFAULT: without -Execute nothing is written, committed, or uploaded — every step prints
     exactly what it WOULD do (a dry run). Read-only API lookups are skipped in dry run too, so no
@@ -36,9 +43,34 @@
 .PARAMETER Execute      Actually perform writes / commits / uploads. Omit for a dry run.
 .PARAMETER Only         Restrict to a subset of stages: Test, Manifest, GitHub, Modrinth, CurseForge, PostFlight. Default: all.
                         Resuming a partly-published release with -Only <remaining stages> skips Test automatically.
+.PARAMETER OnlyNodes    Restrict GitHub-jar / Modrinth / CurseForge publishing to specific nodes. Each value is an MC
+                        version (-OnlyNodes 26.3: every node on it, all loaders) or a node name (-OnlyNodes 26.3-fabric:
+                        that node only); a value matching nothing fails the run. There's no per-node "already uploaded"
+                        tracking, so resuming a stage that partially succeeded (one node's upload failed, the rest went
+                        through) would otherwise re-upload every node and leave duplicate store files behind. Changelog-tag
+                        validation and the manifest still use the FULL node set, so a scoped run never changes known tags
+                        or manifest coverage. NOTE: the GitHub stage would still try to CREATE the release (resumes are
+                        normally -Only Modrinth,CurseForge -OnlyNodes ...).
+.PARAMETER ShipHeld     Lift the ship gate for this run: loader names (forge) or node names (1.16.2-forge) from release.json
+                        "heldBack". Those nodes then publish like any other. A value matching no held node fails the run.
+                        Without it every held node is built and verified by the Test stage but left out of GitHub, Modrinth
+                        and CurseForge (and out of the jar check).
+.PARAMETER RepoRoot     Run against another checkout (a worktree that has nodes this one lacks) instead of the one holding
+                        this script. Config and secrets stay this tool's; the version, changelog, manifest, nodes, jars and
+                        git operations come from RepoRoot. Mostly for dry runs: with -Execute it publishes FROM that checkout.
+.PARAMETER AllowMissingJars
+                        Dry run only (refused with -Execute): a node whose jar is not built yet is warned about and previewed
+                        with the path it would have, instead of stopping the run. For previewing a plan before the build.
+                        Without it a dry run fails on a missing jar, exactly like a real run would.
+.PARAMETER NextVersion  Override the post-flight version bump (required when releasing a final, suffix-less version).
+.PARAMETER PromoteRecommended
+                        Advance each non-EOL line's '-recommended' promo to THIS version even when it's a prerelease
+                        (beta/alpha/rc). By default recommended stays on the last stable when shipping a prerelease, so
+                        a beta lands as '-latest' only. Set this for a bugfix-heavy beta you want promoted as a full
+                        "update available" to everyone. EOL lines stay frozen; the store channels (GitHub pre-release,
+                        CurseForge/Modrinth beta) are unaffected — only the in-game recommendation is promoted.
 .PARAMETER SkipTests    Bypass the pre-release test suite (stage 0). Publishes UNVERIFIED jars — warns loudly. To run
                         ONLY the suite (verify without publishing anything), use -Only Test instead.
-.PARAMETER NextVersion  Override the post-flight version bump (required when releasing a final, suffix-less version).
 .PARAMETER Build        Build first: `./gradlew buildAndCollect` (every modern jar -> testing/dist/) plus each legacy build: the 1.12.2 Forge build (forge-1.12.2/build/libs/, host JDK 25 via legacyForge.javaHome) and the 1.16.5 tree (legacy-1.16.5/{forge,fabric}/build/libs/, host JDK 21 via the legacyTrees entry's javaHome).
 .PARAMETER ModrinthStaging  Target staging-api.modrinth.com for the Modrinth leg (see release/README.md caveat).
 
@@ -46,6 +78,7 @@
 .EXAMPLE  ./release/Invoke-Release.ps1 -Execute        # really publish
 .EXAMPLE  ./release/Invoke-Release.ps1 -Only GitHub -Execute
 .EXAMPLE  ./release/Invoke-Release.ps1 -Build -Execute
+.EXAMPLE  ./release/Invoke-Release.ps1 -Only Modrinth,CurseForge -OnlyNodes 26.3,26.2-fabric -Execute   # resume
 #>
 #Requires -Version 7.0
 [CmdletBinding()]
@@ -53,7 +86,12 @@ param(
     [switch]$Execute,
     [ValidateSet('Test','Manifest','GitHub','Modrinth','CurseForge','PostFlight')]
     [string[]]$Only,
+    [string[]]$OnlyNodes,
+    [string[]]$ShipHeld,
+    [string]$RepoRoot,
+    [switch]$AllowMissingJars,
     [string]$NextVersion,
+    [switch]$PromoteRecommended,
     [switch]$Build,
     [switch]$SkipTests,
     [switch]$ModrinthStaging
@@ -74,21 +112,47 @@ function Want { param([string]$Stage) return (-not $Only) -or ($Only -contains $
 function Get-StoreEnabled { param($StoreCfg) return [bool](Get-ScProp $StoreCfg 'enabled' $false) }
 
 $root    = Get-ScRepoRoot
+# -RepoRoot: version/changelog/manifest/nodes/jars/git come from that checkout; config + secrets stay
+# this tool's (they live next to the script, so a worktree with different nodes still releases as us).
+if ($RepoRoot) {
+    if (-not (Test-Path -LiteralPath $RepoRoot)) { throw "-RepoRoot '$RepoRoot' not found." }
+    $root = (Resolve-Path -LiteralPath $RepoRoot).Path
+}
+if ($AllowMissingJars -and $Execute) { throw '-AllowMissingJars is for dry runs only: a real publish needs every jar built.' }
 $cfg     = Get-ScReleaseConfig
 $ver     = Get-ScModVersion -RepoRoot $root
 $split   = Split-ScVersion $ver
 $chan    = Get-ScChannel $split
-$nodes   = @(Get-ScNodes -RepoRoot $root -Config $cfg)
-$mcSet   = @($nodes.McVersion | Select-Object -Unique)
+# The FULL node set feeds everything repo-wide (tests, build, manifest coverage, changelog-tag
+# validation); $nodes below is only the subset the publishing stages walk.
+$allNodes = @(Get-ScNodes -RepoRoot $root -Config $cfg)
+$mcSet   = @($allNodes.McVersion | Select-Object -Unique)
 $ingameBold = Get-ScProp $cfg 'ingameBold' 'strip'
+# Ship gate (release.json heldBack): held nodes stay in $allNodes (built + verified by the Test stage,
+# covered by the manifest) but are not in $nodes, the set every publishing stage below walks.
+# -ShipHeld lifts it for this run.
+$gate      = Resolve-ScHeldNodes -Config $cfg -Nodes $allNodes -Ship $ShipHeld
+$nodes     = @($gate.Publish)
+$heldNodes = @($gate.Held)
+if ($OnlyNodes) {
+    $selected  = @(Select-ScNodes -Nodes $allNodes -Selectors $OnlyNodes)
+    $nodes     = @($selected | Where-Object { $_.Node -in @($gate.Publish | ForEach-Object Node) })
+    $heldNodes = @($selected | Where-Object { $_.Node -in @($gate.Held    | ForEach-Object Node) })
+    if (-not $nodes.Count) { throw "-OnlyNodes selected only held-back node(s) ($(($heldNodes | ForEach-Object Node) -join ', ')); nothing would be published. Lift the hold with -ShipHeld <loader|node> if shipping them is intended." }
+}
 
 Write-ScStep "SprawlCrafting release: $ver"
 Write-ScInfo "GitHub title : $(Get-ScGithubTitle $split)   [$(if($chan.GithubPrerelease){'pre-release'}else{'latest'})]"
 Write-ScInfo "Channels     : Modrinth=$($chan.Modrinth)  CurseForge=$($chan.CurseForge)"
 Write-ScInfo "Nodes        : $($nodes.Count) ($(($nodes.Node) -join ', '))"
+if ($heldNodes.Count) { Write-ScInfo "Held back ($($heldNodes.Count)) : $(($heldNodes.Node) -join ', ')" }
 Write-ScInfo "MC versions  : $($mcSet -join ', ')"
 Write-ScInfo "Stores       : Modrinth=$(if(Get-StoreEnabled $cfg.modrinth){'enabled'}else{'DISABLED'})  CurseForge=$(if(Get-StoreEnabled $cfg.curseforge){'enabled'}else{'DISABLED'})"
 Write-ScInfo "Mode         : $(if($Execute){'EXECUTE (live)'}else{'DRY RUN (no writes/uploads)'})"
+if ($RepoRoot) { Write-ScWarn "-RepoRoot: version, changelog, manifest, nodes, jars and git come from $root." }
+if ($OnlyNodes) { Write-ScWarn "Node-restricted resume: only $(($nodes | ForEach-Object Node) -join ', ') publish this run; tag validation and the manifest still use the full node set." }
+if ($heldNodes.Count) { Write-ScWarn "Ship gate: $(($heldNodes.Node) -join ', ') built and verified but NOT published.$(if($gate.Reason){" $($gate.Reason)"}else{''}) Lift for a run with -ShipHeld <loader|node>." }
+if (@($gate.Lifted).Count) { Write-ScWarn "Ship gate LIFTED (-ShipHeld) for $(($gate.Lifted.Node) -join ', '): they publish like any other node this run." }
 if (-not $Execute) { Write-ScWarn 'Dry run — pass -Execute to publish for real.' }
 
 # ── Changelog + tag validation (fast, fail-fast BEFORE the slow test suite) ──
@@ -97,7 +161,15 @@ if (-not $Execute) { Write-ScWarn 'Dry run — pass -Execute to publish for real
 # block or a shipping node); an unknown tag would silently drop the line everywhere but the verbatim
 # GitHub body.
 $body = Get-ScChangelogBody -RepoRoot $root
-if ([string]::IsNullOrWhiteSpace($body)) { Write-ScWarn 'changelog.md body is empty — release notes will be blank.' }
+# An empty changelog (fresh header, no bullets) means there's nothing to announce. Fail FAST for any
+# publishing run — before the slow test suite below — rather than wasting it and crashing at the
+# manifest step. A Test-only / PostFlight-only run (no publishing stage) is still allowed with just a
+# warning, so the suite can be exercised standalone between releases.
+$publishing = (Want 'Manifest') -or (Want 'GitHub') -or (Want 'Modrinth') -or (Want 'CurseForge')
+if ([string]::IsNullOrWhiteSpace($body)) {
+    if ($publishing) { throw 'changelog.md has no content below the header — nothing to release. Write the changelog first (or use -Only Test to just run the suite).' }
+    Write-ScWarn 'changelog.md body is empty — no publishing stage selected, continuing (test-only).'
+}
 $clSplit = Split-ScChangelogByVersion -Body $body
 $manifestPath = Join-Path $root 'update.json'
 $manifestBlocks = @()
@@ -106,6 +178,15 @@ if (Test-Path $manifestPath) {
                         Where-Object { $_ -notin @('homepage','promos') })
 }
 Test-ScChangelogTags -ChangelogSplit $clSplit -KnownVersions (@($mcSet) + $manifestBlocks | Select-Object -Unique)
+
+# ── Store config sanity (fail-fast BEFORE the slow test suite) ───────────────
+# Every node's dependency keys must resolve against release.json's `dependencies` catalogue, and the
+# extraLoaders entries must be string arrays — checked up front (dry run included) so a bad entry
+# fails here, not on the 7th upload. Held nodes count too: lifting the gate later must not be the
+# first time a missing entry shows up.
+if ((Want 'Modrinth') -or (Want 'CurseForge')) {
+    Test-ScStoreConfig -Config $cfg -Nodes $allNodes
+}
 
 # ── Version not already released (fail-fast BEFORE anything is committed or pushed) ──
 # Invoke-ScGithubRelease refuses an existing tag, but it runs AFTER the Manifest stage has committed
@@ -144,7 +225,7 @@ if ((Want 'Test') -and -not $SkipTests) {
     Write-ScStep 'Pre-release verification (full test suite)'
     if (-not $Execute) {
         Write-ScDry 'would run the solver library suite: ./gradlew -p solver-core build (JUnit on a Java 8 toolchain)'
-        foreach ($ln in @($nodes | Where-Object { $_.IsLegacy } | Group-Object BuildDir | ForEach-Object { $_.Group[0] })) {
+        foreach ($ln in @($allNodes | Where-Object { $_.IsLegacy } | Group-Object BuildDir | ForEach-Object { $_.Group[0] })) {
             Write-ScDry "would verify the legacy $($ln.McVersion) tree: $($ln.BuildDir)/gradlew.bat $($ln.VerifyTasks -join ' ')  [JAVA_HOME=$(if($ln.JavaHome){$ln.JavaHome}else{'(current)'})]"
         }
         Write-ScDry 'would run the modern tree: ./gradlew fullTestSuite (unit tests via buildAndCollect + boot/connect matrix; matrix auto-skips if testing/ absent)'
@@ -160,7 +241,7 @@ if ((Want 'Test') -and -not $SkipTests) {
         Write-ScOk 'Solver library verified (JUnit suite).'
         # 1. Legacy trees FIRST — the 1.12.2 reobf jar feeds the matrix's 1.12.2-forge leg. One run per tree
         #    (the 1.16.5 tree's forge + fabric nodes share a build), on that tree's configured JDK.
-        foreach ($ln in @($nodes | Where-Object { $_.IsLegacy } | Group-Object BuildDir | ForEach-Object { $_.Group[0] })) {
+        foreach ($ln in @($allNodes | Where-Object { $_.IsLegacy } | Group-Object BuildDir | ForEach-Object { $_.Group[0] })) {
             $lnDir = Join-Path $root $ln.BuildDir
             Write-ScStep "Verify legacy $($ln.McVersion) ($($ln.BuildDir)/gradlew $($ln.VerifyTasks -join ' '))"
             if (-not $ln.JavaHome) {
@@ -211,7 +292,7 @@ if ($Build) {
     # with its own gradlew invocation (once per tree, however many loader nodes it feeds), switching
     # JAVA_HOME to the tree's configured JDK (modern + 1.16.5 need JDK 21, the 1.12.2 forge build needs 25 —
     # they can't share one host JDK in a single run).
-    foreach ($ln in @($nodes | Where-Object { $_.IsLegacy } | Group-Object BuildDir | ForEach-Object { $_.Group[0] })) {
+    foreach ($ln in @($allNodes | Where-Object { $_.IsLegacy } | Group-Object BuildDir | ForEach-Object { $_.Group[0] })) {
         $lnDir = Join-Path $root $ln.BuildDir
         Write-ScStep "Build legacy $($ln.McVersion) jar(s) ($($ln.BuildDir)/gradlew $($ln.BuildTasks -join ' '))"
         if (-not $Execute) {
@@ -235,22 +316,30 @@ if ($Build) {
     }
 }
 
-# ── Resolve jars + changelog variants ────────────────────────────────────────
-$jarInfo = Test-ScJars -RepoRoot $root -Version $ver -Nodes $nodes
-$jarMap  = $jarInfo.Map
-if ($jarInfo.Missing.Count) {
-    if ($Execute) {
-        throw ("Missing shipping jar(s) for $ver — run ``./gradlew buildAndCollect`` (or pass -Build):`n  " + ($jarInfo.Missing -join "`n  "))
+# ── Resolve jars ─────────────────────────────────────────────────────────────
+# Only the publishing stages consume jars, so a Test-only / Manifest-only / PostFlight-only run
+# doesn't demand them — lets `-Only Test -Execute` verify standalone before any jar exists. Missing
+# jars fail even a dry run unless -AllowMissingJars (dry runs only) previews the unbuilt plan.
+$jarMap = @{}
+if ((Want 'GitHub') -or (Want 'Modrinth') -or (Want 'CurseForge')) {
+    $jarMap = Test-ScJars -RepoRoot $root -Version $ver -Nodes $nodes -AllowMissing:$AllowMissingJars
+    # Held nodes publish nothing, so a missing jar does not stop the run; say whether each was built.
+    foreach ($h in $heldNodes) {
+        $hj = Get-ScNodeJarPath -RepoRoot $root -Version $ver -Node $h
+        if (Test-Path -LiteralPath $hj) { Write-ScInfo "held $($h.Node): jar built ($(Split-Path $hj -Leaf)), not published" }
+        else { Write-ScWarn "held $($h.Node): jar NOT built ($(Split-Path $hj -Leaf))" }
     }
-    Write-ScWarn "Missing $($jarInfo.Missing.Count) jar(s) (dry run continues; -Execute would fail):"
-    foreach ($m in $jarInfo.Missing) { Write-ScWarn "  $m" }
 }
 
 # ── 1. Manifest (update.json) ────────────────────────────────────────────────
 if (Want 'Manifest') {
     Write-ScStep 'Update in-game update manifest (update.json)'
+    if ($PromoteRecommended) {
+        if ($split.IsStable) { Write-ScInfo '-PromoteRecommended is redundant for a stable build (recommended already advances).' }
+        else { Write-ScWarn "-PromoteRecommended: '-recommended' will advance to prerelease $ver on every non-EOL line (players are recommended onto a prerelease)." }
+    }
     $null = Update-ScManifest -Config $cfg -ManifestPath $manifestPath -Version $ver -ChangelogBody $body `
-                -NodeMcVersions $mcSet -IngameBold $ingameBold -Write:$Execute
+                -NodeMcVersions $mcSet -IngameBold $ingameBold -PromoteRecommended:$PromoteRecommended -Write:$Execute
     Write-ScOk "Manifest valid for MC version(s): $($mcSet -join ', ')"
     if (-not $Execute) {
         foreach ($mc in ($mcSet | Sort-Object)) {
@@ -285,12 +374,16 @@ if (Want 'Modrinth') {
     } else {
         if (-not $mrEnabled) { Write-ScWarn 'Modrinth is DISABLED — previewing only (would be skipped under -Execute).' }
         $apiBase = if ($ModrinthStaging) { 'https://staging-api.modrinth.com' } else { 'https://api.modrinth.com' }
-        foreach ($n in $nodes) {
-            $cl  = Get-ScStoreChangelogForMc -ChangelogSplit $clSplit -McVersion $n.McVersion
+        # Every version gets ONE identical changelog (byte-identical — see Get-ScUnifiedStoreChangelog).
+        # Modrinth's changelog tab shows a repeated text only on the OLDEST version holding it, so the
+        # featured-MC nodes upload FIRST to be the ones that display it.
+        $mrCl = Get-ScUnifiedStoreChangelog -ChangelogSplit $clSplit
+        foreach ($n in @(@($nodes | Where-Object IsFeatured) + @($nodes | Where-Object { -not $_.IsFeatured }))) {
             $gvs = Get-ScProp $cfg.storeGameVersionsByMc $n.McVersion @($n.McVersion)
             Invoke-ScModrinthUpload -Config $cfg -Title (Get-ScStoreTitle $split $n.McVersion $n.LoaderDisplay) `
-                -VersionNumber "$ver+mc$($n.McVersion)-$($n.MrLoader)" -Changelog $cl -VersionType $chan.Modrinth `
-                -GameVersions @($gvs) -Loader $n.MrLoader -Jar $jarMap[$n.Node] -IncludeJei:$n.HasJei -IncludeMixinBooter:$n.NeedsMixinBooter -Featured:$n.IsFeatured `
+                -VersionNumber "$ver+mc$($n.McVersion)-$($n.MrLoader)" -Changelog $mrCl -VersionType $chan.Modrinth `
+                -GameVersions @($gvs) -Loader $n.MrLoader -Jar $jarMap[$n.Node] -DependencyKeys $n.Dependencies `
+                -ExtraLoaders @(Get-ScExtraLoaders -Config $cfg -Store modrinth -Node $n) -Featured:$n.IsFeatured `
                 -ApiBase $apiBase -Execute:($Execute -and $mrEnabled)
         }
     }
@@ -314,7 +407,8 @@ if (Want 'CurseForge') {
             Invoke-ScCurseForgeUpload -Config $cfg -Title (Get-ScStoreTitle $split $n.McVersion $n.LoaderDisplay) `
                 -Changelog $cl -ReleaseType $chan.CurseForge -McVersion $n.McVersion -LoaderName $n.CfLoaderName `
                 -Jar $jarMap[$n.Node] -ExtraGameVersions $extra -Environments $cfEnvs -JavaVersion $javaArg `
-                -IncludeJei:$n.HasJei -IncludeMixinBooter:$n.NeedsMixinBooter -Execute:($Execute -and $cfEnabled)
+                -DependencyKeys $n.Dependencies -ExtraLoaders @(Get-ScExtraLoaders -Config $cfg -Store curseforge -Node $n) `
+                -Execute:($Execute -and $cfEnabled)
         }
     }
 }
