@@ -688,7 +688,7 @@ function Invoke-ScMultipart {
     foreach ($name in $TextFields.Keys) {
         $f = [IO.Path]::GetTempFileName(); $tmp += $f
         [IO.File]::WriteAllText($f, [string]$TextFields[$name].Text, [Text.UTF8Encoding]::new($false))
-        $type = $TextFields[$name].Type
+        $type = $TextFields[$name]['Type']   # index, not .Type: a missing key is a StrictMode error on dot access
         $curlArgs += @('-F', "$name=<$f$(if ($type) { ";type=$type" })")
     }
     foreach ($f in $Forms)   { $curlArgs += @('-F', $f) }
