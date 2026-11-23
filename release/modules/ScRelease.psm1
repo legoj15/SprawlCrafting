@@ -764,6 +764,8 @@ function Test-ScStoreConfig {
         $xl = Get-ScProp $s 'extraLoaders'
         if ($null -eq $xl) { continue }
         foreach ($lp in $xl.PSObject.Properties) {
+            # A misspelled key ("fabirc") would silently drop the extra tag from every file.
+            if ($lp.Name -notin @($Nodes | ForEach-Object Loader)) { throw "release.json ${store}.extraLoaders key '$($lp.Name)' is not the loader of any node." }
             if ($lp.Value -isnot [System.Array]) {
                 throw "release.json ${store}.extraLoaders.$($lp.Name) must be an ARRAY of loader names (e.g. [`"quilt`"] on modrinth, [`"Quilt`"] on curseforge)."
             }
@@ -783,9 +785,8 @@ function Test-ScStoreConfig {
 # files from 2026-07-15 onward).
 #
 # This is the PURE resolver: given CF's already-fetched version + version-type lists, it maps the
-# desired names to ids. Minecraft version(s) and the loader(s) are matched by name — loader NAMES don't
-# collide across CF types, so an extra loader (e.g. Quilt) resolves like the primary one and a missing
-# one throws. Environment ("Client"/"Server") and the Java tier are matched WITHIN their version TYPE
+# desired names to ids. Minecraft version(s) are matched by name; the loader(s) by name within the
+# 'modloader*' type, so an extra loader (e.g. Quilt) resolves like the primary one and a missing one throws. Environment ("Client"/"Server") and the Java tier are matched WITHIN their version TYPE
 # (located by the type's stable slug 'environment*' / 'java*') so a bare name like "Server" can't grab
 # an unrelated id. A missing required name throws; a missing Java tier is a recorded warning (CF curates
 # the Java list by hand and lags new JDKs). Returns { Ids = int[]; Warnings = string[] }.
@@ -806,8 +807,12 @@ function Select-ScCurseForgeVersionIds {
     # loader plus any extra loaders (e.g. 'Fabric','Quilt'); each resolves like the primary loader.
     $loaderNames = @($LoaderName | Where-Object { $_ })
     $required = @($McVersion) + $Extra + $loaderNames
+    # Loaders resolve under the 'modloader*' type when CF lists one (so a loader name can't grab a same-named
+    # entry of another type); if that slug ever changes, fall back to the name-only match rather than fail.
+    $loaderTypeIds = @(& $typeIdsForSlug 'modloader*')   # @(): one match unwraps to a scalar (StrictMode .Count)
     foreach ($name in ($required | Select-Object -Unique)) {
-        $hit = $Versions | Where-Object { $_.name -eq $name } | Select-Object -First 1
+        $scoped = ($loaderNames -contains $name) -and $loaderTypeIds.Count
+        $hit = $Versions | Where-Object { $_.name -eq $name -and (-not $scoped -or $_.gameVersionTypeID -in $loaderTypeIds) } | Select-Object -First 1
         if (-not $hit) {
             if ($loaderNames -contains $name) { throw "CurseForge has no loader named '$name'." }
             throw "CurseForge has no game version named '$name' yet — cannot upload. Wait for CF to add it."

@@ -29,8 +29,8 @@
     dry run included.
 
     Nodes named in release.json "heldBack" are enumerated, built and verified but NOT published; the
-    dry run lists them and why (-ShipHeld lifts it). -OnlyNodes restricts the GitHub jar list and the
-    Modrinth/CurseForge uploads to a subset of nodes.
+    dry run lists them and why (-ShipHeld lifts it). -OnlyNodes restricts a resumed Modrinth/CurseForge
+    upload to a subset of nodes.
 
     SAFE BY DEFAULT: without -Execute nothing is written, committed, or uploaded — every step prints
     exactly what it WOULD do (a dry run). Read-only API lookups are skipped in dry run too, so no
@@ -43,15 +43,15 @@
 .PARAMETER Execute      Actually perform writes / commits / uploads. Omit for a dry run.
 .PARAMETER Only         Restrict to a subset of stages: Test, Manifest, GitHub, Modrinth, CurseForge, PostFlight. Default: all.
                         Resuming a partly-published release with -Only <remaining stages> skips Test automatically.
-.PARAMETER OnlyNodes    Restrict GitHub-jar / Modrinth / CurseForge publishing to specific nodes. Each value is an MC
+.PARAMETER OnlyNodes    Restrict Modrinth / CurseForge uploads to specific nodes (requires -Only Modrinth and/or CurseForge,
+                        nothing else). Each value is an MC
                         version (-OnlyNodes 26.3: every node on it, all loaders) or a node name (-OnlyNodes 26.3-fabric:
                         that node only); a value matching nothing fails the run. There's no per-node "already uploaded"
                         tracking, so resuming a stage that partially succeeded (one node's upload failed, the rest went
                         through) would otherwise re-upload every node and leave duplicate store files behind. Changelog-tag
                         validation and the manifest still use the FULL node set, so a scoped run never changes known tags
-                        or manifest coverage. NOTE: the GitHub stage would still try to CREATE the release (resumes are
-                        normally -Only Modrinth,CurseForge -OnlyNodes ...).
-.PARAMETER ShipHeld     Lift the ship gate for this run: loader names (forge) or node names (1.16.2-forge) from release.json
+                        or manifest coverage.
+.PARAMETER ShipHeld     Lift the ship gate for this run: loader names (forge) or node names (1.16.5-forge) from release.json
                         "heldBack". Those nodes then publish like any other. A value matching no held node fails the run.
                         Without it every held node is built and verified by the Test stage but left out of GitHub, Modrinth
                         and CurseForge (and out of the jar check).
@@ -135,6 +135,10 @@ $gate      = Resolve-ScHeldNodes -Config $cfg -Nodes $allNodes -Ship $ShipHeld
 $nodes     = @($gate.Publish)
 $heldNodes = @($gate.Held)
 if ($OnlyNodes) {
+    # -OnlyNodes is the resume path for store uploads. Without this guard a bare -OnlyNodes run would also
+    # create the GitHub release with only the selected jars, rewrite the manifest and run PostFlight.
+    $badStages = @('Test','Manifest','GitHub','PostFlight') | Where-Object { Want $_ }
+    if (-not $Only -or $badStages) { throw "-OnlyNodes resumes store uploads only: pass -Only Modrinth and/or CurseForge (not $(if($Only){$badStages -join ', '}else{'every stage'}))." }
     $selected  = @(Select-ScNodes -Nodes $allNodes -Selectors $OnlyNodes)
     $nodes     = @($selected | Where-Object { $_.Node -in @($gate.Publish | ForEach-Object Node) })
     $heldNodes = @($selected | Where-Object { $_.Node -in @($gate.Held    | ForEach-Object Node) })

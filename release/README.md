@@ -30,7 +30,7 @@ Modrinth/CurseForge request bodies — but writes nothing, commits nothing, uplo
 no tokens. Add `-Execute` to publish for real.
 
 ```powershell
-# preview the whole release (no tokens needed)
+# preview the whole release (no tokens needed; needs the jars built, or add -AllowMissingJars)
 ./release/Invoke-Release.ps1
 
 # build every jar first (the modern nodes, the 1.12.2 Forge jar and the 1.16.5 Forge+Fabric pair), then preview
@@ -95,10 +95,10 @@ shape against the config.
 
 ## Node scoping and the ship gate
 
-- **`-OnlyNodes <selector[]>`** restricts the GitHub jar list and the Modrinth/CurseForge uploads. A
-  selector is an MC version (`26.3`: all three nodes on it) or a node name (`26.3-fabric`). A selector
-  matching nothing fails the run. Changelog-tag validation and the manifest keep using the **full**
-  node set, so a scoped resume never changes known tags or manifest coverage.
+- **`-OnlyNodes <selector[]>`** restricts the Modrinth/CurseForge uploads, and is refused unless `-Only`
+  names just those stages (it is the resume path, never a way to cut a partial release). A selector is
+  an MC version (`26.3`: all three nodes on it) or a node name (`26.3-fabric`). A selector matching
+  nothing fails the run. Changelog-tag validation keeps using the **full** node set.
 - **`heldBack`** (`"loaders": [], "nodes": [], "reason": ""` in `config/release.json`) names nodes that
   are enumerated, built, verified and manifest-covered like every other node but are **not published**
   (GitHub/Modrinth/CurseForge) and whose jars are never required (the run reports built/not built).
