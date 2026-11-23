@@ -140,6 +140,8 @@ if ($OnlyNodes) {
     $heldNodes = @($selected | Where-Object { $_.Node -in @($gate.Held    | ForEach-Object Node) })
     if (-not $nodes.Count) { throw "-OnlyNodes selected only held-back node(s) ($(($heldNodes | ForEach-Object Node) -join ', ')); nothing would be published. Lift the hold with -ShipHeld <loader|node> if shipping them is intended." }
 }
+if (-not $nodes.Count) { throw "release.json heldBack holds every node; nothing would be published. Lift the hold with -ShipHeld <loader|node>." }
+$liftedNodes = @($gate.Lifted | Where-Object { $_.Node -in @($nodes | ForEach-Object Node) })
 
 Write-ScStep "SprawlCrafting release: $ver"
 Write-ScInfo "GitHub title : $(Get-ScGithubTitle $split)   [$(if($chan.GithubPrerelease){'pre-release'}else{'latest'})]"
@@ -152,7 +154,10 @@ Write-ScInfo "Mode         : $(if($Execute){'EXECUTE (live)'}else{'DRY RUN (no w
 if ($RepoRoot) { Write-ScWarn "-RepoRoot: version, changelog, manifest, nodes, jars and git come from $root." }
 if ($OnlyNodes) { Write-ScWarn "Node-restricted resume: only $(($nodes | ForEach-Object Node) -join ', ') publish this run; tag validation and the manifest still use the full node set." }
 if ($heldNodes.Count) { Write-ScWarn "Ship gate: $(($heldNodes.Node) -join ', ') built and verified but NOT published.$(if($gate.Reason){" $($gate.Reason)"}else{''}) Lift for a run with -ShipHeld <loader|node>." }
-if (@($gate.Lifted).Count) { Write-ScWarn "Ship gate LIFTED (-ShipHeld) for $(($gate.Lifted.Node) -join ', '): they publish like any other node this run." }
+if ($liftedNodes.Count) { Write-ScWarn "Ship gate LIFTED (-ShipHeld) for $(($liftedNodes | ForEach-Object Node) -join ', '): they publish like any other node this run." }
+# The manifest is keyed by MC version, so a line whose every node is held still gets announced in-game.
+$heldOnlyMc = @($allNodes.McVersion | Select-Object -Unique | Where-Object { $_ -notin @($gate.Publish | ForEach-Object McVersion) })
+if ($heldOnlyMc.Count) { Write-ScWarn "MC line(s) $($heldOnlyMc -join ', ') have every node held back, but update.json will still announce $ver for them." }
 if (-not $Execute) { Write-ScWarn 'Dry run — pass -Execute to publish for real.' }
 
 # ── Changelog + tag validation (fast, fail-fast BEFORE the slow test suite) ──

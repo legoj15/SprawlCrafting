@@ -321,6 +321,9 @@ function Resolve-ScHeldNodes {
         if (Test-ScProp $hb 'nodes')   { $names   = @($hb.nodes   | ForEach-Object { ([string]$_).ToLowerInvariant() }) }
         if (Test-ScProp $hb 'reason')  { $reason  = [string]$hb.reason }
     }
+    # A config entry matching nothing throws: a typo here would otherwise silently PUBLISH what it meant to hold.
+    foreach ($l in $loaders) { if (-not @($Nodes | Where-Object { $_.Loader -eq $l }).Count) { throw "release.json heldBack.loaders '$l' matches no node's loader." } }
+    foreach ($n in $names)   { if (-not @($Nodes | Where-Object { $_.Node.ToLowerInvariant() -eq $n }).Count) { throw "release.json heldBack.nodes '$n' matches no node." } }
     $held = @($Nodes | Where-Object { $_.Loader -in $loaders -or $_.Node.ToLowerInvariant() -in $names })
     $ship = @($Ship | Where-Object { $_ } | ForEach-Object { $_.Trim().ToLowerInvariant() })
     foreach ($s in $ship) {
@@ -334,7 +337,8 @@ function Resolve-ScHeldNodes {
     $still  = @($held | Where-Object { $_.Node -notin $liftedNames })
     $stillNames = @($still | ForEach-Object Node)
     $featured = @($still | Where-Object IsFeatured)
-    if ($featured.Count) { Write-ScWarn "featuredMc node(s) $(($featured.Node) -join ', ') held back — no Modrinth version will be featured this run." }
+    # Warn only when NO featured node is left publishing (another loader of featuredMc still features it).
+    if ($featured.Count -and -not @($Nodes | Where-Object { $_.IsFeatured -and $_.Node -notin $stillNames }).Count) { Write-ScWarn "featuredMc node(s) $(($featured.Node) -join ', ') held back — no Modrinth version will be featured this run." }
     return [pscustomobject]@{
         Publish = @($Nodes | Where-Object { $_.Node -notin $stillNames })
         Held    = $still
@@ -417,8 +421,9 @@ function Get-ScChangelogBody {
     $lines = @(Get-Content -Path $path)
     if ($lines.Count -lt 1) { throw 'changelog.md is empty.' }
     # Drop the first line (the "Changes since ..." header) and any leading blank lines.
-    $body = @(if ($lines.Count -gt 1) { $lines[1..($lines.Count - 1)] })   # @() — a 1-line body is a scalar (StrictMode .Count throw)
-    while ($body.Count -gt 0 -and [string]::IsNullOrWhiteSpace($body[0])) { $body = @($body[1..($body.Count - 1)]) }
+    # Select-Object -Skip, not a [1..n] slice: with one element left, 1..0 counts DOWN and indexes past the end.
+    $body = @($lines | Select-Object -Skip 1)
+    while ($body.Count -gt 0 -and [string]::IsNullOrWhiteSpace($body[0])) { $body = @($body | Select-Object -Skip 1) }
     return ($body -join "`n").TrimEnd()
 }
 
@@ -484,8 +489,7 @@ function Get-ScUnifiedStoreChangelog {
     $lines = @($ChangelogSplit.Entries | ForEach-Object {
         if ($null -ne $_.Tag) { $_.Line -replace '^- ', "- ($($_.Tag)) " } else { $_.Line }
     })
-    if (-not $lines.Count) { return 'Compatibility release' }
-    return ($lines -join "`n")
+    return ($lines -join "`n")   # never empty: the orchestrator refuses an empty changelog before any upload
 }
 
 # ─── Update manifest (update.json) ───────────────────────────────────────────

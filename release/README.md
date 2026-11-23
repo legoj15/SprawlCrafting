@@ -144,8 +144,7 @@ CurseForge; Modrinth shows it to every version, labelled:
   inline as `- (26.2) Fixed the thing`. The text must be byte-identical across a release: Modrinth's
   changelog tab hides a version's text when an older version on the same page has the exact same
   string, so it prints once per release (the featured-MC nodes upload first to be the ones displaying
-  it) while each version page still shows everything. An empty changelog body uploads as
-  `Compatibility release`.
+  it) while each version page still shows everything.
 - **GitHub** — always gets `changelog.md` verbatim, tags included.
 
 The tag must be a bare dotted version number in **curly braces** followed by a space (square brackets

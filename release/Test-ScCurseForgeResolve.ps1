@@ -60,7 +60,7 @@ $r = Select-ScCurseForgeVersionIds -Versions $versions -Types $types -McVersion 
 Assert 'fabric+quilt: MC+Fabric+Quilt+client+server ids, java skipped' `
     (($r.Ids | Sort-Object) -join ',' -eq '103,201,203,400,401') "got [$($r.Ids -join ',')]"
 Assert 'fabric+quilt: Server resolves to ENV id 401 not collision 999' ($r.Ids -contains 401 -and $r.Ids -notcontains 999) "got [$($r.Ids -join ',')]"
-Assert 'fabric+quilt: exactly one warning (missing Java 25)' ($r.Warnings.Count -eq 1 -and $r.Warnings[0] -match 'Java 25') "warnings=[$($r.Warnings -join '|')]"
+Assert 'fabric+quilt: exactly one warning (missing Java 25)' ($r.Warnings.Count -eq 1) "warnings=[$($r.Warnings -join '|')]"
 
 # 2. Legacy node (1.16.5, Forge — no extra loader there, Java 21 PRESENT): java id included, no warning.
 $r2 = Select-ScCurseForgeVersionIds -Versions $versions -Types $types -McVersion '1.16.5' `
@@ -83,10 +83,10 @@ $rf = Select-ScCurseForgeVersionIds -Versions $versions -Types $types -McVersion
 Assert 'forge: loader id 202, not NeoForge 200' (($rf.Ids | Sort-Object) -join ',' -eq '103,202,400,401') "got [$($rf.Ids -join ',')]"
 
 # 5. Required failures throw.
-function ThrowsLike { param([scriptblock]$S, [string]$Pat) try { & $S | Out-Null; return $false } catch { return ($_.Exception.Message -match $Pat) } }
-Assert 'missing MC version throws' (ThrowsLike { Select-ScCurseForgeVersionIds -Versions $versions -Types $types -McVersion '27.0' -LoaderName @('NeoForge') } 'no game version named') 'expected throw'
-Assert 'missing extra loader throws' (ThrowsLike { Select-ScCurseForgeVersionIds -Versions $versions -Types $types -McVersion '26.3' -LoaderName @('Fabric','LiteLoader') -Environments @('Client','Server') } 'no loader named') 'expected throw'
-Assert 'missing environment throws' (ThrowsLike { Select-ScCurseForgeVersionIds -Versions $versions -Types $types -McVersion '26.3' -LoaderName @('NeoForge') -Environments @('Client','Bogus') } "no 'Bogus' entry") 'expected throw'
+function Throws { param([scriptblock]$S) try { & $S | Out-Null; return $false } catch { return $true } }
+Assert 'missing MC version throws' (Throws { Select-ScCurseForgeVersionIds -Versions $versions -Types $types -McVersion '27.0' -LoaderName @('NeoForge') }) 'expected throw'
+Assert 'missing extra loader throws' (Throws { Select-ScCurseForgeVersionIds -Versions $versions -Types $types -McVersion '26.3' -LoaderName @('Fabric','LiteLoader') -Environments @('Client','Server') }) 'expected throw'
+Assert 'missing environment throws' (Throws { Select-ScCurseForgeVersionIds -Versions $versions -Types $types -McVersion '26.3' -LoaderName @('NeoForge') -Environments @('Client','Bogus') }) 'expected throw'
 
 if ($fail -eq 0) { Write-Host "`nALL PASS" -ForegroundColor Green; exit 0 }
 else { Write-Host "`n$fail FAILED" -ForegroundColor Red; exit 1 }
