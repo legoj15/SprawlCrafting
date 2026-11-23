@@ -44,7 +44,6 @@ no tokens. Add `-Execute` to publish for real.
 
 # resume a partially-published release: only the failed nodes, only the store stages.
 # -OnlyNodes takes an MC version (every node on it) or a node name; a value matching nothing fails.
-# (The GitHub stage would still try to CREATE the release, so resumes normally keep it store-only.)
 ./release/Invoke-Release.ps1 -Only Modrinth,CurseForge -OnlyNodes 26.3,26.2-fabric -Execute
 
 # preview a checkout that has nodes this one lacks (a worktree), before its jars are built.
@@ -103,7 +102,7 @@ shape against the config.
   are enumerated, built, verified and manifest-covered like every other node but are **not published**
   (GitHub/Modrinth/CurseForge) and whose jars are never required (the run reports built/not built).
   Empty today. `-ShipHeld <loader|node>[,...]` lifts it for one run — a value matching no held node
-  fails the run. Holding a node of `featuredMc` only warns (that run features nothing on Modrinth).
+  fails the run. Holding every node of `featuredMc` only warns (that run features nothing on Modrinth).
 
 ## Store dependencies, per node
 

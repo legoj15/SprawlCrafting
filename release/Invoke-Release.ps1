@@ -44,13 +44,11 @@
 .PARAMETER Only         Restrict to a subset of stages: Test, Manifest, GitHub, Modrinth, CurseForge, PostFlight. Default: all.
                         Resuming a partly-published release with -Only <remaining stages> skips Test automatically.
 .PARAMETER OnlyNodes    Restrict Modrinth / CurseForge uploads to specific nodes (requires -Only Modrinth and/or CurseForge,
-                        nothing else). Each value is an MC
-                        version (-OnlyNodes 26.3: every node on it, all loaders) or a node name (-OnlyNodes 26.3-fabric:
-                        that node only); a value matching nothing fails the run. There's no per-node "already uploaded"
+                        nothing else). Each value is an MC version (-OnlyNodes 26.3: every node on it, all loaders) or a
+                        node name (-OnlyNodes 26.3-fabric: that node only); a value matching nothing fails the run. There's no per-node "already uploaded"
                         tracking, so resuming a stage that partially succeeded (one node's upload failed, the rest went
                         through) would otherwise re-upload every node and leave duplicate store files behind. Changelog-tag
-                        validation and the manifest still use the FULL node set, so a scoped run never changes known tags
-                        or manifest coverage.
+                        validation still uses the FULL node set.
 .PARAMETER ShipHeld     Lift the ship gate for this run: loader names (forge) or node names (1.16.5-forge) from release.json
                         "heldBack". Those nodes then publish like any other. A value matching no held node fails the run.
                         Without it every held node is built and verified by the Test stage but left out of GitHub, Modrinth
@@ -144,24 +142,25 @@ if ($OnlyNodes) {
     $heldNodes = @($selected | Where-Object { $_.Node -in @($gate.Held    | ForEach-Object Node) })
     if (-not $nodes.Count) { throw "-OnlyNodes selected only held-back node(s) ($(($heldNodes | ForEach-Object Node) -join ', ')); nothing would be published. Lift the hold with -ShipHeld <loader|node> if shipping them is intended." }
 }
-if (-not $nodes.Count) { throw "release.json heldBack holds every node; nothing would be published. Lift the hold with -ShipHeld <loader|node>." }
+$publishing = (Want 'Manifest') -or (Want 'GitHub') -or (Want 'Modrinth') -or (Want 'CurseForge')
+if ($publishing -and -not $nodes.Count) { throw "release.json heldBack holds every node; nothing would be published. Lift the hold with -ShipHeld <loader|node>." }
 $liftedNodes = @($gate.Lifted | Where-Object { $_.Node -in @($nodes | ForEach-Object Node) })
 
 Write-ScStep "SprawlCrafting release: $ver"
 Write-ScInfo "GitHub title : $(Get-ScGithubTitle $split)   [$(if($chan.GithubPrerelease){'pre-release'}else{'latest'})]"
 Write-ScInfo "Channels     : Modrinth=$($chan.Modrinth)  CurseForge=$($chan.CurseForge)"
-Write-ScInfo "Nodes        : $($nodes.Count) ($(($nodes.Node) -join ', '))"
+Write-ScInfo "Nodes        : $($nodes.Count) ($(($nodes | ForEach-Object Node) -join ', '))"
 if ($heldNodes.Count) { Write-ScInfo "Held back ($($heldNodes.Count)) : $(($heldNodes.Node) -join ', ')" }
 Write-ScInfo "MC versions  : $($mcSet -join ', ')"
 Write-ScInfo "Stores       : Modrinth=$(if(Get-StoreEnabled $cfg.modrinth){'enabled'}else{'DISABLED'})  CurseForge=$(if(Get-StoreEnabled $cfg.curseforge){'enabled'}else{'DISABLED'})"
 Write-ScInfo "Mode         : $(if($Execute){'EXECUTE (live)'}else{'DRY RUN (no writes/uploads)'})"
 if ($RepoRoot) { Write-ScWarn "-RepoRoot: version, changelog, manifest, nodes, jars and git come from $root." }
-if ($OnlyNodes) { Write-ScWarn "Node-restricted resume: only $(($nodes | ForEach-Object Node) -join ', ') publish this run; tag validation and the manifest still use the full node set." }
+if ($OnlyNodes) { Write-ScWarn "Node-restricted resume: only $(($nodes | ForEach-Object Node) -join ', ') publish this run; tag validation still uses the full node set." }
 if ($heldNodes.Count) { Write-ScWarn "Ship gate: $(($heldNodes.Node) -join ', ') built and verified but NOT published.$(if($gate.Reason){" $($gate.Reason)"}else{''}) Lift for a run with -ShipHeld <loader|node>." }
 if ($liftedNodes.Count) { Write-ScWarn "Ship gate LIFTED (-ShipHeld) for $(($liftedNodes | ForEach-Object Node) -join ', '): they publish like any other node this run." }
 # The manifest is keyed by MC version, so a line whose every node is held still gets announced in-game.
 $heldOnlyMc = @($allNodes.McVersion | Select-Object -Unique | Where-Object { $_ -notin @($gate.Publish | ForEach-Object McVersion) })
-if ($heldOnlyMc.Count) { Write-ScWarn "MC line(s) $($heldOnlyMc -join ', ') have every node held back, but update.json will still announce $ver for them." }
+if ($heldOnlyMc.Count -and (Want 'Manifest')) { Write-ScWarn "MC line(s) $($heldOnlyMc -join ', ') have every node held back, but update.json will still announce $ver for them." }
 if (-not $Execute) { Write-ScWarn 'Dry run — pass -Execute to publish for real.' }
 
 # ── Changelog + tag validation (fast, fail-fast BEFORE the slow test suite) ──
@@ -174,7 +173,6 @@ $body = Get-ScChangelogBody -RepoRoot $root
 # publishing run — before the slow test suite below — rather than wasting it and crashing at the
 # manifest step. A Test-only / PostFlight-only run (no publishing stage) is still allowed with just a
 # warning, so the suite can be exercised standalone between releases.
-$publishing = (Want 'Manifest') -or (Want 'GitHub') -or (Want 'Modrinth') -or (Want 'CurseForge')
 if ([string]::IsNullOrWhiteSpace($body)) {
     if ($publishing) { throw 'changelog.md has no content below the header — nothing to release. Write the changelog first (or use -Only Test to just run the suite).' }
     Write-ScWarn 'changelog.md body is empty — no publishing stage selected, continuing (test-only).'

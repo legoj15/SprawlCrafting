@@ -28,8 +28,13 @@ $types = @(
     [pscustomobject]@{ id = 7000; name = 'Java';             slug = 'java' }
     [pscustomobject]@{ id = 9000; name = 'Environment';      slug = 'environment' }
     [pscustomobject]@{ id = 8000; name = 'Server Software';  slug = 'server-software' }  # the collision type
+    [pscustomobject]@{ id = 615;  name = 'Addons';           slug = 'addons' }           # live CF: repeats MC names
 )
 $versions = @(
+    # COLLISIONS listed FIRST, as live CF does: an 'Addons' entry named '26.3' and one named 'Forge'. A
+    # name-only first match would grab 998/997; the resolver must stay inside minecraft-* / modloader.
+    [pscustomobject]@{ id = 998; gameVersionTypeID = 615;  name = '26.3';    slug = '26-3-addons' }
+    [pscustomobject]@{ id = 997; gameVersionTypeID = 615;  name = 'Forge';   slug = 'forge-addons' }
     [pscustomobject]@{ id = 103; gameVersionTypeID = 6103; name = '26.3';    slug = '26-3' }
     [pscustomobject]@{ id = 165; gameVersionTypeID = 6165; name = '1.16.5';  slug = '1-16-5' }
     # Loaders all live under the Modloader type — Quilt (the fabric nodes' extra loader) included.
@@ -60,7 +65,7 @@ $r = Select-ScCurseForgeVersionIds -Versions $versions -Types $types -McVersion 
 Assert 'fabric+quilt: MC+Fabric+Quilt+client+server ids, java skipped' `
     (($r.Ids | Sort-Object) -join ',' -eq '103,201,203,400,401') "got [$($r.Ids -join ',')]"
 Assert 'fabric+quilt: Server resolves to ENV id 401 not collision 999' ($r.Ids -contains 401 -and $r.Ids -notcontains 999) "got [$($r.Ids -join ',')]"
-Assert 'fabric+quilt: exactly one warning (missing Java 25)' ($r.Warnings.Count -eq 1) "warnings=[$($r.Warnings -join '|')]"
+Assert 'fabric+quilt: exactly one warning (missing Java 25)' ($r.Warnings.Count -eq 1 -and $r.Warnings[0] -match 'Java 25') "warnings=[$($r.Warnings -join '|')]"
 
 # 2. Legacy node (1.16.5, Forge — no extra loader there, Java 21 PRESENT): java id included, no warning.
 $r2 = Select-ScCurseForgeVersionIds -Versions $versions -Types $types -McVersion '1.16.5' `
@@ -83,10 +88,18 @@ $rf = Select-ScCurseForgeVersionIds -Versions $versions -Types $types -McVersion
 Assert 'forge: loader id 202, not NeoForge 200' (($rf.Ids | Sort-Object) -join ',' -eq '103,202,400,401') "got [$($rf.Ids -join ',')]"
 
 # 5. Required failures throw.
-function Throws { param([scriptblock]$S) try { & $S | Out-Null; return $false } catch { return $true } }
-Assert 'missing MC version throws' (Throws { Select-ScCurseForgeVersionIds -Versions $versions -Types $types -McVersion '27.0' -LoaderName @('NeoForge') }) 'expected throw'
-Assert 'missing extra loader throws' (Throws { Select-ScCurseForgeVersionIds -Versions $versions -Types $types -McVersion '26.3' -LoaderName @('Fabric','LiteLoader') -Environments @('Client','Server') }) 'expected throw'
-Assert 'missing environment throws' (Throws { Select-ScCurseForgeVersionIds -Versions $versions -Types $types -McVersion '26.3' -LoaderName @('NeoForge') -Environments @('Client','Bogus') }) 'expected throw'
+# The message must name the offending input (data, not wording), so an unrelated crash can't pass.
+function Throws { param([scriptblock]$S, [string]$Input_) try { & $S | Out-Null; return $false } catch { return $_.Exception.Message.Contains($Input_) } }
+Assert 'missing MC version throws' (Throws { Select-ScCurseForgeVersionIds -Versions $versions -Types $types -McVersion '27.0' -LoaderName @('NeoForge') } '27.0') 'expected throw'
+Assert 'missing extra loader throws' (Throws { Select-ScCurseForgeVersionIds -Versions $versions -Types $types -McVersion '26.3' -LoaderName @('Fabric','LiteLoader') -Environments @('Client','Server') } 'LiteLoader') 'expected throw'
+Assert 'missing environment throws' (Throws { Select-ScCurseForgeVersionIds -Versions $versions -Types $types -McVersion '26.3' -LoaderName @('NeoForge') -Environments @('Client','Bogus') } 'Bogus') 'expected throw'
+
+# 6. A CF type list without 'minecraft-*' / 'modloader*' still resolves by name, and says so.
+$typesBare = @($types | Where-Object { $_.slug -notlike 'minecraft-*' -and $_.slug -notlike 'modloader*' })
+$versionsBare = @($versions | Where-Object { $_.gameVersionTypeID -ne 615 })
+$r6 = Select-ScCurseForgeVersionIds -Versions $versionsBare -Types $typesBare -McVersion '26.3' -LoaderName @('Fabric') -Environments @('Client','Server')
+Assert 'fallback: name-only resolve still finds 103,201' ($r6.Ids -contains 103 -and $r6.Ids -contains 201) "got [$($r6.Ids -join ',')]"
+Assert 'fallback: warns for both scopes' ($r6.Warnings.Count -eq 2) "warnings=[$($r6.Warnings -join '|')]"
 
 if ($fail -eq 0) { Write-Host "`nALL PASS" -ForegroundColor Green; exit 0 }
 else { Write-Host "`n$fail FAILED" -ForegroundColor Red; exit 1 }

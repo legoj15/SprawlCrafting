@@ -317,8 +317,8 @@ function Resolve-ScHeldNodes {
     $loaders = @(); $names = @(); $reason = ''
     if (Test-ScProp $Config 'heldBack') {
         $hb = $Config.heldBack
-        if (Test-ScProp $hb 'loaders') { $loaders = @($hb.loaders | ForEach-Object { ([string]$_).ToLowerInvariant() }) }
-        if (Test-ScProp $hb 'nodes')   { $names   = @($hb.nodes   | ForEach-Object { ([string]$_).ToLowerInvariant() }) }
+        if (Test-ScProp $hb 'loaders') { $loaders = @($hb.loaders | Where-Object { "$_".Trim() } | ForEach-Object { ([string]$_).ToLowerInvariant() }) }
+        if (Test-ScProp $hb 'nodes')   { $names   = @($hb.nodes   | Where-Object { "$_".Trim() } | ForEach-Object { ([string]$_).ToLowerInvariant() }) }
         if (Test-ScProp $hb 'reason')  { $reason  = [string]$hb.reason }
     }
     # A config entry matching nothing throws: a typo here would otherwise silently PUBLISH what it meant to hold.
@@ -785,8 +785,9 @@ function Test-ScStoreConfig {
 # files from 2026-07-15 onward).
 #
 # This is the PURE resolver: given CF's already-fetched version + version-type lists, it maps the
-# desired names to ids. Minecraft version(s) are matched by name; the loader(s) by name within the
-# 'modloader*' type, so an extra loader (e.g. Quilt) resolves like the primary one and a missing one throws. Environment ("Client"/"Server") and the Java tier are matched WITHIN their version TYPE
+# desired names to ids. Minecraft version(s) are matched by name within the 'minecraft-*' types and the
+# loader(s) within the 'modloader*' type (live CF repeats both kinds of name under 'Addons'), so an extra
+# loader (e.g. Quilt) resolves like the primary one and a missing one throws. Environment ("Client"/"Server") and the Java tier are matched WITHIN their version TYPE
 # (located by the type's stable slug 'environment*' / 'java*') so a bare name like "Server" can't grab
 # an unrelated id. A missing required name throws; a missing Java tier is a recorded warning (CF curates
 # the Java list by hand and lags new JDKs). Returns { Ids = int[]; Warnings = string[] }.
@@ -809,10 +810,14 @@ function Select-ScCurseForgeVersionIds {
     $required = @($McVersion) + $Extra + $loaderNames
     # Loaders resolve under the 'modloader*' type when CF lists one (so a loader name can't grab a same-named
     # entry of another type); if that slug ever changes, fall back to the name-only match rather than fail.
+    # Minecraft versions likewise resolve under the 'minecraft-*' types: live CF repeats names like '1.20.1'
+    # under 'Addons' and a hidden type, and lists them in no promised order.
     $loaderTypeIds = @(& $typeIdsForSlug 'modloader*')   # @(): one match unwraps to a scalar (StrictMode .Count)
+    $mcTypeIds     = @(& $typeIdsForSlug 'minecraft-*')
     foreach ($name in ($required | Select-Object -Unique)) {
-        $scoped = ($loaderNames -contains $name) -and $loaderTypeIds.Count
-        $hit = $Versions | Where-Object { $_.name -eq $name -and (-not $scoped -or $_.gameVersionTypeID -in $loaderTypeIds) } | Select-Object -First 1
+        $scope = @(if ($loaderNames -contains $name) { $loaderTypeIds } else { $mcTypeIds })
+        if (-not $scope.Count) { $warnings.Add("CurseForge lists no $(if($loaderNames -contains $name){"'modloader*'"}else{"'minecraft-*'"}) version type; matched '$name' by name only.") }
+        $hit = $Versions | Where-Object { $_.name -eq $name -and (-not $scope.Count -or $_.gameVersionTypeID -in $scope) } | Select-Object -First 1
         if (-not $hit) {
             if ($loaderNames -contains $name) { throw "CurseForge has no loader named '$name'." }
             throw "CurseForge has no game version named '$name' yet — cannot upload. Wait for CF to add it."
