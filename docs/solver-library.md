@@ -1,9 +1,10 @@
 # Solver library (`com.legoj15:solver`) — agent notes
 
-The Minecraft-free crafting planner (`RecipeGraphSolver`, `PlannedStep`, `SlotLayout`,
-`SlotAssignment`, `PlanSimulator`, `ProducedLedger`, `LedgerTally`, `UndoMap`, `CountFormat`; package
-`com.legoj15.solver`) is a plain-Java library built from `solver-core/`. Every SprawlCrafting build
-depends on it and bundles it; a second mod (MegaBlockBot) can do the same.
+The Minecraft-free crafting planner (`RecipeGraphSolver`, `CostModel`, `PlannedStep`, `SlotLayout`,
+`SlotAssignment`, `PlanSimulator`, `ProducedLedger`, `LedgerTally`, `DepthFirstSchedule`, `CountFormat`;
+package `com.legoj15.solver`) is a plain-Java library built from `solver-core/`. `UndoMap` and
+`UnitCosts` are package-private helpers, not API. Every SprawlCrafting build depends on it and bundles
+it; a second mod (MegaBlockBot) can do the same.
 
 **Executor contract (since 1.1.0).** A plan carries its own per-slot item choice:
 `Result.Success.layouts()`, aligned 1:1 with `steps()`, holds per step a list of `SlotLayout` runs —
@@ -32,20 +33,120 @@ itself.
 | Dependencies | none at runtime |
 | Artifacts | main jar + `-sources` jar + Gradle module metadata + POM |
 
+## API: stations, slot quantities, a cost model (since 2.2.0)
+
+Three additions, all backward compatible: a consumer that uses none of them is meant to get exactly
+the plans it got from 2.1.0. That was measured outside the suite: two reviewers compared this code with a
+build of `7401a19` (2.1.0) over thousands of random graphs and got byte-identical `solve` and
+`shortfall` output. The suite cannot check it, having no 2.1.0 build to compare with:
+`explicitInterfaceDefaultsAndANullCostModelPlanExactlyLikeTheInheritedDefaults` only shows that recipes
+answering the defaults themselves through the cost-model constructor plan exactly like the inherited
+defaults through the original constructor.
+
+**Station: `RecipeInfo.station()`** (default null). The place a recipe runs (furnace, crafting table,
+machine). It is needed while the recipe runs and is not consumed, however many crafts a step batches.
+- `solve*`: before a recipe's slots are filled, one unit of the station item must be in stock, taken
+  from stock or crafted through the station item's own producers like any ingredient, so the step
+  that crafts it comes earlier in the plan. While the step is planned, that unit is RESERVED (every
+  pass: batched, unitwise, exact): it stays in the stock and no ingredient draw at any depth below the
+  step may take it (a draw sees `count - 1`), so a slot that also accepts the station item takes
+  another alternative, and a recipe that also lists the station as an ingredient needs a second unit
+  (crafted if it can be). A station check sees the unit, reserved or not, so a sub-craft at the same
+  station runs on it (a hopper at a table from a chest made at the same table needs one table); nested
+  steps at one station share the unit, so the reservation never withholds more than one. It ends when
+  the step is emitted or abandoned. The unit is never consumed: a later step at the same station needs
+  no second one, and a later recipe may consume it as an ingredient. The rule is stated in code on
+  `Solve.reserve`. A station that is neither in stock nor craftable makes that recipe unusable on that
+  branch like a missing ingredient (the next producer is tried; `Failure.missing()` may name it).
+- `shortfall*`: the station's own leaves are demanded once (not per craft, not per recipe sharing the
+  station), nothing when it is in stock; the target recipe's station counts too.
+  Known limit: the walk fills a recipe's slots before it asks for the station and does not reserve it, so
+  when a slot also accepts the station item and the stock holds only the station's own unit, the walk
+  takes that unit for the slot and lists one station too many. The list is checked against the planner,
+  so it is never short.
+- `PlanSimulator.replay` and the solver's own acceptance replay hold one unit of the station out of
+  the stock while a step runs and put it back, so a missing station fails the step (`Replay.missing()`
+  is the station item) and a recipe that also lists the station as an ingredient needs one more unit.
+- The caller represents a station standing in the world as stock of that item. Placing or reaching it
+  is not the solver's job.
+- `DepthFirstSchedule`: the constructor that takes a per-step `stations` list (one entry per step,
+  null for none) models them: a step is not eligible until the model holds one unit of its station
+  (the producing step is demanded first), and performing it does not consume that unit. The older
+  five-argument constructor knows no stations and must not be given a plan that has them: it can run a
+  station step before the step that crafts the station.
+
+**Per-slot quantity: `RecipeInfo.ingredientSlotCount(int slot)`** (default 1, indexed like
+`ingredientSlots()`). A slot with quantity q is exactly q consecutive copies of that slot: each copy
+may be filled from a different alternative, layouts list the slot q times, and
+`craftableIngredientSlots()` stays one list per slot. Below 1 is an `IllegalArgumentException` the first
+time a solver pass or `PlanSimulator` reads the recipe. The expansion lives in one place,
+`PlanSimulator.expand`, which the solver's slot groups, the exact pass and `PlanSimulator.nonEmptySlots`
+all read; `SlotAssignment` still sees plain per-copy slot lists.
+
+**Cost model: `CostModel<R, K>` and the `RecipeGraphSolver` constructor taking one as its last
+parameter** (null means today's rule; every older constructor passes null). `gatherCost(item)` is the
+cost of getting one unit from outside the recipe graph or `UNOBTAINABLE`; `recipeCost(recipe)` (default
+1) is what one craft costs on top of its ingredients. The solver derives a unit cost per item, kept
+for its lifetime and readable through `unitCost(item)` (`IllegalStateException` without a model): the
+smaller of `gatherCost` and, over the producers, `ceil((recipeCost + sum over slots of quantity x the
+cheapest alternative's unit cost + the station's unit cost) / resultCount)`. An alternative that cannot
+be crafted in its slot (`craftableIngredientSlots()`) is worth its gather cost only. Sums saturate at
+`UNOBTAINABLE`. The station counts in full, once per craft: stock is unknown when costs are derived, so
+a station the caller already owns still makes the recipe look dearer than it is in practice (left out
+on purpose).
+
+The unit cost orders choices and never makes a target fail that the same stock can make without a
+cost model; nothing is removed from consideration because of its cost.
+- Plans (`solve*`): producers are tried cheapest first; stock is drawn first, across all alternatives
+  in the caller's order, and what is missing is then crafted from the alternatives by ascending unit
+  cost. Anything costing `UNOBTAINABLE` (gather or recipe cost) is tried last, not dropped; ties keep
+  the caller's order. The leaf rule below never stops a plan crafting an item out of stock. The passes
+  are a greedy search, so a cost order can walk into a dead end the caller's order avoids (a cheaper
+  producer's first slot takes stock another branch needs): when the cost-ordered passes find no plan,
+  the caller's order is tried before the failure stands.
+- Shortfall (`shortfall*`): what stock can make is credited first, as without a cost model. Only the
+  remainder is costed: an item whose `gatherCost` is obtainable and no more than its cheapest producer
+  is a leaf and listed as demand; otherwise its cheapest producer is expanded; a slot's remainder goes
+  to its cheapest alternative, raw or crafted, replacing "raw before craftable". An unobtainable
+  alternative or producer is chosen only when every option is, then in the caller's order, as today.
+- `solve*` results are still accepted only when they replay, so a cost model changes which valid plan
+  is found, never whether a returned plan is valid.
+
+`UNOBTAINABLE` is therefore safe for an item that may be held but not gathered: recipes that need it
+sort last and are used when stock holds it. A consumer that wants a recipe gone leaves it out of
+`producers`.
+
+The unit cost is a pure function of the item, the producers, the model and `maxDepth`, the same in any
+query order: `cost_0(i) = gatherCost(i)`, `cost_r(i) = min(gatherCost(i), min over producers p of
+recipe_{r-1}(p))`, `recipe_{r-1}(p)` the formula above with every ingredient and the station at
+`cost_{r-1}`, and `unitCost(i) = cost_maxDepth(i)`. `UnitCosts` relaxes a whole connected piece of the
+graph one level per round and keeps every item's per-level history, so a later query reads an earlier
+item at the level it needs (never the full-depth value it was priced at from its own root), and a
+dense cycle (sixteen re-dyeable bed colours) costs depth x edges, not factorial. Deeper than
+`maxDepth` is unobtainable, and a cycle never makes anything cheaper than its way in from outside:
+ingot, block, ingot costs more than the ingot it started from, and a cycle with nothing to gather
+stays unobtainable. (A recipe loop that yields more than it consumes is priced as the loop it is,
+within the same depth bound.) Recipe shapes are read once per derivation and not cached across
+queries, so a `producers` function that builds new recipe objects on every call grows nothing.
+
+`RecipeGraphSolver`'s `remainder` argument may be null for a recipe set whose crafts leave nothing
+behind; before 2.2.0 `solve` dereferenced it despite the documentation saying so.
+
 ## Build, test, publish locally
 
 From the repo root, on a JDK 21 host (`export JAVA_HOME="/c/Program Files/Java/jdk-21.0.2"`):
 
     ./gradlew -p solver-core build publishToMavenLocal
 
-`build` runs the JUnit 5 suite (`RecipeGraphSolverTest`, including a fixed-seed random-graph check
-that every returned plan replays, and `ProducedLedgerTest`). The
+`build` runs the JUnit 5 suite (`RecipeGraphSolverTest`, including fixed-seed random-graph checks that
+every returned plan replays, with and without stations, quantities and a cost model; `ProducedLedgerTest`;
+`DepthFirstScheduleTest`; `SlotAssignmentRepeatTest`). The
 solver suite runs ONLY here now; the mod builds no longer compile or run it. It is still on the
 release gate: the root `fullTestSuite` task depends on the included build's `:check`, and
 `release/Invoke-Release.ps1`'s Test stage runs `./gradlew -p solver-core build` first.
 
 JitPack: `jitpack.yml` at the repo root publishes just this library (`-p solver-core publishToMavenLocal`
-on JDK 21). Verified 2026-11-14 on commit 610f536: the build finds `com.legoj15:solver:1.0.1` but JitPack
+on JDK 21). Verified 2026-11-14 on commit 610f536: the build finds `com.legoj15:solver:<solver_version>` but JitPack
 serves it RENAMED as `com.github.legoj15:SprawlCrafting:<tag-or-commit>` (POM, jar and Gradle module all
 carry that group/artifact; the jar holds `com/legoj15/solver/*`). Any tag or commit hash works as the
 version; JitPack builds on first request.
@@ -91,8 +192,8 @@ that runtime instead of only failing later at the first craft.
 Production loading of the NESTED copy, verified 2026-11-09 on real dedicated servers installed from the
 official installers (`--installServer`, headless, built jar alone in `mods/`, nothing else on the
 classpath): NeoForge 21.1.233, Forge 1.21.1-52.1.21, Forge 1.20.1-47.4.29 (JDK 21), NeoForge 26.3.0.99
-and Forge 26.3-66.1.5 (JDK 25) each reached `Done (` and logged the init line above with version
-`1.0.0` (FML: `Found library file "com.legoj15.solver-1.0.0.jar" [... locator: jarinjar]`). The same
+and Forge 26.3-66.1.5 (JDK 25) each reached `Done (` and logged the init line above with the solver
+version of that day (FML: `Found library file "com.legoj15.solver-<solver_version>.jar" [... locator: jarinjar]`). The same
 NeoForge 21.1 and Forge 1.21.1 servers also booted with a SECOND jar (`FMLModType: LIBRARY`) nesting its
 own copy of the library under the same identifier and range, the bot-mod situation: both copies were
 scanned, one was loaded, no split-package error. Fabric was not production-tested (Knot loads nested
@@ -130,11 +231,11 @@ coordinates); not boot-tested with two mods.
 Add `mavenLocal()` (local dev) or `maven("https://jitpack.io")`, or include this repo's `solver-core` as
 a composite build. Then, per loader:
 
-- Fabric Loom: `include(implementation("com.legoj15:solver:2.1.0")!!)`.
-- NeoForge MDG: `implementation("com.legoj15:solver:2.1.0")` +
-  `jarJar("com.legoj15:solver") { version { strictly("[2.1.0,3.0.0)"); prefer("2.1.0") } }`.
+- Fabric Loom: `include(implementation("com.legoj15:solver:2.2.0")!!)`.
+- NeoForge MDG: `implementation("com.legoj15:solver:2.2.0")` +
+  `jarJar("com.legoj15:solver") { version { strictly("[2.2.0,3.0.0)"); prefer("2.2.0") } }`.
 - Forge FG7: apply `net.minecraftforge.jarjar`, `jarJar.register()`, then `implementation(...)` +
-  `jarJar.configure("jarJar"("com.legoj15:solver:2.1.0")!!) { setRange("[2.1.0,3.0.0)") }`.
+  `jarJar.configure("jarJar"("com.legoj15:solver:2.2.0")!!) { setRange("[2.2.0,3.0.0)") }`.
 - Never shade it on a JarJar-era loader (see above). Use the same group/artifact (`com.legoj15:solver`)
   in jar-in-jar metadata as SprawlCrafting does, or the selector sees two different libraries and
   loads both (a split package again). A JitPack build carries `com.github.legoj15:SprawlCrafting` (verified,

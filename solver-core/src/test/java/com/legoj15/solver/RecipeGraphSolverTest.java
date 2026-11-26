@@ -18,25 +18,81 @@ import com.legoj15.solver.RecipeGraphSolver.Result;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RecipeGraphSolverTest {
 
-    /** String-typed recipe for tests: id, slots (each "a|b" = alternatives), result, count. */
+    /**
+     * String-typed recipe for tests: id, slots (each "a|b" = alternatives), result, count. A plain
+     * recipe leaves {@link #station()} and {@link #ingredientSlotCount} to the interface defaults;
+     * {@link #withStation}, {@link #withSlotCounts} and {@link #withExplicitDefaults} override them.
+     */
     private static final class TestRecipe implements RecipeInfo<String, String> {
         private final String id;
         private final List<List<String>> ingredientSlots;
         private final List<List<String>> craftableIngredientSlots;
         private final String result;
         private final int resultCount;
+        /** Whether this recipe answers {@link #station()} itself (null included) instead of the default. */
+        private final boolean stationDeclared;
+        private final String station;
+        /** Per slot quantity, or null to leave {@link #ingredientSlotCount} at the interface default. */
+        private final int[] slotCounts;
 
         TestRecipe(String id, List<List<String>> ingredientSlots,
                    List<List<String>> craftableIngredientSlots, String result, int resultCount) {
+            this(id, ingredientSlots, craftableIngredientSlots, result, resultCount, false, null, null);
+        }
+
+        private TestRecipe(String id, List<List<String>> ingredientSlots,
+                           List<List<String>> craftableIngredientSlots, String result, int resultCount,
+                           boolean stationDeclared, String station, int[] slotCounts) {
             this.id = id;
             this.ingredientSlots = ingredientSlots;
             this.craftableIngredientSlots = craftableIngredientSlots;
             this.result = result;
             this.resultCount = resultCount;
+            this.stationDeclared = stationDeclared;
+            this.station = station;
+            this.slotCounts = slotCounts;
+        }
+
+        /** This recipe running at {@code station} (an item that stays in stock). */
+        TestRecipe withStation(String station) {
+            return new TestRecipe(id, ingredientSlots, craftableIngredientSlots, result, resultCount,
+                    true, station, slotCounts);
+        }
+
+        /** This recipe with per-slot quantities (one per entry of {@link #ingredientSlots()}). */
+        TestRecipe withSlotCounts(int... counts) {
+            return new TestRecipe(id, ingredientSlots, craftableIngredientSlots, result, resultCount,
+                    stationDeclared, station, counts.clone());
+        }
+
+        /**
+         * This recipe answering every new method itself with the value the interface would have
+         * returned (no station, quantity 1 per slot), so a run through it must equal a run through
+         * the defaults.
+         */
+        TestRecipe withExplicitDefaults() {
+            int[] counts = slotCounts;
+            if (counts == null) {
+                counts = new int[ingredientSlots.size()];
+                Arrays.fill(counts, 1);
+            }
+            return new TestRecipe(id, ingredientSlots, craftableIngredientSlots, result, resultCount,
+                    true, station, counts);
+        }
+
+        @Override
+        public String station() {
+            return stationDeclared ? station : RecipeInfo.super.station();
+        }
+
+        @Override
+        public int ingredientSlotCount(int slot) {
+            return slotCounts != null ? slotCounts[slot] : RecipeInfo.super.ingredientSlotCount(slot);
         }
 
         @Override
@@ -754,6 +810,21 @@ class RecipeGraphSolverTest {
     //  needs. SlotAssignment remains the fallback when the inventory no longer matches.)
 
     /**
+     * The recipe's non-empty slots with each repeated by its quantity: the slot list a plan's layouts
+     * and a replay are indexed by.
+     */
+    private static List<List<String>> expandedSlots(TestRecipe recipe) {
+        List<List<String>> slots = new ArrayList<>();
+        for (int s = 0; s < recipe.ingredientSlots().size(); s++) {
+            List<String> slot = recipe.ingredientSlots().get(s);
+            for (int copy = 0; !slot.isEmpty() && copy < recipe.ingredientSlotCount(s); copy++) {
+                slots.add(slot);
+            }
+        }
+        return slots;
+    }
+
+    /**
      * Checks the well-formedness of a solved plan's layouts: aligned 1:1 with the steps, each
      * step's runs summing to its crafts, no two adjacent runs listing equal items, and every layout
      * item one of that slot's alternatives. Returns null when all hold, otherwise what broke.
@@ -765,12 +836,7 @@ class RecipeGraphSolverTest {
         }
         for (int i = 0; i < steps.size(); i++) {
             TestRecipe recipe = byId(target, steps.get(i).recipeId());
-            List<List<String>> slots = new ArrayList<>();
-            for (List<String> slot : recipe.ingredientSlots()) {
-                if (!slot.isEmpty()) {
-                    slots.add(slot);
-                }
-            }
+            List<List<String>> slots = expandedSlots(recipe);
             long crafts = 0;
             List<SlotLayout<String>> runs = layouts.get(i);
             for (int r = 0; r < runs.size(); r++) {
@@ -816,6 +882,10 @@ class RecipeGraphSolverTest {
                     Map<String, Integer> need = new HashMap<>();
                     for (String item : run.items()) {
                         need.merge(item, 1, Integer::sum);
+                    }
+                    if (recipe.station() != null) {
+                        // The station stands while the craft runs: one unit beyond what it consumes.
+                        need.merge(recipe.station(), 1, Integer::sum);
                     }
                     for (Map.Entry<String, Integer> entry : need.entrySet()) {
                         if (stock.getOrDefault(entry.getKey(), 0) < entry.getValue()) {
@@ -1078,45 +1148,12 @@ class RecipeGraphSolverTest {
         // craft-by-craft SlotAssignment one on perturbed (often broken) plans — that pair tests
         // PlanSimulator itself.
         java.util.Random random = new java.util.Random(0x5C100018L);
-        String[] raws = {"r0", "r1", "r2", "r3"};
-        String[] mids = {"m0", "m1", "m2"};
-        int[] yields = {1, 2, 3, 4, 9};
         int trials = 3000;
         int solved = 0;
         for (int trial = 0; trial < trials; trial++) {
-            recipes.clear();
-            remainders.clear();
-            if (random.nextInt(10) == 0) {
-                // Sometimes a mid as the remainder, so a craft can be credited what it also consumes.
-                String[] pool = random.nextBoolean() ? raws : mids;
-                remainders.put(raws[random.nextInt(4)], pool[random.nextInt(pool.length)]);
-            }
-            for (int m = 0; m < mids.length; m++) {
-                int variants = 1 + random.nextInt(2);
-                for (int v = 0; v < variants; v++) {
-                    String[] slots = new String[1 + random.nextInt(4)];
-                    for (int s = 0; s < slots.length; s++) {
-                        // One slot in eight may also accept the recipe's own result (a cycle).
-                        slots[s] = randomSlot(random, raws, mids, random.nextInt(8) == 0 ? m + 1 : m);
-                    }
-                    recipes.add(TestRecipe.of(mids[m] + "_" + v, mids[m],
-                            yields[random.nextInt(yields.length)], slots));
-                }
-            }
-            String[] targetSlots = new String[1 + random.nextInt(4)];
-            for (int s = 0; s < targetSlots.length; s++) {
-                targetSlots[s] = randomSlot(random, raws, mids, mids.length);
-            }
-            TestRecipe target = TestRecipe.of("TARGET", "TARGET", 1, targetSlots);
-            Map<String, Integer> held = new HashMap<>();
-            for (String raw : raws) {
-                if (random.nextInt(3) > 0) {
-                    held.put(raw, random.nextInt(11));
-                }
-            }
-            if (random.nextInt(4) == 0) {
-                held.put(mids[random.nextInt(mids.length)], 1 + random.nextInt(4));
-            }
+            RandomGraph graph = randomGraph(random);
+            TestRecipe target = graph.target;
+            Map<String, Integer> held = graph.held;
             Result<String, String> result = solver().solve(target, held);
             if (!(result instanceof Result.Success)) {
                 continue;
@@ -1141,6 +1178,62 @@ class RecipeGraphSolverTest {
         }
         // Guard against a generator that never produces a solvable graph (the property would be vacuous).
         assertTrue(solved >= trials / 10, "only " + solved + " of " + trials + " random graphs were solvable");
+    }
+
+    /** One random recipe graph as {@link #randomGraph} builds it: the target and what is held. */
+    private static final class RandomGraph {
+        final TestRecipe target;
+        final Map<String, Integer> held;
+
+        RandomGraph(TestRecipe target, Map<String, Integer> held) {
+            this.target = target;
+            this.held = held;
+        }
+    }
+
+    /**
+     * The fixed-seed random-graph generator the executability property runs on: refills
+     * {@link #recipes} and {@link #remainders} with a small graph (three mids over four raws, one or
+     * two variants each, some cycles) and returns its target and a random inventory.
+     */
+    private RandomGraph randomGraph(java.util.Random random) {
+        String[] raws = {"r0", "r1", "r2", "r3"};
+        String[] mids = {"m0", "m1", "m2"};
+        int[] yields = {1, 2, 3, 4, 9};
+        recipes.clear();
+        remainders.clear();
+        if (random.nextInt(10) == 0) {
+            // Sometimes a mid as the remainder, so a craft can be credited what it also consumes.
+            String[] pool = random.nextBoolean() ? raws : mids;
+            remainders.put(raws[random.nextInt(4)], pool[random.nextInt(pool.length)]);
+        }
+        for (int m = 0; m < mids.length; m++) {
+            int variants = 1 + random.nextInt(2);
+            for (int v = 0; v < variants; v++) {
+                String[] slots = new String[1 + random.nextInt(4)];
+                for (int s = 0; s < slots.length; s++) {
+                    // One slot in eight may also accept the recipe's own result (a cycle).
+                    slots[s] = randomSlot(random, raws, mids, random.nextInt(8) == 0 ? m + 1 : m);
+                }
+                recipes.add(TestRecipe.of(mids[m] + "_" + v, mids[m],
+                        yields[random.nextInt(yields.length)], slots));
+            }
+        }
+        String[] targetSlots = new String[1 + random.nextInt(4)];
+        for (int s = 0; s < targetSlots.length; s++) {
+            targetSlots[s] = randomSlot(random, raws, mids, mids.length);
+        }
+        TestRecipe target = TestRecipe.of("TARGET", "TARGET", 1, targetSlots);
+        Map<String, Integer> held = new HashMap<>();
+        for (String raw : raws) {
+            if (random.nextInt(3) > 0) {
+                held.put(raw, random.nextInt(11));
+            }
+        }
+        if (random.nextInt(4) == 0) {
+            held.put(mids[random.nextInt(mids.length)], 1 + random.nextInt(4));
+        }
+        return new RandomGraph(target, held);
     }
 
     private static String randomSlot(java.util.Random random, String[] raws, String[] mids, int tier) {
@@ -1379,5 +1472,1186 @@ class RecipeGraphSolverTest {
                 small.solveIntSized(target, inv("a", unbounded, "b", unbounded, "d", unbounded)));
         assertTrue(failure.tooLarge(), "makeable, but longer than the step cap");
         assertTrue(failure.budgetExceeded());
+    }
+
+    // --- issue #13: stations, per-slot quantities, a cost model, a null remainder function ----------
+
+    private List<TestRecipe> producersOf(String item) {
+        return recipes.stream().filter(r -> r.result().equals(item)).collect(Collectors.toList());
+    }
+
+    private RecipeGraphSolver<String, String> solver(CostModel<String, String> costs) {
+        return solver(costs, 32);
+    }
+
+    private RecipeGraphSolver<String, String> solver(CostModel<String, String> costs, int maxDepth) {
+        return solver(costs, maxDepth, 4096);
+    }
+
+    private RecipeGraphSolver<String, String> solver(CostModel<String, String> costs, int maxDepth, int maxAttempts) {
+        return new RecipeGraphSolver<>(this::producersOf, remainders::get, maxDepth, maxAttempts,
+                RecipeGraphSolver.DEFAULT_MAX_STEPS, costs);
+    }
+
+    /** The items {@link #randomGraph} builds recipes over. */
+    private static final String[] RANDOM_ITEMS = {"r0", "r1", "r2", "r3", "m0", "m1", "m2"};
+
+    /**
+     * A random cost model over {@link #randomGraph}'s current recipes: some items ungatherable, some mids
+     * cheaper to gather than to craft, some recipes whose own cost is unobtainable.
+     */
+    private MapCosts randomCosts(java.util.Random random) {
+        MapCosts costs = new MapCosts();
+        for (String item : RANDOM_ITEMS) {
+            if (random.nextInt(4) != 0) {
+                costs.gather(item, 1 + random.nextInt(9));
+            }
+        }
+        for (TestRecipe recipe : recipes) {
+            costs.recipe(recipe.id(), random.nextInt(6) == 0 ? CostModel.UNOBTAINABLE : random.nextInt(4));
+        }
+        return costs;
+    }
+
+    /** Costs by item and recipe id: an item without a gather cost is unobtainable, a recipe costs 1 unless set. */
+    private static final class MapCosts implements CostModel<String, String> {
+        private final Map<String, Long> gather = new HashMap<>();
+        private final Map<String, Long> recipe = new HashMap<>();
+
+        MapCosts gather(String item, long cost) {
+            gather.put(item, cost);
+            return this;
+        }
+
+        MapCosts recipe(String id, long cost) {
+            recipe.put(id, cost);
+            return this;
+        }
+
+        @Override
+        public long gatherCost(String item) {
+            Long cost = gather.get(item);
+            return cost == null ? UNOBTAINABLE : cost;
+        }
+
+        @Override
+        public long recipeCost(RecipeInfo<String, String> r) {
+            Long cost = recipe.get(r.id());
+            return cost == null ? 1 : cost;
+        }
+    }
+
+    private static void assertSameResult(Result<String, String> expected, Result<String, String> actual,
+                                         String context) {
+        if (expected instanceof Result.Success) {
+            Result.Success<String, String> want = (Result.Success<String, String>) expected;
+            Result.Success<String, String> got = assertInstanceOf(Result.Success.class, actual, context);
+            assertEquals(want.steps(), got.steps(), context);
+            assertEquals(want.layouts(), got.layouts(), context);
+        } else {
+            Result.Failure<String, String> want = (Result.Failure<String, String>) expected;
+            Result.Failure<String, String> got = assertInstanceOf(Result.Failure.class, actual, context);
+            assertEquals(want.missing(), got.missing(), context);
+            assertEquals(want.budgetExceeded(), got.budgetExceeded(), context);
+            assertEquals(want.tooLarge(), got.tooLarge(), context);
+        }
+    }
+
+    private static void assertSameShortfall(RecipeGraphSolver.ShortfallResult<String> expected,
+                                            RecipeGraphSolver.ShortfallResult<String> actual, String context) {
+        assertEquals(expected.demandsLong(), actual.demandsLong(), context);
+        assertEquals(expected.alternatives(), actual.alternatives(), context);
+        assertEquals(expected.approximate(), actual.approximate(), context);
+        assertEquals(expected.saturated(), actual.saturated(), context);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<PlannedStep<String>> stepsOf(Result<String, String> result) {
+        return ((Result.Success<String, String>) assertInstanceOf(Result.Success.class, result,
+                "expected solvable, got " + result)).steps();
+    }
+
+    // --- the null remainder function the constructor documents -------------------------------------
+
+    @Test
+    void solveShortfallAndReplayWorkWhenTheRemainderFunctionIsNull() {
+        recipes.add(TestRecipe.of("planks", "planks", 4, "log"));
+        TestRecipe chest = TestRecipe.of("chest", "chest", 1,
+                "planks", "planks", "planks", "planks", "planks", "planks", "planks", "planks");
+        RecipeGraphSolver<String, String> noRemainders = new RecipeGraphSolver<>(this::producersOf, null, 32, 4096);
+        List<PlannedStep<String>> steps = stepsOf(noRemainders.solve(chest, inv("log", 2)));
+        assertEquals(Arrays.asList(new PlannedStep<>("planks", 2), new PlannedStep<>("chest", 1)), steps);
+        assertEquals(inv("log", 2), noRemainders.shortfall(chest, inv()).demands());
+        assertTrue(PlanSimulator.replay(steps, id -> byId(chest, id), null, inv("log", 2)).ok());
+    }
+
+    // --- stations ----------------------------------------------------------------------------------
+
+    /** A log makes four planks and four planks make a table. */
+    private void tableRecipes() {
+        recipes.add(TestRecipe.of("planks", "planks", 4, "log"));
+        recipes.add(TestRecipe.of("table_recipe", "table", 1, "planks", "planks", "planks", "planks"));
+    }
+
+    @Test
+    void aStationThatIsNotInStockIsCraftedBeforeTheStepThatNeedsIt() {
+        tableRecipes();
+        TestRecipe ring = TestRecipe.of("ring", "ring", 1, "gold").withStation("table");
+        assertEquals(Arrays.asList(
+                        new PlannedStep<>("planks", 1),
+                        new PlannedStep<>("table_recipe", 1),
+                        new PlannedStep<>("ring", 1)),
+                solveOk(ring, inv("gold", 1, "log", 1)));
+    }
+
+    @Test
+    void aStationIsCraftedOnceEvenWhenTheStepBatchesManyCrafts() {
+        recipes.add(TestRecipe.of("furnace_recipe", "furnace", 1,
+                "cobble", "cobble", "cobble", "cobble", "cobble", "cobble", "cobble", "cobble"));
+        recipes.add(TestRecipe.of("bar_recipe", "bar", 1, "ore").withStation("furnace"));
+        TestRecipe target = TestRecipe.of("t", "t", 1, "bar", "bar", "bar", "bar", "bar", "bar", "bar", "bar");
+        assertEquals(Arrays.asList(
+                        new PlannedStep<>("furnace_recipe", 1),
+                        new PlannedStep<>("bar_recipe", 8),
+                        new PlannedStep<>("t", 1)),
+                solveOk(target, inv("ore", 8, "cobble", 8)));
+    }
+
+    @Test
+    void aStationAlreadyInStockIsNotCrafted() {
+        recipes.add(TestRecipe.of("furnace_recipe", "furnace", 1,
+                "cobble", "cobble", "cobble", "cobble", "cobble", "cobble", "cobble", "cobble"));
+        recipes.add(TestRecipe.of("bar_recipe", "bar", 1, "ore").withStation("furnace"));
+        TestRecipe target = TestRecipe.of("t", "t", 1, "bar", "bar", "bar", "bar", "bar", "bar", "bar", "bar");
+        assertEquals(Arrays.asList(new PlannedStep<>("bar_recipe", 8), new PlannedStep<>("t", 1)),
+                solveOk(target, inv("ore", 8, "furnace", 1, "cobble", 8)));
+    }
+
+    @Test
+    void aStationIsNotConsumedSoALaterStepWithTheSameStationNeedsNoSecondOne() {
+        tableRecipes();
+        recipes.add(TestRecipe.of("x_recipe", "x", 1, "rawx").withStation("table"));
+        recipes.add(TestRecipe.of("y_recipe", "y", 1, "rawy").withStation("table"));
+        TestRecipe target = TestRecipe.of("t", "t", 1, "x", "y");
+        // Planks for ONE table only: a second craft of the table would not be possible.
+        Map<String, Integer> held = inv("rawx", 1, "rawy", 1, "planks", 4);
+        List<PlannedStep<String>> steps = solveOk(target, held);
+        assertEquals(Arrays.asList(
+                        new PlannedStep<>("table_recipe", 1),
+                        new PlannedStep<>("x_recipe", 1),
+                        new PlannedStep<>("y_recipe", 1),
+                        new PlannedStep<>("t", 1)),
+                steps);
+        assertTrue(simulate(target, steps, held).ok(), "replay: " + simulate(target, steps, held));
+    }
+
+    @Test
+    void aStationInStockServesEveryStepThatNeedsItWithoutBeingUsedUp() {
+        tableRecipes();
+        recipes.add(TestRecipe.of("x_recipe", "x", 1, "rawx").withStation("table"));
+        recipes.add(TestRecipe.of("y_recipe", "y", 1, "rawy").withStation("table"));
+        TestRecipe target = TestRecipe.of("t", "t", 1, "x", "y");
+        // The one held table is no use to a second step if the first one takes it; no planks for another.
+        assertEquals(Arrays.asList(new PlannedStep<>("x_recipe", 1), new PlannedStep<>("y_recipe", 1),
+                        new PlannedStep<>("t", 1)),
+                solveOk(target, inv("rawx", 1, "rawy", 1, "table", 1)));
+    }
+
+    @Test
+    void aStationIsCraftedFirstForAStepWhoseSlotsCompeteForTheSameStock() {
+        tableRecipes();
+        // The oak-or-birch slot would take the only oak first, leaving the oak-only slot short: the
+        // slot-by-slot passes fail and the exact pass (most constrained slot first) plans the step.
+        recipes.add(TestRecipe.of("x_recipe", "x", 1, "a|b", "a").withStation("table"));
+        TestRecipe target = TestRecipe.of("t", "t", 1, "x");
+        Map<String, Integer> held = inv("a", 1, "b", 1, "planks", 4);
+        Result.Success<String, String> success = assertInstanceOf(Result.Success.class, solver().solve(target, held));
+        assertEquals(Arrays.asList(new PlannedStep<>("table_recipe", 1), new PlannedStep<>("x_recipe", 1),
+                new PlannedStep<>("t", 1)), success.steps());
+        assertEquals(Arrays.asList(new SlotLayout<>(1, Arrays.asList("b", "a"))), success.layouts().get(1));
+        assertEquals(null, replayLayoutsCraftByCraft(target, success.steps(), success.layouts(), held));
+        // And without any way to get a table the same step fails, naming it.
+        Result.Failure<String, String> failure = assertInstanceOf(Result.Failure.class,
+                solver().solve(target, inv("a", 1, "b", 1)));
+        assertTrue(failure.missing().contains("table"), "got " + failure.missing());
+    }
+
+    @Test
+    void aStationTheExactPassedRecipeAlsoConsumesIsMadeAgain() {
+        tableRecipes();
+        // As above (the oak-or-birch slot forces the exact pass), and the recipe also eats a table: the
+        // one held table cannot be both an ingredient and the place the step runs, so a second is made.
+        recipes.add(TestRecipe.of("x_recipe", "x", 1, "a|b", "a", "table").withStation("table"));
+        TestRecipe target = TestRecipe.of("t", "t", 1, "x");
+        Map<String, Integer> held = inv("a", 1, "b", 1, "table", 1, "planks", 4);
+        Result.Success<String, String> success = assertInstanceOf(Result.Success.class, solver().solve(target, held));
+        assertEquals(Arrays.asList(new PlannedStep<>("table_recipe", 1), new PlannedStep<>("x_recipe", 1),
+                new PlannedStep<>("t", 1)), success.steps());
+        assertEquals(null, replayLayoutsCraftByCraft(target, success.steps(), success.layouts(), held));
+        assertInstanceOf(Result.Failure.class, solver().solve(target, inv("a", 1, "b", 1, "table", 1, "planks", 3)));
+    }
+
+    @Test
+    void aSlotThatAlsoAcceptsTheStationTakesAnotherAlternativeAndLeavesTheStationStanding() {
+        // x's one slot takes a table or a log, and x runs at a table. Filling the slot with the only table
+        // would leave nowhere to craft; the plan must take the log and keep the table standing.
+        recipes.add(TestRecipe.of("x_recipe", "x", 1, "table|log").withStation("table"));
+        TestRecipe target = TestRecipe.of("t", "t", 1, "x");
+        Map<String, Integer> held = inv("table", 1, "log", 1);
+        Result.Success<String, String> success = assertInstanceOf(Result.Success.class,
+                solver().solve(target, held), "solve " + solver().solve(target, held));
+        assertEquals(Arrays.asList(new PlannedStep<>("x_recipe", 1), new PlannedStep<>("t", 1)), success.steps());
+        assertEquals(Arrays.asList(new SlotLayout<>(1, Arrays.asList("log"))), success.layouts().get(0));
+        assertTrue(simulate(target, success.steps(), held).ok(), "replay " + simulate(target, success.steps(), held));
+        assertEquals(null, replayLayoutsCraftByCraft(target, success.steps(), success.layouts(), held));
+        // The same holds where the recipe is the target itself, and the shortfall agrees there is nothing to gather.
+        TestRecipe direct = TestRecipe.of("y", "y", 1, "table|log").withStation("table");
+        assertEquals(Arrays.asList(new PlannedStep<>("y", 1)), solveOk(direct, held));
+        assertEquals(Collections.emptyMap(), solver().shortfall(target, held).demands());
+        // And where the exact pass could not repair it: x's slot also accepts the oak the target's own slot
+        // needs, and the exact pass's per-craft choice takes that oak. Only reserving the table in the first
+        // passes, which then fill x from the birch, finds the plan.
+        recipes.add(TestRecipe.of("z_recipe", "z", 1, "table|oak|birch").withStation("table"));
+        TestRecipe both = TestRecipe.of("u", "u", 1, "oak", "z");
+        Map<String, Integer> stock = inv("table", 1, "oak", 1, "birch", 1);
+        Result.Success<String, String> mixed = assertInstanceOf(Result.Success.class, solver().solve(both, stock),
+                "solve " + solver().solve(both, stock));
+        assertEquals(Arrays.asList(new PlannedStep<>("z_recipe", 1), new PlannedStep<>("u", 1)), mixed.steps());
+        assertEquals(Arrays.asList(new SlotLayout<>(1, Arrays.asList("birch"))), mixed.layouts().get(0));
+        assertEquals(null, replayLayoutsCraftByCraft(both, mixed.steps(), mixed.layouts(), stock));
+    }
+
+    @Test
+    void aRecipeCannotMakeItsOwnStationWithoutOneAlreadyStanding() {
+        recipes.add(TestRecipe.of("table_from_table", "table", 1, "plank").withStation("table"));
+        TestRecipe target = TestRecipe.of("t", "t", 1, "table");
+        Result.Failure<String, String> failure = assertInstanceOf(Result.Failure.class,
+                solver().solve(target, inv("plank", 1)));
+        assertTrue(failure.missing().contains("table"), "got " + failure.missing());
+    }
+
+    @Test
+    void aStationIsHonouredWhenTheQuantityPathPlansTheTree() {
+        quantityChain(17);
+        for (int i = 0; i < recipes.size(); i++) {
+            if (recipes.get(i).id().equals("leaf")) {
+                recipes.set(i, recipes.get(i).withStation("bench"));
+            }
+        }
+        recipes.add(TestRecipe.of("bench_recipe", "bench", 1, "d", "d"));
+        TestRecipe target = TestRecipe.of("top", "top", 1, "c17");
+        int unbounded = Integer.MAX_VALUE;
+        Result.Success<String, String> success = assertInstanceOf(Result.Success.class,
+                solver().solve(target, inv("a", unbounded, "b", unbounded, "d", unbounded)));
+        int benchAt = -1;
+        int firstLeaf = -1;
+        long leafCrafts = 0;
+        for (int i = 0; i < success.steps().size(); i++) {
+            PlannedStep<String> step = success.steps().get(i);
+            if (step.recipeId().equals("bench_recipe")) {
+                assertEquals(-1, benchAt, "the bench is made once");
+                benchAt = i;
+            } else if (step.recipeId().equals("leaf")) {
+                firstLeaf = firstLeaf < 0 ? i : firstLeaf;
+                leafCrafts += step.crafts();
+            }
+        }
+        assertTrue(benchAt >= 0 && benchAt < firstLeaf, "bench at " + benchAt + ", first leaf at " + firstLeaf);
+        assertEquals(16_926_659_444_736L, leafCrafts);
+    }
+
+    @Test
+    void aStationCraftedForAStepCanBeConsumedAfterwardsByARecipeThatUsesItAsAnIngredient() {
+        tableRecipes();
+        recipes.add(TestRecipe.of("x_recipe", "x", 1, "rawx").withStation("table"));
+        TestRecipe target = TestRecipe.of("t", "t", 1, "x", "table");
+        Map<String, Integer> held = inv("rawx", 1, "planks", 4);
+        List<PlannedStep<String>> steps = solveOk(target, held);
+        // One table serves x_recipe and is then eaten by t: a second table (more planks) is not needed.
+        assertEquals(Arrays.asList(
+                        new PlannedStep<>("table_recipe", 1),
+                        new PlannedStep<>("x_recipe", 1),
+                        new PlannedStep<>("t", 1)),
+                steps);
+        assertTrue(simulate(target, steps, held).ok(), "replay: " + simulate(target, steps, held));
+    }
+
+    @Test
+    void anUnobtainableStationFailsOverToTheNextProducer() {
+        recipes.add(TestRecipe.of("bar_forged", "bar", 1, "ore").withStation("forge"));
+        recipes.add(TestRecipe.of("bar_plain", "bar", 1, "ore", "ore"));
+        TestRecipe target = TestRecipe.of("t", "t", 1, "bar");
+        // The forged recipe is listed first and its ore is in stock, but there is no forge anywhere.
+        assertEquals(Arrays.asList(new PlannedStep<>("bar_plain", 1), new PlannedStep<>("t", 1)),
+                solveOk(target, inv("ore", 2)));
+    }
+
+    @Test
+    void anUnobtainableStationIsNamedInTheFailureWhenItIsTheOnlyWay() {
+        recipes.add(TestRecipe.of("bar_forged", "bar", 1, "ore").withStation("forge"));
+        TestRecipe target = TestRecipe.of("t", "t", 1, "bar");
+        Result.Failure<String, String> failure = assertInstanceOf(Result.Failure.class,
+                solver().solve(target, inv("ore", 1)));
+        assertTrue(failure.missing().contains("forge"), "the station should be named, got " + failure.missing());
+        assertFalse(failure.budgetExceeded());
+    }
+
+    @Test
+    void shortfallCountsAStationsLeavesOnceAndNothingWhenItIsStocked() {
+        tableRecipes();
+        recipes.add(TestRecipe.of("bar_recipe", "bar", 1, "ore").withStation("table"));
+        recipes.add(TestRecipe.of("rod_recipe", "rod", 1, "scrap").withStation("table"));
+        TestRecipe eightBars = TestRecipe.of("t", "t", 1, "bar", "bar", "bar", "bar", "bar", "bar", "bar", "bar");
+        // Eight crafts, one table: a single log (one table's worth of planks), not one per craft.
+        assertEquals(inv("ore", 8, "log", 1), solver().shortfall(eightBars, inv()).demands());
+        assertEquals(inv("ore", 8), solver().shortfall(eightBars, inv("table", 1)).demands());
+        // Two different recipes at the same table still ask for the one table.
+        TestRecipe both = TestRecipe.of("t2", "t2", 1, "bar", "rod");
+        assertEquals(inv("ore", 1, "scrap", 1, "log", 1), solver().shortfall(both, inv()).demands());
+        // The target's own station is counted too.
+        TestRecipe ring = TestRecipe.of("ring", "ring", 1, "gold").withStation("table");
+        assertEquals(inv("gold", 1, "log", 1), solver().shortfall(ring, inv()).demands());
+        assertEquals(inv("gold", 1), solver().shortfall(ring, inv("table", 1)).demands());
+    }
+
+    @Test
+    void replayRejectsAPlanWhoseStationIsAbsentAndDoesNotConsumeTheOneItHas() {
+        recipes.add(TestRecipe.of("x_recipe", "x", 1, "rawx").withStation("table"));
+        recipes.add(TestRecipe.of("y_recipe", "y", 1, "rawy").withStation("table"));
+        TestRecipe target = TestRecipe.of("t", "t", 1, "x", "y");
+        List<PlannedStep<String>> plan = Arrays.asList(
+                new PlannedStep<>("x_recipe", 1), new PlannedStep<>("y_recipe", 1), new PlannedStep<>("t", 1));
+        PlanSimulator.Replay<String, String> absent = simulate(target, plan, inv("rawx", 1, "rawy", 1));
+        assertFalse(absent.ok(), "no table in stock");
+        assertEquals(0, absent.failedStep());
+        assertEquals("table", absent.missing());
+        // One table serves both steps: replaying must not use it up.
+        assertTrue(simulate(target, plan, inv("rawx", 1, "rawy", 1, "table", 1)).ok());
+    }
+
+    @Test
+    void aStationTheSameRecipeAlsoConsumesNeedsOneUnitMoreThanTheIngredientTakes() {
+        tableRecipes();
+        recipes.add(TestRecipe.of("x_recipe", "x", 1, "table").withStation("table"));
+        TestRecipe target = TestRecipe.of("t", "t", 1, "x");
+        Map<String, Integer> held = inv("table", 1, "planks", 4);
+        List<PlannedStep<String>> steps = solveOk(target, held);
+        assertEquals(Arrays.asList(
+                        new PlannedStep<>("table_recipe", 1),
+                        new PlannedStep<>("x_recipe", 1),
+                        new PlannedStep<>("t", 1)),
+                steps);
+        assertTrue(simulate(target, steps, held).ok());
+        // The one held table cannot be both standing and eaten.
+        List<PlannedStep<String>> oneCraft = Arrays.asList(new PlannedStep<>("x_recipe", 1));
+        assertFalse(simulate(target, oneCraft, inv("table", 1)).ok(), "the station is held while the step runs");
+        assertInstanceOf(Result.Failure.class, solver().solve(target, inv("table", 1, "planks", 3)));
+    }
+
+    /**
+     * solve() plans {@code expected}, the plan replays, and shortfall() agrees there is nothing to gather
+     * and does not flag that approximate: with and without a cost model.
+     */
+    private void assertPlansAndNeedsNothing(TestRecipe target, Map<String, Integer> held,
+                                            List<PlannedStep<String>> expected) {
+        for (RecipeGraphSolver<String, String> solver : Arrays.asList(solver(), solver(new MapCosts()
+                .gather("ore", 1).gather("log", 1).gather("table", 50)))) {
+            Result<String, String> result = solver.solve(target, held);
+            Result.Success<String, String> success = assertInstanceOf(Result.Success.class, result,
+                    "solve " + result + (result instanceof Result.Failure
+                            ? " missing " + ((Result.Failure<String, String>) result).missing() : ""));
+            assertEquals(expected, success.steps());
+            assertTrue(solver.isSolvable(target, held));
+            assertEquals(null, replayLayoutsCraftByCraft(target, success.steps(), success.layouts(), held));
+            assertTrue(simulate(target, success.steps(), held).ok(), "replay " + simulate(target, success.steps(), held));
+            RecipeGraphSolver.ShortfallResult<String> shortfall = solver.shortfall(target, held);
+            assertEquals(Collections.emptyMap(), shortfall.demands());
+            assertFalse(shortfall.approximate(), "an empty shortfall for a solvable target is exact");
+        }
+    }
+
+    @Test
+    void aSubCraftAtTheSameStationSharesTheOneStandingUnit() {
+        // A hopper is crafted at a table from a chest crafted at the same table: the sub-craft needs no second
+        // table, and the target's step does not lose its table to the sub-craft.
+        recipes.add(TestRecipe.of("ingot_recipe", "ingot", 1, "ore").withStation("table"));
+        TestRecipe target = TestRecipe.of("TARGET", "TARGET", 1, "ingot").withStation("table");
+        assertPlansAndNeedsNothing(target, inv("table", 1, "ore", 1),
+                Arrays.asList(new PlannedStep<>("ingot_recipe", 1), new PlannedStep<>("TARGET", 1)));
+    }
+
+    @Test
+    void aStationThePlanCraftsServesNestedStepsAtThatStationAndIsMadeOnce() {
+        // Two levels at the table under a target at the table, and the table itself made in the plan from a log:
+        // one table, crafted first, stands for all three steps.
+        tableRecipes();
+        recipes.add(TestRecipe.of("ingot2_recipe", "ingot2", 1, "ore").withStation("table"));
+        recipes.add(TestRecipe.of("ingot_recipe", "ingot", 1, "ingot2").withStation("table"));
+        TestRecipe target = TestRecipe.of("TARGET", "TARGET", 1, "ingot").withStation("table");
+        assertPlansAndNeedsNothing(target, inv("log", 1, "ore", 1), Arrays.asList(
+                new PlannedStep<>("planks", 1),
+                new PlannedStep<>("table_recipe", 1),
+                new PlannedStep<>("ingot2_recipe", 1),
+                new PlannedStep<>("ingot_recipe", 1),
+                new PlannedStep<>("TARGET", 1)));
+        // The same with the table held: nothing is crafted for it.
+        assertPlansAndNeedsNothing(target, inv("table", 1, "ore", 1), Arrays.asList(
+                new PlannedStep<>("ingot2_recipe", 1),
+                new PlannedStep<>("ingot_recipe", 1),
+                new PlannedStep<>("TARGET", 1)));
+    }
+
+    @Test
+    void theExactPassLetsASubCraftShareItsParentsStation() {
+        // x's oak-or-birch slot forces the exact pass (see aStationIsCraftedFirstForAStepWhoseSlotsCompeteForTheSameStock);
+        // its third slot is sub-crafted at the table x runs at, inside that pass's repair loop.
+        recipes.add(TestRecipe.of("c_recipe", "c", 1, "ore").withStation("table"));
+        recipes.add(TestRecipe.of("x_recipe", "x", 1, "a|b", "a", "c").withStation("table"));
+        TestRecipe target = TestRecipe.of("t", "t", 1, "x");
+        assertPlansAndNeedsNothing(target, inv("a", 1, "b", 1, "table", 1, "ore", 1), Arrays.asList(
+                new PlannedStep<>("c_recipe", 1), new PlannedStep<>("x_recipe", 1), new PlannedStep<>("t", 1)));
+    }
+
+    @Test
+    void presentStationsThatNoRecipeConsumesNeverMakeASolvableTargetUnsolvable() {
+        // On random graphs, give random recipes (the target included) a station drawn from items no recipe makes
+        // or eats. Whatever the graph solves without stations, it solves with them given one unit of each, and
+        // that plan replays with every station standing: with and without a cost model (stations cost nothing to
+        // gather there, so the cost order is the same as without them).
+        java.util.Random random = new java.util.Random(0x5C13C0DEL);
+        String[] stations = {"s0", "s1"};
+        int trials = 1500;
+        int compared = 0;
+        int withNested = 0;
+        for (int trial = 0; trial < trials; trial++) {
+            RandomGraph graph = randomGraph(random);
+            MapCosts costs = randomCosts(random);
+            List<TestRecipe> plain = new ArrayList<>(recipes);
+            List<TestRecipe> stationed = new ArrayList<>();
+            for (TestRecipe recipe : plain) {
+                stationed.add(random.nextInt(3) > 0 ? recipe.withStation(stations[random.nextInt(2)]) : recipe);
+            }
+            TestRecipe plainTarget = graph.target;
+            TestRecipe stationedTarget = random.nextBoolean()
+                    ? plainTarget.withStation(stations[random.nextInt(2)]) : plainTarget;
+            Map<String, Integer> withStations = new HashMap<>(graph.held);
+            for (String station : stations) {
+                withStations.put(station, 1);
+                costs.gather(station, 0);
+            }
+            for (int withCosts = 0; withCosts < 2; withCosts++) {
+                String context = "trial " + trial + (withCosts == 0 ? " (no costs)" : " (costs)") + ": target "
+                        + stationedTarget.ingredientSlots() + " at " + stationedTarget.station() + ", recipes "
+                        + describeWithStations(stationed) + ", held " + graph.held + ", remainders " + remainders
+                        + ", gather " + costs.gather + ", recipe costs " + costs.recipe;
+                recipes.clear();
+                recipes.addAll(plain);
+                Result<String, String> without = solver(withCosts == 0 ? null : costs, 32, 1 << 16)
+                        .solve(plainTarget, graph.held);
+                if (!(without instanceof Result.Success)) {
+                    continue;
+                }
+                recipes.clear();
+                recipes.addAll(stationed);
+                Result<String, String> with = solver(withCosts == 0 ? null : costs, 32, 1 << 16)
+                        .solve(stationedTarget, withStations);
+                compared++;
+                Result.Success<String, String> success = assertInstanceOf(Result.Success.class, with,
+                        context + ": solvable without stations as " + stepsOf(without) + ", with them " + with
+                                + (with instanceof Result.Failure ? " missing "
+                                + ((Result.Failure<String, String>) with).missing() : ""));
+                assertEquals(null, replayLayoutsCraftByCraft(stationedTarget, success.steps(), success.layouts(),
+                        withStations), context + ": plan " + success.steps() + " does not replay");
+                if (stationedTarget.station() != null && success.steps().size() > 1) {
+                    withNested++;
+                }
+            }
+        }
+        assertTrue(compared >= trials / 10, "only " + compared + " graphs solved without stations");
+        assertTrue(withNested >= trials / 20, "only " + withNested + " plans nested steps under a stationed target");
+    }
+
+    private static String describeWithStations(List<TestRecipe> list) {
+        StringBuilder out = new StringBuilder();
+        for (TestRecipe recipe : list) {
+            out.append(recipe.id()).append(recipe.ingredientSlots()).append("->").append(recipe.resultCount())
+                    .append(' ').append(recipe.result()).append(" @").append(recipe.station()).append("; ");
+        }
+        return out.toString();
+    }
+
+    // --- per-slot quantities ------------------------------------------------------------------------
+
+    /** The quantified recipe must solve, count shortfall and replay exactly like its slots written out. */
+    private void assertSameAsCopies(TestRecipe quantified, TestRecipe copies, Map<String, Integer> stock) {
+        String context = "slots " + quantified.ingredientSlots() + " with quantities, stock " + stock;
+        Result<String, String> expected = solver().solve(copies, stock);
+        assertSameResult(expected, solver().solve(quantified, stock), context);
+        assertSameShortfall(solver().shortfall(copies, stock), solver().shortfall(quantified, stock), context);
+        if (expected instanceof Result.Success) {
+            List<PlannedStep<String>> steps = stepsOf(expected);
+            assertEquals(simulate(copies, steps, stock).toString(), simulate(quantified, steps, stock).toString(),
+                    context + ", replay of " + steps);
+            // A longer batch than the stock covers: both must come up short in the same place.
+            List<PlannedStep<String>> longer = new ArrayList<>(steps);
+            int last = longer.size() - 1;
+            longer.set(last, longer.get(last).withCrafts(longer.get(last).crafts() + 1));
+            assertEquals(simulate(copies, longer, stock).toString(), simulate(quantified, longer, stock).toString(),
+                    context + ", replay of " + longer);
+        }
+    }
+
+    @Test
+    void aSlotQuantityPlansCountsAndReplaysLikeThatManyIdenticalSlots() {
+        recipes.add(TestRecipe.of("planks", "planks", 4, "log"));
+        TestRecipe three = TestRecipe.of("t", "t", 1, "planks").withSlotCounts(3);
+        TestRecipe threeSlots = TestRecipe.of("t", "t", 1, "planks", "planks", "planks");
+        for (Map<String, Integer> stock : Arrays.asList(inv(), inv("planks", 3), inv("planks", 1, "log", 1),
+                inv("log", 1), inv("planks", 2), inv("planks", 5, "log", 9))) {
+            assertSameAsCopies(three, threeSlots, stock);
+        }
+        // The premise: a quantity of 3 is not a quantity of 1, so the cases above are not vacuous.
+        assertEquals(Arrays.asList(new PlannedStep<>("planks", 1), new PlannedStep<>("t", 1)),
+                solveOk(three, inv("planks", 1, "log", 1)));
+        assertInstanceOf(Result.Failure.class, solver().solve(three, inv("planks", 2)));
+        assertEquals(inv("log", 1), solver().shortfall(three, inv()).demands());
+        assertEquals(Collections.emptyMap(), solver().shortfall(three, inv("planks", 3)).demands());
+        // The layout lists the slot three times.
+        Result.Success<String, String> success = assertInstanceOf(Result.Success.class,
+                solver().solve(three, inv("planks", 3)));
+        assertEquals(Arrays.asList(Arrays.asList(new SlotLayout<>(1, Arrays.asList("planks", "planks", "planks")))),
+                success.layouts());
+    }
+
+    @Test
+    void eachCopyOfAQuantifiedSlotMayBeFilledFromADifferentAlternative() {
+        recipes.add(TestRecipe.of("oak_planks", "oak_planks", 2, "oak_log"));
+        recipes.add(TestRecipe.of("birch_planks", "birch_planks", 2, "birch_log"));
+        TestRecipe quantified = TestRecipe.of("t", "t", 1, "oak_planks|birch_planks", "stick").withSlotCounts(3, 1);
+        TestRecipe copies = TestRecipe.of("t", "t", 1,
+                "oak_planks|birch_planks", "oak_planks|birch_planks", "oak_planks|birch_planks", "stick");
+        for (Map<String, Integer> stock : Arrays.asList(
+                inv("oak_log", 1, "birch_log", 1, "stick", 1), inv("oak_planks", 1, "birch_log", 1, "stick", 1),
+                inv("oak_planks", 1, "birch_planks", 2, "stick", 1), inv("oak_log", 1, "stick", 1), inv(),
+                inv("oak_planks", 2, "birch_planks", 1, "stick", 1))) {
+            assertSameAsCopies(quantified, copies, stock);
+        }
+        // Premise: one oak log and one birch log are four planks between them, enough only because
+        // the three copies may mix the two kinds.
+        assertInstanceOf(Result.Success.class, solver().solve(quantified, inv("oak_log", 1, "birch_log", 1, "stick", 1)));
+        Result.Success<String, String> mixed = assertInstanceOf(Result.Success.class,
+                solver().solve(quantified, inv("oak_planks", 1, "birch_planks", 2, "stick", 1)));
+        assertEquals(Arrays.asList(new SlotLayout<>(1, Arrays.asList("oak_planks", "birch_planks", "birch_planks", "stick"))),
+                mixed.layouts().get(0));
+    }
+
+    @Test
+    void aQuantifiedSlotAmongOthersStillCompetesForSharedStockLikeCopies() {
+        recipes.add(TestRecipe.of("c_from_a", "c", 1, "a"));
+        TestRecipe quantified = TestRecipe.of("t", "t", 1, "a|b", "c", "a").withSlotCounts(2, 1, 1);
+        TestRecipe copies = TestRecipe.of("t", "t", 1, "a|b", "a|b", "c", "a");
+        for (Map<String, Integer> stock : Arrays.asList(inv("a", 3), inv("a", 2, "b", 1), inv("b", 2, "a", 2),
+                inv("a", 1, "b", 2), inv("b", 3), inv("a", 4, "b", 1), inv("c", 1, "a", 1, "b", 2),
+                inv("a", 2, "c", 1), inv())) {
+            assertSameAsCopies(quantified, copies, stock);
+        }
+    }
+
+    @Test
+    void aSlotQuantityBelowOneIsRejectedWhenTheRecipeIsFirstRead() {
+        for (int quantity : new int[] {0, -1}) {
+            TestRecipe broken = TestRecipe.of("t", "t", 1, "planks").withSlotCounts(quantity);
+            assertThrows(IllegalArgumentException.class, () -> solver().solve(broken, inv("planks", 5)),
+                    "solve with quantity " + quantity);
+            assertThrows(IllegalArgumentException.class, () -> solver().shortfall(broken, inv()),
+                    "shortfall with quantity " + quantity);
+            assertThrows(IllegalArgumentException.class,
+                    () -> simulate(broken, Arrays.asList(new PlannedStep<>("t", 1)), inv("planks", 5)),
+                    "replay with quantity " + quantity);
+        }
+    }
+
+    // --- cost model --------------------------------------------------------------------------------
+
+    private void plankRecipes() {
+        recipes.add(TestRecipe.of("oak_planks", "oak_planks", 4, "oak_log"));
+        recipes.add(TestRecipe.of("birch_planks", "birch_planks", 4, "birch_log"));
+    }
+
+    private static TestRecipe stick() {
+        return TestRecipe.of("stick", "stick", 4, "oak_planks|birch_planks", "oak_planks|birch_planks");
+    }
+
+    @Test
+    void costModelFillsTheCheapestAlternativeOfASlotWhenNothingIsStocked() {
+        plankRecipes();
+        MapCosts costs = new MapCosts().gather("oak_log", 5).gather("birch_log", 2);
+        // Today's rule takes the first listed alternative; with costs the cheap birch log is named.
+        assertEquals(inv("oak_log", 1), solver().shortfall(stick(), inv()).demands());
+        assertEquals(inv("birch_log", 1), solver(costs).shortfall(stick(), inv()).demands());
+    }
+
+    @Test
+    void costModelStillTakesStockBeforeACheaperUnstockedAlternative() {
+        plankRecipes();
+        MapCosts costs = new MapCosts().gather("oak_log", 5).gather("birch_log", 2);
+        Map<String, Integer> held = inv("oak_planks", 2, "birch_log", 1);
+        assertEquals(Collections.emptyMap(), solver(costs).shortfall(stick(), held).demands());
+        assertEquals(Arrays.asList(new PlannedStep<>("stick", 1)), stepsOf(solver(costs).solve(stick(), held)));
+    }
+
+    @Test
+    void costModelPlanCraftsTheCheapestAlternativeThatStockCanMake() {
+        plankRecipes();
+        MapCosts costs = new MapCosts().gather("oak_log", 5).gather("birch_log", 2);
+        Map<String, Integer> held = inv("oak_log", 1, "birch_log", 1);
+        assertEquals(Arrays.asList(new PlannedStep<>("oak_planks", 1), new PlannedStep<>("stick", 1)),
+                solveOk(stick(), held));
+        assertEquals(Arrays.asList(new PlannedStep<>("birch_planks", 1), new PlannedStep<>("stick", 1)),
+                stepsOf(solver(costs).solve(stick(), held)));
+    }
+
+    @Test
+    void costModelShortfallCreditsWhatStockCanMakeBeforeGatheringTheCheapestAlternative() {
+        plankRecipes();
+        MapCosts costs = new MapCosts().gather("oak_log", 5).gather("birch_log", 2).gather("nail", 1);
+        String[] eight = new String[9];
+        Arrays.fill(eight, "oak_planks|birch_planks");
+        eight[8] = "nail";
+        TestRecipe chest = TestRecipe.of("chest", "chest", 1, eight);
+        // Two oak logs make the eight planks; the cheap birch logs are not needed, only the missing nail.
+        assertEquals(inv("nail", 1), solver(costs).shortfall(chest, inv("oak_log", 2)).demands());
+        assertEquals(inv("birch_log", 2, "nail", 1), solver(costs).shortfall(chest, inv()).demands());
+    }
+
+    @Test
+    void costModelAlternativesOfEqualCostKeepTheCallersOrder() {
+        plankRecipes();
+        MapCosts costs = new MapCosts().gather("oak_log", 3).gather("birch_log", 3);
+        TestRecipe oakFirst = TestRecipe.of("a", "a", 1, "oak_planks|birch_planks");
+        TestRecipe birchFirst = TestRecipe.of("b", "b", 1, "birch_planks|oak_planks");
+        assertEquals(inv("oak_log", 1), solver(costs).shortfall(oakFirst, inv()).demands());
+        assertEquals(inv("birch_log", 1), solver(costs).shortfall(birchFirst, inv()).demands());
+        Map<String, Integer> both = inv("oak_log", 1, "birch_log", 1);
+        assertEquals(Arrays.asList(new PlannedStep<>("oak_planks", 1), new PlannedStep<>("a", 1)),
+                stepsOf(solver(costs).solve(oakFirst, both)));
+        assertEquals(Arrays.asList(new PlannedStep<>("birch_planks", 1), new PlannedStep<>("b", 1)),
+                stepsOf(solver(costs).solve(birchFirst, both)));
+    }
+
+    @Test
+    void costModelTriesTheCheapestProducerFirstAndTiesKeepCallerOrder() {
+        TestRecipe ring = TestRecipe.of("ring", "ring", 1, "gem");
+        recipes.add(TestRecipe.of("gem_dear", "gem", 1, "dust"));
+        recipes.add(TestRecipe.of("gem_cheap", "gem", 1, "dust"));
+        MapCosts costs = new MapCosts().gather("dust", 1).recipe("gem_dear", 9).recipe("gem_cheap", 1);
+        assertEquals(Arrays.asList(new PlannedStep<>("gem_dear", 1), new PlannedStep<>("ring", 1)),
+                solveOk(ring, inv("dust", 1)));
+        assertEquals(Arrays.asList(new PlannedStep<>("gem_cheap", 1), new PlannedStep<>("ring", 1)),
+                stepsOf(solver(costs).solve(ring, inv("dust", 1))));
+        // Equal costs: the caller's order stands (gem_b was listed first).
+        recipes.clear();
+        recipes.add(TestRecipe.of("gem_b", "gem", 1, "dust"));
+        recipes.add(TestRecipe.of("gem_a", "gem", 1, "dust"));
+        assertEquals(Arrays.asList(new PlannedStep<>("gem_b", 1), new PlannedStep<>("ring", 1)),
+                stepsOf(solver(new MapCosts().gather("dust", 1)).solve(ring, inv("dust", 1))));
+    }
+
+    @Test
+    void costModelShortfallGathersWhatIsNoDearerToGatherThanToCraftWhileSolveStillCraftsItFromStock() {
+        recipes.add(TestRecipe.of("planks_recipe", "planks", 1, "log"));
+        TestRecipe chest = TestRecipe.of("chest", "chest", 1, "planks", "planks");
+        // Crafting a plank costs 1 + the log's 3 = 4: gathering at 1 is cheaper, so planks are a leaf.
+        RecipeGraphSolver<String, String> cheapPlanks = solver(new MapCosts().gather("log", 3).gather("planks", 1));
+        assertEquals(inv("planks", 2), cheapPlanks.shortfall(chest, inv()).demands());
+        assertEquals(1, cheapPlanks.unitCost("planks"));
+        // The leaf rule only decides what to gather: logs in stock still become planks, held planks are used,
+        // and what stock can make is not listed.
+        assertEquals(Arrays.asList(new PlannedStep<>("planks_recipe", 2), new PlannedStep<>("chest", 1)),
+                stepsOf(cheapPlanks.solve(chest, inv("log", 2))));
+        assertEquals(Collections.emptyMap(), cheapPlanks.shortfall(chest, inv("log", 2)).demands());
+        assertEquals(inv("planks", 1), cheapPlanks.shortfall(chest, inv("log", 1)).demands());
+        assertInstanceOf(Result.Success.class, cheapPlanks.solve(chest, inv("planks", 2)));
+        // Equal to the craft cost is still a leaf ("no more than"); one above it is crafted.
+        assertEquals(inv("planks", 2), solver(new MapCosts().gather("log", 3).gather("planks", 4))
+                .shortfall(chest, inv()).demands());
+        assertEquals(inv("log", 2), solver(new MapCosts().gather("log", 3).gather("planks", 5))
+                .shortfall(chest, inv()).demands());
+    }
+
+    @Test
+    void costModelAnUnobtainableIngredientSteersThePlanToTheOtherProducer() {
+        recipes.add(TestRecipe.of("gem_from_unobtanium", "gem", 1, "unobtanium"));
+        recipes.add(TestRecipe.of("gem_from_dust", "gem", 1, "dust"));
+        TestRecipe ring = TestRecipe.of("ring", "ring", 1, "gem");
+        Map<String, Integer> held = inv("unobtanium", 1, "dust", 1);
+        assertEquals(Arrays.asList(new PlannedStep<>("gem_from_unobtanium", 1), new PlannedStep<>("ring", 1)),
+                solveOk(ring, held));
+        RecipeGraphSolver<String, String> solver = solver(new MapCosts().gather("dust", 2));
+        assertEquals(Arrays.asList(new PlannedStep<>("gem_from_dust", 1), new PlannedStep<>("ring", 1)),
+                stepsOf(solver.solve(ring, held)));
+        assertEquals(3, solver.unitCost("gem"));
+        assertEquals(inv("dust", 1), solver.shortfall(ring, inv()).demands());
+        assertEquals(CostModel.UNOBTAINABLE, solver.unitCost("unobtanium"));
+        // Tried last, not dropped: a caller whose stock holds the unobtainable ingredient still gets the plan.
+        assertEquals(Arrays.asList(new PlannedStep<>("gem_from_unobtanium", 1), new PlannedStep<>("ring", 1)),
+                stepsOf(solver.solve(ring, inv("unobtanium", 1))));
+        // The same for a recipe whose own cost is unobtainable: it sorts last and stays usable.
+        RecipeGraphSolver<String, String> dearRecipe = solver(new MapCosts().gather("dust", 2).gather("unobtanium", 1)
+                .recipe("gem_from_unobtanium", CostModel.UNOBTAINABLE));
+        assertEquals(Arrays.asList(new PlannedStep<>("gem_from_dust", 1), new PlannedStep<>("ring", 1)),
+                stepsOf(dearRecipe.solve(ring, held)));
+        assertEquals(Arrays.asList(new PlannedStep<>("gem_from_unobtanium", 1), new PlannedStep<>("ring", 1)),
+                stepsOf(dearRecipe.solve(ring, inv("unobtanium", 1))));
+    }
+
+    @Test
+    void costModelSubCraftsAnUnobtainableAlternativeOnlyAfterTheObtainableOnes() {
+        recipes.add(TestRecipe.of("a_from_unobtanium", "item_a", 1, "unobtanium"));
+        recipes.add(TestRecipe.of("b_from_dust", "item_b", 1, "dust"));
+        TestRecipe thing = TestRecipe.of("thing", "thing", 1, "item_a|item_b");
+        Map<String, Integer> held = inv("unobtanium", 1, "dust", 1);
+        assertEquals(Arrays.asList(new PlannedStep<>("a_from_unobtanium", 1), new PlannedStep<>("thing", 1)),
+                solveOk(thing, held));
+        assertEquals(Arrays.asList(new PlannedStep<>("b_from_dust", 1), new PlannedStep<>("thing", 1)),
+                stepsOf(solver(new MapCosts().gather("dust", 2)).solve(thing, held)));
+        // Tried last, not dropped: with only the unobtainable route in stock, that route is the plan.
+        assertEquals(Arrays.asList(new PlannedStep<>("a_from_unobtanium", 1), new PlannedStep<>("thing", 1)),
+                stepsOf(solver(new MapCosts().gather("dust", 2)).solve(thing, inv("unobtanium", 1))));
+    }
+
+    @Test
+    void costModelTriesUnobtainableRoutesLastEvenWhereTheCallersOrderWouldDeadEnd() {
+        // p: the caller lists p_a first, which takes the only r1 the target's own slot needs; the cost model
+        // tries the cheap p_b (r0) first. q, and the slot alternative qa, are made only from u, which cannot
+        // be gathered but is held. The plan needs the cost model's order at p AND the unobtainable recipe at
+        // q: dropping it fails, and so does the caller's order.
+        recipes.add(TestRecipe.of("p_a", "p", 1, "r1"));
+        recipes.add(TestRecipe.of("p_b", "p", 1, "r0"));
+        recipes.add(TestRecipe.of("q_u", "q", 1, "u"));
+        recipes.add(TestRecipe.of("q_w", "q", 1, "w")); // obtainable, but no w is held
+        recipes.add(TestRecipe.of("qa_u", "qa", 1, "u"));
+        recipes.add(TestRecipe.of("qb_w", "qb", 1, "w"));
+        MapCosts costs = new MapCosts().gather("r1", 50).gather("r0", 1).gather("w", 1);
+        Map<String, Integer> held = inv("r1", 1, "r0", 1, "u", 1);
+        TestRecipe needsQ = TestRecipe.of("t", "t", 1, "p", "r1", "q");
+        assertInstanceOf(Result.Failure.class, solver().solve(needsQ, held), "the caller's order dead-ends at p");
+        assertEquals(Arrays.asList(new PlannedStep<>("p_b", 1), new PlannedStep<>("q_u", 1), new PlannedStep<>("t", 1)),
+                stepsOf(solver(costs).solve(needsQ, held)));
+        // The same through a slot: qb is cheaper but nothing to make it is held, so the unobtainable qa is used.
+        TestRecipe needsQaOrQb = TestRecipe.of("t2", "t2", 1, "p", "r1", "qb|qa");
+        assertInstanceOf(Result.Failure.class, solver().solve(needsQaOrQb, held));
+        assertEquals(Arrays.asList(new PlannedStep<>("p_b", 1), new PlannedStep<>("qa_u", 1), new PlannedStep<>("t2", 1)),
+                stepsOf(solver(costs).solve(needsQaOrQb, held)));
+    }
+
+    @Test
+    void costModelFallsBackToTheCallersOrderWhereItsOwnOrderDeadEnds() {
+        // The mirror case: the caller lists p_b (r0) first; the cost model prefers p_a, whose r1 the target's
+        // own slot needs. The cost model's order finds no plan, so the caller's order, which does, is used.
+        recipes.add(TestRecipe.of("p_b", "p", 1, "r0"));
+        recipes.add(TestRecipe.of("p_a", "p", 1, "r1"));
+        TestRecipe target = TestRecipe.of("t", "t", 1, "p", "r1");
+        Map<String, Integer> held = inv("r1", 1, "r0", 1);
+        MapCosts costs = new MapCosts().gather("r1", 1).gather("r0", 50);
+        assertEquals(Arrays.asList(new PlannedStep<>("p_b", 1), new PlannedStep<>("t", 1)), solveOk(target, held));
+        assertEquals(Arrays.asList(new PlannedStep<>("p_b", 1), new PlannedStep<>("t", 1)),
+                stepsOf(solver(costs).solve(target, held)));
+        // Where the cost model's own order works it still wins: with a second r1 the cheap p_a is chosen.
+        assertEquals(Arrays.asList(new PlannedStep<>("p_a", 1), new PlannedStep<>("t", 1)),
+                stepsOf(solver(costs).solve(target, inv("r1", 2, "r0", 1))));
+    }
+
+    @Test
+    void costModelTheExactPassSubCraftsTheCheapestAlternativeOfAShortSlotFirst() {
+        // The oak-or-birch pair (a|b, a) defeats the slot-by-slot passes, so only the exact pass plans t; its
+        // third slot is short and both p (from the dear rp) and q (from the cheap rq) can fill it. The caller
+        // lists p first; the cost model must have the exact pass craft q.
+        recipes.add(TestRecipe.of("p_recipe", "p", 1, "rp"));
+        recipes.add(TestRecipe.of("q_recipe", "q", 1, "rq"));
+        TestRecipe target = TestRecipe.of("t", "t", 1, "a|b", "a", "p|q");
+        Map<String, Integer> held = inv("a", 1, "b", 1, "rp", 1, "rq", 1);
+        assertEquals(Arrays.asList(new PlannedStep<>("p_recipe", 1), new PlannedStep<>("t", 1)), solveOk(target, held));
+        Result.Success<String, String> success = assertInstanceOf(Result.Success.class,
+                solver(new MapCosts().gather("rp", 50).gather("rq", 1)).solve(target, held));
+        assertEquals(Arrays.asList(new PlannedStep<>("q_recipe", 1), new PlannedStep<>("t", 1)), success.steps());
+        assertEquals(null, replayLayoutsCraftByCraft(target, success.steps(), success.layouts(), held));
+    }
+
+    @Test
+    void costModelANegativeMaxDepthAllowsNoRecipeAndFailsCleanly() {
+        // The released solver tolerated a negative maxDepth (planning simply fails); a cost model must too:
+        // no recipe may run, so an item costs what it costs to gather.
+        recipes.add(TestRecipe.of("gem_recipe", "gem", 1, "dust"));
+        TestRecipe ring = TestRecipe.of("ring", "ring", 1, "gem");
+        MapCosts costs = new MapCosts().gather("dust", 1).gather("gem", 9);
+        for (int maxDepth : new int[] {-1, 0}) {
+            RecipeGraphSolver<String, String> solver = solver(costs, maxDepth);
+            assertEquals(9, solver.unitCost("gem"), "maxDepth " + maxDepth);
+            assertEquals(CostModel.UNOBTAINABLE, solver.unitCost("ring"), "maxDepth " + maxDepth);
+            assertInstanceOf(Result.Failure.class, solver.solve(ring, inv("dust", 1)), "maxDepth " + maxDepth);
+            solver.shortfall(ring, inv("dust", 1)); // must not throw
+        }
+    }
+
+    @Test
+    void costModelShortfallSkipsUnobtainableAlternativesUnlessEveryOneIs() {
+        TestRecipe thing = TestRecipe.of("thing", "thing", 1, "a|b");
+        assertEquals(inv("b", 1), solver(new MapCosts().gather("b", 3)).shortfall(thing, inv()).demands());
+        // Every alternative unobtainable: today's rule, the first alternative is reported.
+        assertEquals(inv("a", 1), solver(new MapCosts()).shortfall(thing, inv()).demands());
+    }
+
+    @Test
+    void costModelNeverPricesAnInventoryOnlyAlternativeByCraftingIt() {
+        recipes.add(TestRecipe.of("make_bucket", "lava_bucket", 1, "iron"));
+        recipes.add(TestRecipe.of("planks_recipe", "planks", 4, "log"));
+        TestRecipe thing = TestRecipe.ofInventoryOnly("thing", "thing", 1,
+                Collections.singletonList("lava_bucket"), "lava_bucket|planks");
+        MapCosts costs = new MapCosts().gather("iron", 1).gather("log", 10);
+        // The slot can hold a lava bucket but never make one, so the bucket is worth its gather cost
+        // (unobtainable here), not the 2 that crafting it would cost; the planks route is what is left.
+        assertEquals(inv("log", 1), solver(costs).shortfall(thing, inv()).demands());
+        // With a gather cost it is a leaf to gather, cheaper than the planks (3).
+        assertEquals(inv("lava_bucket", 1),
+                solver(costs.gather("lava_bucket", 1)).shortfall(thing, inv()).demands());
+    }
+
+    @Test
+    void costModelRejectsANegativeCost() {
+        recipes.add(TestRecipe.of("gem_recipe", "gem", 1, "dust"));
+        assertThrows(IllegalArgumentException.class,
+                () -> solver(new MapCosts().gather("dust", -1)).unitCost("gem"));
+        assertThrows(IllegalArgumentException.class,
+                () -> solver(new MapCosts().gather("dust", 1).recipe("gem_recipe", -1)).unitCost("gem"));
+    }
+
+    @Test
+    void costModelCompressionCycleTerminatesWithFiniteCostsForTheRawItem() {
+        recipes.add(TestRecipe.of("ingots_from_block", "ingot", 9, "block"));
+        recipes.add(TestRecipe.of("block_from_ingots", "block", 1, nine("ingot")));
+        recipes.add(TestRecipe.of("ingot_from_ore", "ingot", 1, "ore"));
+        RecipeGraphSolver<String, String> solver = solver(new MapCosts().gather("ore", 10));
+        // ingot = 1 + 10, block = 1 + 9 x 11; unpacking the block (ceil(101 / 9) = 12) never beats the ore.
+        assertEquals(10, solver.unitCost("ore"));
+        assertEquals(11, solver.unitCost("ingot"));
+        assertEquals(100, solver.unitCost("block"));
+        TestRecipe pick = TestRecipe.of("pick", "pick", 1, "ingot", "ingot", "ingot");
+        assertEquals(Arrays.asList(new PlannedStep<>("ingot_from_ore", 3), new PlannedStep<>("pick", 1)),
+                stepsOf(solver.solve(pick, inv("ore", 3))));
+        assertEquals(inv("ore", 3), solver.shortfall(pick, inv()).demands());
+        // A cycle with nothing to gather in it is not free: both members stay unobtainable.
+        RecipeGraphSolver<String, String> closed = solver(new MapCosts());
+        assertEquals(CostModel.UNOBTAINABLE, closed.unitCost("ingot"));
+        assertEquals(CostModel.UNOBTAINABLE, closed.unitCost("block"));
+    }
+
+    @Test
+    void costModelResultCountDividesTheRecipeCostRoundingUp() {
+        recipes.add(TestRecipe.of("bars", "bar", 4, "ore"));
+        recipes.add(TestRecipe.of("rods", "rod", 3, "ore", "ore"));
+        RecipeGraphSolver<String, String> solver = solver(new MapCosts().gather("ore", 10));
+        assertEquals(3, solver.unitCost("bar"), "ceil((1 + 10) / 4)");
+        assertEquals(7, solver.unitCost("rod"), "(1 + 20) / 3 divides exactly");
+        assertEquals(4, solver(new MapCosts().gather("ore", 5)).unitCost("rod"), "ceil((1 + 10) / 3)");
+    }
+
+    @Test
+    void costModelMultipliesASlotQuantityIntoTheRecipeCost() {
+        recipes.add(TestRecipe.of("plate", "plate", 1, "ore").withSlotCounts(3));
+        assertEquals(31, solver(new MapCosts().gather("ore", 10)).unitCost("plate"), "1 + 3 x 10");
+    }
+
+    @Test
+    void costModelCountsTheStationsCostOncePerRecipeNotPerCraft() {
+        recipes.add(TestRecipe.of("planks", "planks", 4, "log"));
+        recipes.add(TestRecipe.of("table_recipe", "table", 1, "planks", "planks", "planks", "planks"));
+        recipes.add(TestRecipe.of("bars", "bar", 2, "ore").withStation("table"));
+        RecipeGraphSolver<String, String> solver = solver(new MapCosts().gather("log", 5).gather("ore", 4));
+        // planks = ceil((1 + 5) / 4) = 2, table = 1 + 4 x 2 = 9, bar = ceil((1 + 4 + 9) / 2) = 7.
+        assertEquals(2, solver.unitCost("planks"));
+        assertEquals(9, solver.unitCost("table"));
+        assertEquals(7, solver.unitCost("bar"));
+    }
+
+    @Test
+    void costModelDepthBeyondMaxDepthIsUnobtainable() {
+        for (int k = 0; k < 4; k++) {
+            recipes.add(TestRecipe.of("r" + k, "item" + k, 1, "item" + (k + 1)));
+        }
+        MapCosts costs = new MapCosts().gather("item4", 1);
+        // item0 needs four recipes in a row (cost 4 x 1 + 1), which maxDepth 4 allows and 3 does not.
+        assertEquals(5, solver(costs, 4).unitCost("item0"));
+        assertEquals(CostModel.UNOBTAINABLE, solver(costs, 3).unitCost("item0"));
+        assertEquals(4, solver(costs, 3).unitCost("item1"));
+    }
+
+    @Test
+    void costModelUnitCostDoesNotDependOnWhatWasAskedBefore() {
+        for (int k = 0; k < 4; k++) {
+            recipes.add(TestRecipe.of("r" + k, "item" + k, 1, "item" + (k + 1)));
+        }
+        MapCosts costs = new MapCosts().gather("item4", 1).gather("rawZ", 100);
+        TestRecipe top = TestRecipe.of("top", "top", 1, "item0|rawZ");
+        // item1 is three recipes from item4, inside maxDepth 3; item0 is four, beyond it, whatever was
+        // priced first.
+        RecipeGraphSolver<String, String> fresh = solver(costs, 3);
+        assertEquals(CostModel.UNOBTAINABLE, fresh.unitCost("item0"));
+        RecipeGraphSolver<String, String> warmed = solver(costs, 3);
+        assertEquals(4, warmed.unitCost("item1"));
+        assertEquals(CostModel.UNOBTAINABLE, warmed.unitCost("item0"));
+        // And at plan level: the shortfall gathers the raw alternative either way.
+        assertEquals(inv("rawZ", 1), solver(costs, 3).shortfall(top, inv()).demands());
+        RecipeGraphSolver<String, String> warmedFirst = solver(costs, 3);
+        warmedFirst.unitCost("item1");
+        assertEquals(inv("rawZ", 1), warmedFirst.shortfall(top, inv()).demands());
+    }
+
+    @Test
+    void costModelUnitCostsAreTheSameInAnyQueryOrder() {
+        java.util.Random random = new java.util.Random(0x5C13B002L);
+        for (int trial = 0; trial < 600; trial++) {
+            randomGraph(random);
+            MapCosts costs = randomCosts(random);
+            int maxDepth = 1 + random.nextInt(4);
+            String context = "trial " + trial + ": maxDepth " + maxDepth + ", recipes " + describe(recipes)
+                    + ", gather " + costs.gather + ", recipe costs " + costs.recipe;
+            Map<String, Long> fresh = new HashMap<>();
+            for (String item : RANDOM_ITEMS) {
+                fresh.put(item, solver(costs, maxDepth).unitCost(item));
+            }
+            List<String> order = new ArrayList<>(Arrays.asList(RANDOM_ITEMS));
+            Collections.shuffle(order, random);
+            List<String> reversed = new ArrayList<>(order);
+            Collections.reverse(reversed);
+            RecipeGraphSolver<String, String> one = solver(costs, maxDepth);
+            RecipeGraphSolver<String, String> other = solver(costs, maxDepth);
+            for (List<String> sequence : Arrays.asList(order, reversed)) {
+                for (String item : sequence) {
+                    assertEquals(fresh.get(item), one.unitCost(item), context + ", " + item + " asked in order " + order
+                            + " then " + reversed);
+                }
+            }
+            for (String item : reversed) {
+                assertEquals(fresh.get(item), other.unitCost(item), context + ", " + item + " asked in order " + reversed);
+            }
+        }
+    }
+
+    @Test
+    void costModelNeverMakesATargetFailThatTheSameStockCanMakeWithoutOne() {
+        // Rule A: a cost model only orders producers and alternatives. Over random graphs, stocks and cost
+        // models (ungatherable items, mids cheaper to gather than to craft, unobtainable recipe costs), solve
+        // succeeds with the cost model whenever it succeeds without, and every plan replays under its own
+        // layouts.
+        java.util.Random random = new java.util.Random(0x5C13B001L);
+        int trials = 1500;
+        int solved = 0;
+        for (int trial = 0; trial < trials; trial++) {
+            RandomGraph graph = randomGraph(random);
+            MapCosts costs = randomCosts(random);
+            String context = "trial " + trial + ": target " + graph.target.ingredientSlots() + ", recipes "
+                    + describe(recipes) + ", held " + graph.held + ", remainders " + remainders + ", gather "
+                    + costs.gather + ", recipe costs " + costs.recipe;
+            Result<String, String> plain = solver(null, 32, 1 << 16).solve(graph.target, graph.held);
+            Result<String, String> costed = solver(costs, 32, 1 << 16).solve(graph.target, graph.held);
+            // Only this direction is the rule: the search is greedy, so a cost model's order can also find a
+            // valid plan the caller's order misses (a dear producer tried last leaves stock a cheap one needs).
+            if (plain instanceof Result.Success) {
+                assertInstanceOf(Result.Success.class, costed,
+                        context + ": solvable without costs, but with costs " + costed);
+            }
+            if (costed instanceof Result.Success) {
+                solved++;
+                // The replay contract is the plan's own layouts (see randomGraphsOnlyYieldExecutablePlans):
+                // PlanSimulator.replay re-decides each craft with SlotAssignment, which cannot look ahead and
+                // rejects some default-rule plans too.
+                Result.Success<String, String> success = (Result.Success<String, String>) costed;
+                assertEquals(null, layoutInvariants(graph.target, success.steps(), success.layouts()),
+                        context + ": malformed layouts " + success.layouts());
+                assertEquals(null, replayLayoutsCraftByCraft(graph.target, success.steps(), success.layouts(),
+                        graph.held), context + ": plan " + success.steps() + " does not replay under " + success.layouts());
+            }
+        }
+        assertTrue(solved >= trials / 10, "only " + solved + " of " + trials + " random graphs were solvable");
+    }
+
+    @Test
+    void gatheringAnExactShortfallMakesTheTargetSolvableWithOrWithoutACostModel() {
+        // The randomized form of gatheringTheShortfallMakesTheRecipeSolvable, for the default rule and for
+        // rule B: whatever shortfall lists without flagging it approximate, held plus that list solves.
+        java.util.Random random = new java.util.Random(0x5C13B003L);
+        int trials = 1000;
+        int[] listed = new int[2];
+        for (int trial = 0; trial < trials; trial++) {
+            RandomGraph graph = randomGraph(random);
+            MapCosts costs = randomCosts(random);
+            for (int withCosts = 0; withCosts < 2; withCosts++) {
+                RecipeGraphSolver<String, String> solver = solver(withCosts == 0 ? null : costs, 32, 1 << 16);
+                String context = "trial " + trial + (withCosts == 0 ? " (no costs)" : " (costs)") + ": target "
+                        + graph.target.ingredientSlots() + ", recipes " + describe(recipes) + ", held " + graph.held
+                        + ", remainders " + remainders + ", gather " + costs.gather + ", recipe costs " + costs.recipe;
+                RecipeGraphSolver.ShortfallResult<String> shortfall = solver.shortfall(graph.target, graph.held);
+                if (shortfall.approximate() || shortfall.saturated()) {
+                    continue;
+                }
+                Map<String, Integer> gathered = new HashMap<>(graph.held);
+                shortfall.demands().forEach((item, count) -> gathered.merge(item, count, Integer::sum));
+                assertInstanceOf(Result.Success.class, solver.solve(graph.target, gathered),
+                        context + ": gathering " + shortfall.demands() + " must make the target solvable");
+                if (!shortfall.demands().isEmpty()) {
+                    listed[withCosts]++;
+                }
+            }
+        }
+        assertTrue(listed[0] >= trials / 10 && listed[1] >= trials / 10,
+                "too few exact non-empty shortfalls: " + Arrays.toString(listed));
+    }
+
+    @Test
+    void costModelSaturatesInsteadOfOverflowing() {
+        recipes.add(TestRecipe.of("big", "big", 1, "ore", "ore"));
+        recipes.add(TestRecipe.of("bigger", "bigger", 1, "big", "big", "big"));
+        // 1 + 2 x (MAX / 4) still fits; three of those do not and must pin at unobtainable, not wrap.
+        RecipeGraphSolver<String, String> solver = solver(new MapCosts().gather("ore", Long.MAX_VALUE / 4));
+        assertEquals(1 + 2 * (Long.MAX_VALUE / 4), solver.unitCost("big"));
+        assertEquals(CostModel.UNOBTAINABLE, solver.unitCost("bigger"));
+    }
+
+    @Test
+    void costModelUnitCostNeedsACostModel() {
+        assertThrows(IllegalStateException.class, () -> solver().unitCost("anything"));
+    }
+
+    @Test
+    void explicitInterfaceDefaultsAndANullCostModelPlanExactlyLikeTheInheritedDefaults() {
+        // Compares this solver with itself (recipes answering the defaults themselves through the cost-model
+        // constructor, against the inherited defaults through the original one). Whether the defaults match the
+        // released 2.1 behaviour is checked outside this suite, against a build of that release.
+        java.util.Random random = new java.util.Random(0x5C100018L);
+        int trials = 1500;
+        int solved = 0;
+        for (int trial = 0; trial < trials; trial++) {
+            RandomGraph graph = randomGraph(random);
+            String context = "trial " + trial + ": target " + graph.target.ingredientSlots() + ", recipes "
+                    + describe(recipes) + ", held " + graph.held + ", remainders " + remainders;
+            // As written: recipes on the interface defaults, the original constructor.
+            RecipeGraphSolver<String, String> original = solver();
+            Result<String, String> expected = original.solve(graph.target, graph.held);
+            RecipeGraphSolver.ShortfallResult<String> expectedShortfall = original.shortfall(graph.target, graph.held);
+            // The same graph with every recipe answering the defaults itself, through the new constructor.
+            List<TestRecipe> explicit = new ArrayList<>();
+            for (TestRecipe recipe : recipes) {
+                explicit.add(recipe.withExplicitDefaults());
+            }
+            RecipeGraphSolver<String, String> wrapped = new RecipeGraphSolver<>(
+                    item -> explicit.stream().filter(r -> r.result().equals(item)).collect(Collectors.toList()),
+                    remainders::get, 32, 4096, RecipeGraphSolver.DEFAULT_MAX_STEPS, null);
+            TestRecipe wrappedTarget = graph.target.withExplicitDefaults();
+            assertSameResult(expected, wrapped.solve(wrappedTarget, graph.held), context);
+            assertSameShortfall(expectedShortfall, wrapped.shortfall(wrappedTarget, graph.held), context);
+            if (expected instanceof Result.Success) {
+                solved++;
+            }
+        }
+        assertTrue(solved >= trials / 10, "only " + solved + " of " + trials + " random graphs were solvable");
+    }
+
+    @Test
+    void stationsQuantitiesAndCostsOnlyYieldPlansThatReplayUnderTheirOwnLayouts() {
+        // The executability property over graphs that use all three additions: whatever solve() returns,
+        // with or without a cost model, is well-formed and replays craft by craft under its own layouts
+        // (a station held for every craft). shortfall() must also finish on these graphs.
+        java.util.Random random = new java.util.Random(0x5C13D00DL);
+        String[] raws = {"r0", "r1", "r2", "r3"};
+        String[] mids = {"m0", "m1", "m2"};
+        int[] yields = {1, 2, 3, 4, 9};
+        int trials = 2000;
+        int solved = 0;
+        int solvedWithStation = 0;
+        for (int trial = 0; trial < trials; trial++) {
+            recipes.clear();
+            remainders.clear();
+            if (random.nextBoolean()) {
+                recipes.add(TestRecipe.of("st_make", "st", 1 + random.nextInt(2),
+                        randomSlot(random, raws, mids, 0), randomSlot(random, raws, mids, 0)));
+            }
+            for (int m = 0; m < mids.length; m++) {
+                int variants = 1 + random.nextInt(2);
+                for (int v = 0; v < variants; v++) {
+                    String[] slots = new String[1 + random.nextInt(4)];
+                    int[] counts = new int[slots.length];
+                    for (int s = 0; s < slots.length; s++) {
+                        slots[s] = randomSlot(random, raws, mids, random.nextInt(8) == 0 ? m + 1 : m);
+                        counts[s] = random.nextInt(5) == 0 ? 2 : 1;
+                    }
+                    TestRecipe recipe = TestRecipe.of(mids[m] + "_" + v, mids[m],
+                            yields[random.nextInt(yields.length)], slots).withSlotCounts(counts);
+                    recipes.add(random.nextInt(4) == 0 ? recipe.withStation("st") : recipe);
+                }
+            }
+            String[] targetSlots = new String[1 + random.nextInt(4)];
+            int[] targetCounts = new int[targetSlots.length];
+            for (int s = 0; s < targetSlots.length; s++) {
+                targetSlots[s] = randomSlot(random, raws, mids, mids.length);
+                targetCounts[s] = random.nextInt(5) == 0 ? 2 : 1;
+            }
+            TestRecipe target = TestRecipe.of("TARGET", "TARGET", 1, targetSlots).withSlotCounts(targetCounts);
+            if (random.nextInt(3) == 0) {
+                target = target.withStation("st");
+            }
+            Map<String, Integer> held = new HashMap<>();
+            for (String raw : raws) {
+                if (random.nextInt(3) > 0) {
+                    held.put(raw, random.nextInt(11));
+                }
+            }
+            if (random.nextInt(4) == 0) {
+                held.put("st", 1 + random.nextInt(2));
+            }
+            MapCosts costs = new MapCosts();
+            for (String raw : raws) {
+                if (random.nextInt(8) != 0) {
+                    costs.gather(raw, 1 + random.nextInt(9));
+                }
+            }
+            for (String mid : mids) {
+                if (random.nextInt(4) == 0) {
+                    costs.gather(mid, 1 + random.nextInt(9));
+                }
+            }
+            if (random.nextInt(3) == 0) {
+                costs.gather("st", 1 + random.nextInt(9));
+            }
+            for (TestRecipe recipe : recipes) {
+                costs.recipe(recipe.id(), random.nextInt(4));
+            }
+            for (int withCosts = 0; withCosts < 2; withCosts++) {
+                RecipeGraphSolver<String, String> solver = withCosts == 0 ? solver() : solver(costs);
+                String context = "trial " + trial + (withCosts == 0 ? " (no costs)" : " (costs)") + ": target "
+                        + expandedSlots(target) + " station " + target.station() + ", recipes " + describe(recipes)
+                        + ", held " + held;
+                RecipeGraphSolver.ShortfallResult<String> shortfall = solver.shortfall(target, held);
+                assertTrue(shortfall.demandsLong().values().stream().allMatch(count -> count > 0), context);
+                Result<String, String> result = solver.solve(target, held);
+                if (!(result instanceof Result.Success)) {
+                    continue;
+                }
+                Result.Success<String, String> success = (Result.Success<String, String>) result;
+                solved++;
+                for (PlannedStep<String> step : success.steps()) {
+                    if (byId(target, step.recipeId()).station() != null) {
+                        solvedWithStation++;
+                        break;
+                    }
+                }
+                assertEquals(null, layoutInvariants(target, success.steps(), success.layouts()),
+                        context + " has malformed layouts " + success.layouts());
+                assertEquals(null, replayLayoutsCraftByCraft(target, success.steps(), success.layouts(), held),
+                        context + ": plan " + success.steps() + " does not replay under " + success.layouts());
+            }
+        }
+        assertTrue(solved >= trials / 5, "only " + solved + " solves in " + 2 * trials + " random runs");
+        assertTrue(solvedWithStation >= trials / 20, "only " + solvedWithStation + " plans involved a station");
     }
 }

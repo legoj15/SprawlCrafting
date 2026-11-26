@@ -58,6 +58,25 @@ import java.util.function.UnaryOperator;
  *   <li>Candidate recipes for a missing item are tried in the order supplied by
  *       {@code producers}; the first supplies as much as it can, the next covers the rest
  *       (deterministic).</li>
+ *   <li>With a {@link CostModel} (the constructor that takes one) the cost model orders choices and
+ *       never makes a target fail that the same stock can make without one. In a plan, producers
+ *       are tried cheapest first and, once stock has been drawn across a slot's alternatives in the
+ *       caller's order, what is missing is crafted from the cheapest alternative first; anything
+ *       that costs {@link CostModel#UNOBTAINABLE} is tried last, not dropped, and ties keep the
+ *       caller's order. The passes are a greedy search, so where that order finds no plan the
+ *       caller's order is tried before the failure stands. In {@link #shortfall}, what stock can
+ *       make is credited first; only the rest is costed: an item no dearer to gather than to craft
+ *       is listed to gather, otherwise its cheapest producer is expanded, and a slot's remainder goes
+ *       to its cheapest alternative, raw or crafted (an unobtainable one only when every one is,
+ *       then in the caller's order). Every plan is checked by the same replay, so a cost model
+ *       changes which valid plan is found, never whether a returned plan is valid; see
+ *       {@link #unitCost}.</li>
+ *   <li>A recipe with a {@link RecipeInfo#station() station} needs one unit of it in stock when its
+ *       step runs (crafted first if it is not): the unit is not consumed, however many crafts the
+ *       step batches, and a later step at the same station needs no second one. While the step is
+ *       planned that unit is reserved: no ingredient draw below it may take it, but a sub-craft at
+ *       the same station runs on it (the rule is stated on {@code Solve#reserve}).</li>
+ *   <li>A slot with a {@link RecipeInfo#ingredientSlotCount quantity} above 1 is that many slots.</li>
  *   <li>A batch that cannot be completed is undone and re-resolved smaller — at the count its
  *       short slot actually supplied, then (if an earlier slot may have competed for it) at one
  *       craft — so no sub-craft is planned whose output the batch would then not consume; the
@@ -109,6 +128,44 @@ public final class RecipeGraphSolver<R, K> {
          */
         default List<List<K>> craftableIngredientSlots() {
             return ingredientSlots();
+        }
+
+        /**
+         * How many items of its alternatives the slot at {@code slot} takes (indexed like
+         * {@link #ingredientSlots()}): machine recipes take a stack in one slot where vanilla crafting
+         * always takes one, which is the default.
+         *
+         * <p>A slot with quantity {@code q} behaves exactly as {@code q} consecutive copies of that
+         * slot: each copy may be filled from a different alternative, a plan's
+         * {@link SlotLayout} lists the slot {@code q} times, and {@link #craftableIngredientSlots()}
+         * keeps its meaning per slot (it is still one list per slot, not per copy). A slot listed
+         * empty is dropped before its quantity is read. A value below 1 is an
+         * {@link IllegalArgumentException} the first time the solver (or {@link PlanSimulator})
+         * reads the recipe.
+         */
+        default int ingredientSlotCount(int slot) {
+            return 1;
+        }
+
+        /**
+         * The place this recipe runs (a furnace, a crafting table, a machine), or null when it needs
+         * none. A station is needed while the recipe runs and is NOT consumed, however many crafts a
+         * step batches: before the first step of such a recipe is recorded the solver needs one unit
+         * of this item in stock, taken from stock or crafted through the station item's own
+         * producers like any ingredient (so the step that crafts it comes earlier in the plan). The
+         * unit is back in stock after the step, so a later step with the same station needs no second
+         * one, and a later recipe may consume it as an ordinary ingredient. A station that is neither
+         * in stock nor craftable makes the recipe unusable on that branch, exactly like a missing
+         * ingredient, and {@link Result.Failure#missing()} may name it.
+         *
+         * <p>A caller that has a station standing in the world represents it as stock of this item;
+         * placing or reaching it is not the solver's concern. While a step runs the station unit is
+         * held: if the same recipe also consumes the station item as an ingredient, the plan needs
+         * one more unit than the ingredient takes. A sub-craft for the step that runs at the same
+         * station needs no second unit: it runs on the one the step will stand on.
+         */
+        default K station() {
+            return null;
         }
 
         K result();
@@ -236,7 +293,8 @@ public final class RecipeGraphSolver<R, K> {
      * Net raw-gatherable demand from a {@link #shortfall} query.
      *
      * <p>{@link #demandsLong()} is the exact (saturating) count: leaf items (those with no usable
-     * producer recipe — the true gatherables) mapped to the count the player must acquire, keyed
+     * producer recipe — the true gatherables — or that a {@link CostModel} says to gather rather than
+     * craft) mapped to the count the player must acquire, keyed
      * by the representative alternative that was chosen. Deep compression trees legitimately need
      * more than {@link Integer#MAX_VALUE} of a raw; {@link #demands()} is the legacy int view with
      * each count clamped to {@link Integer#MAX_VALUE}.
@@ -312,7 +370,9 @@ public final class RecipeGraphSolver<R, K> {
 
     /**
      * @param producers   recipes that produce a given item, in deterministic preference order
-     * @param remainder   what consuming one of an item leaves behind (empty bucket), or null
+     * @param remainder   what consuming one of an item leaves behind (empty bucket; the function may
+     *                    return null for an item that leaves nothing), or null for a recipe set whose
+     *                    crafts leave nothing behind at all
      * @param maxDepth    recursion backstop on the recipe tree depth
      * @param maxAttempts resolver node visits (one recipe resolved for one batch size) allowed per
      *                    planning pass before aborting — bounds worst-case backtracking on hostile
@@ -337,11 +397,53 @@ public final class RecipeGraphSolver<R, K> {
                              int maxDepth,
                              int maxAttempts,
                              int maxSteps) {
+        this(producers, remainder, maxDepth, maxAttempts, maxSteps, null);
+    }
+
+    /**
+     * @param costModel what items cost to gather, or null for the default rule (producers and slot
+     *                  alternatives in the caller's order); see {@link CostModel} and
+     *                  {@link #unitCost}
+     */
+    public RecipeGraphSolver(Function<K, List<? extends RecipeInfo<R, K>>> producers,
+                             UnaryOperator<K> remainder,
+                             int maxDepth,
+                             int maxAttempts,
+                             int maxSteps,
+                             CostModel<R, K> costModel) {
         this.maxSteps = maxSteps;
         this.producers = producers;
         this.remainder = remainder;
         this.maxDepth = maxDepth;
         this.maxAttempts = maxAttempts;
+        this.costs = costModel == null ? null : new UnitCosts<>(costModel, producers, maxDepth);
+    }
+
+    /** The unit costs derived from the caller's cost model, or null for the default rule. */
+    private final UnitCosts<R, K> costs;
+
+    /**
+     * What one unit of {@code item} costs to obtain under this solver's {@link CostModel}: the smaller
+     * of its {@link CostModel#gatherCost gather cost} and the cheapest way to craft it, where a recipe
+     * costs {@code (recipeCost + for each slot its quantity x the cheapest alternative's unit cost +
+     * the station's unit cost) / resultCount}, rounded up, or {@link CostModel#UNOBTAINABLE}, each
+     * ingredient priced with one recipe less left of {@code maxDepth} (the exact recurrence is on
+     * {@code UnitCosts}). This is the figure behind every choice the cost model orders (see the class
+     * doc), exposed so a caller can explain one. It is a pure function of the item, the producers, the
+     * cost model and {@code maxDepth}: the same in any query order and from any thread. It is derived
+     * once and kept: stock is not known here, and a station the caller already owns makes a recipe
+     * cheaper in practice than its unit cost says (that refinement is left out on purpose; the station
+     * is counted in full). An unobtainable figure orders a choice last; it never removes one. A recipe
+     * chain longer than {@code maxDepth} recipes is unobtainable, and so is a cycle with no way in
+     * from outside the recipe graph.
+     *
+     * @throws IllegalStateException when the solver was built without a cost model
+     */
+    public long unitCost(K item) {
+        if (costs == null) {
+            throw new IllegalStateException("this solver has no cost model");
+        }
+        return costs.unit(item);
     }
 
     /** Default {@code maxSteps}: 16384 steps. */
@@ -575,13 +677,38 @@ public final class RecipeGraphSolver<R, K> {
      *       {@link SlotAssignment}, which cannot look ahead — the layouts carry its choice.</li>
      * </ol>
      *
+     * With a {@link CostModel} the passes run in its order first and, only when they find no plan,
+     * again in the caller's order (see the class doc).
+     *
      * @param capInt cap a recorded batch at {@link Integer#MAX_VALUE} crafts, the trigger that
      *               routes an int-scale tree to the quantity path (see {@code planByQuantity});
      *               the quantity path's own passes record their batches uncapped
      */
     private Plan<R, K> plan(RecipeInfo<R, K> target, Map<K, Long> held, boolean capInt, boolean longSteps) {
+        Plan<R, K> plan = plan(target, held, capInt, longSteps, costs != null);
+        if (plan.steps == null && costs != null) {
+            // The passes are a greedy search, so the order a cost model imposes can walk into a dead end
+            // the caller's order avoids (a cheaper producer's first slot takes stock another branch needs).
+            // A cost model only orders choices: it must never make a target fail that the caller's order
+            // can make, so that order gets its turn before the failure stands.
+            Plan<R, K> callerOrder = plan(target, held, capInt, longSteps, false);
+            if (callerOrder.steps != null) {
+                return callerOrder;
+            }
+        }
+        return plan;
+    }
+
+    /**
+     * {@link #plan}'s passes with one order of choices.
+     *
+     * @param costOrder try producers and slot alternatives in the cost model's order (false: the
+     *                  caller's order, the only one without a cost model)
+     */
+    private Plan<R, K> plan(RecipeInfo<R, K> target, Map<K, Long> held, boolean capInt, boolean longSteps,
+                            boolean costOrder) {
         List<Step<R, K>> steps = new ArrayList<>();
-        Solve batched = new Solve(true, true, false, capInt);
+        Solve batched = new Solve(true, true, false, capInt, costOrder);
         boolean batchedRejected = false;
         if (batched.craft(target, 1, new UndoMap<>(held), steps, new HashSet<K>(), 0) == 1) {
             if (replays(steps, held)) {
@@ -590,7 +717,7 @@ public final class RecipeGraphSolver<R, K> {
             batchedRejected = true;
         }
         steps.clear();
-        Solve unitwise = new Solve(false, true, false, capInt);
+        Solve unitwise = new Solve(false, true, false, capInt, costOrder);
         boolean unitwiseRejected = false;
         if (unitwise.craft(target, 1, new UndoMap<>(held), steps, new HashSet<K>(), 0) == 1) {
             if (replays(steps, held)) {
@@ -608,7 +735,7 @@ public final class RecipeGraphSolver<R, K> {
         boolean clipped = batched.clipped || unitwise.clipped;
         if (batchedRejected || unitwiseRejected || batched.contention || unitwise.contention) {
             steps.clear();
-            Solve exact = new Solve(false, true, true, capInt);
+            Solve exact = new Solve(false, true, true, capInt, costOrder);
             boolean exactRejected = false;
             if (exact.craft(target, 1, new UndoMap<>(held), steps, new HashSet<K>(), 0) == 1) {
                 if (replays(steps, held)) {
@@ -623,7 +750,7 @@ public final class RecipeGraphSolver<R, K> {
         }
         boolean budgetExceeded = noCleanFailure && anyBudget;
         if (capInt && (budgetExceeded || clipped)) {
-            return planByQuantity(target, held, missing, longSteps);
+            return planByQuantity(target, held, missing, longSteps, costOrder);
         }
         return new Plan<>(null, missing, budgetExceeded);
     }
@@ -647,13 +774,13 @@ public final class RecipeGraphSolver<R, K> {
      * @param missing the budgeted passes' missing set, kept when the probe has nothing better
      */
     private Plan<R, K> planByQuantity(RecipeInfo<R, K> target, Map<K, Long> held, Set<K> missing,
-                                      boolean longSteps) {
+                                      boolean longSteps, boolean costOrder) {
         // First with every re-ask: a generating cycle (one i1 makes three i0, one i0 makes one i1)
         // only reaches its count by asking again after a batch that shrank. Where that probe runs
         // out of budget chasing leftovers, the one that skips futile re-asks answers instead.
-        Solve probe = probe(target, held, false);
+        Solve probe = probe(target, held, false, costOrder);
         if (probe == null) {
-            probe = probe(target, held, true);
+            probe = probe(target, held, true, costOrder);
         }
         if (probe == null) {
             return new Plan<>(null, missing, true);
@@ -668,7 +795,7 @@ public final class RecipeGraphSolver<R, K> {
                     : new Plan<>(null, new LinkedHashSet<>(probe.missing), false);
         }
         List<Step<R, K>> steps = new ArrayList<>();
-        Solve guided = new Solve(true, true, false, !longSteps);
+        Solve guided = new Solve(true, true, false, !longSteps, costOrder);
         guided.quantityFree = true;
         guided.allowed = Collections.newSetFromMap(new IdentityHashMap<RecipeInfo<R, K>, Boolean>());
         guided.allowed.addAll(probe.used);
@@ -682,8 +809,8 @@ public final class RecipeGraphSolver<R, K> {
      * One probe run: null if it ran out of budget, else the pass, whose {@code used} lists the
      * recipes of a plan, or is null when the target cannot be made.
      */
-    private Solve probe(RecipeInfo<R, K> target, Map<K, Long> held, boolean skipFutileReasks) {
-        Solve probe = new Solve(true, true, false, false);
+    private Solve probe(RecipeInfo<R, K> target, Map<K, Long> held, boolean skipFutileReasks, boolean costOrder) {
+        Solve probe = new Solve(true, true, false, false, costOrder);
         probe.quantityFree = true;
         probe.skipFutileReasks = skipFutileReasks;
         probe.used = new ArrayList<>();
@@ -703,13 +830,44 @@ public final class RecipeGraphSolver<R, K> {
     private boolean replays(List<Step<R, K>> steps, Map<K, Long> held) {
         UndoMap<K, Long> inv = new UndoMap<>(held);
         for (Step<R, K> step : steps) {
+            K station = step.recipe.station();
+            if (station != null && !hold(inv, station)) {
+                return false;
+            }
             for (SlotLayout<K> run : step.runs) {
                 if (!applyRun(step.recipe, run, inv)) {
                     return false;
                 }
             }
+            if (station != null) {
+                release(inv, station);
+            }
         }
         return true;
+    }
+
+    /**
+     * Takes one unit of a recipe's station out of {@code inv} while the step runs (false: there is
+     * none): the station stands for the crafts and is not consumed, but it is not there for the
+     * recipe to eat either, so a recipe that also lists it as an ingredient needs one unit more.
+     * {@link #release} puts it back.
+     */
+    static <T> boolean hold(UndoMap<T, Long> inv, T station) {
+        long have = count(inv, station);
+        if (have < 1) {
+            return false;
+        }
+        if (have == 1) {
+            inv.remove(station);
+        } else {
+            inv.put(station, have - 1);
+        }
+        return true;
+    }
+
+    /** Puts back the unit {@link #hold} took. */
+    static <T> void release(UndoMap<T, Long> inv, T station) {
+        addTo(inv, station, 1);
     }
 
     /**
@@ -850,6 +1008,12 @@ public final class RecipeGraphSolver<R, K> {
      * {@link Result.Failure#missing}). The walk credits whatever can be crafted from stock (the same
      * batched search {@link #solve} uses) and commits to the first producer per item that does not
      * loop back through a craft cycle for the rest.
+     * A recipe's {@link RecipeInfo#station() station} is demanded like an ingredient, once however many
+     * crafts the step batches and once for every recipe that shares it (nothing when it is in stock).
+     * With a {@link CostModel} what stock can make is still credited first; only the rest is costed:
+     * the cheapest alternative of a slot is gathered, raw or crafted, where this walk otherwise
+     * prefers a raw one, and an item no dearer to gather than to craft is listed instead of its
+     * ingredients.
      * Its list is then checked against the planner itself: if the target is already solvable the
      * answer is empty; if holding the listed items would still not make it solvable, up to
      * {@value #TOP_UP_ROUNDS} further walks over the topped-up inventory add what the planner's own
@@ -914,7 +1078,7 @@ public final class RecipeGraphSolver<R, K> {
 
     /** One shortfall walk over {@code held}: leaf demands, their alternatives, and the caveat flag. */
     private Walk<K> walk(RecipeInfo<R, K> target, Map<K, Long> held) {
-        Solve solve = new Solve(true, false, false, false);
+        Solve solve = new Solve(true, false, false, false, costs != null);
         solve.virtual = new UndoMap<>(held);
         solve.shortfall = new UndoMap<>(new HashMap<K, Long>());
         solve.alts = new UndoMap<>(new HashMap<K, List<K>>());
@@ -922,6 +1086,9 @@ public final class RecipeGraphSolver<R, K> {
             // Nothing is mid-craft at the top, so no cycle hit can come back here (every hit set is a
             // subset of the chain being crafted).
             solve.requireSlot(group, group.count, new HashSet<K>(), 0);
+        }
+        if (target.station() != null) {
+            solve.requireStation(target.station(), new HashSet<K>(), 0);
         }
         return new Walk<>(solve.shortfall.copy(), solve.alts.copy(), solve.approximate || solve.budgetHit);
     }
@@ -958,6 +1125,12 @@ public final class RecipeGraphSolver<R, K> {
         final List<T> craftable;
         final List<Integer> slotIndexes = new ArrayList<>();
         long count;
+        /** With a cost model, set once {@link Solve#costGroup} has ordered the alternatives. */
+        boolean costed;
+        /** The obtainable alternatives by ascending unit cost; null: none is obtainable. */
+        List<T> obtainableByCost;
+        /** The craftable alternatives by ascending unit cost, unobtainable ones last. */
+        List<T> craftableByCost;
 
         Group(List<T> alternatives, List<T> craftable) {
             this.alternatives = alternatives;
@@ -978,6 +1151,8 @@ public final class RecipeGraphSolver<R, K> {
         final boolean exact;
         /** Cap a recorded batch at Integer.MAX_VALUE crafts; see {@link #plan}'s {@code capInt}. */
         final boolean capInt;
+        /** Order producers and slot alternatives by the cost model (false: the caller's order). */
+        final boolean costOrder;
         /**
          * Set when a slot group came up short on an item a different group had taken this pass: the
          * failure may be an artifact of which group took it first, so the exact pass is worth a try.
@@ -1019,17 +1194,25 @@ public final class RecipeGraphSolver<R, K> {
          */
         boolean approximate = false;
         private final Map<RecipeInfo<R, K>, List<Group<K>>> groupCache = new IdentityHashMap<>();
+        /**
+         * Station reservations ({@link #reserve}): per station item, how many steps being planned stand on
+         * it. Not journaled: every reservation ends on the way out of the call that started it.
+         */
+        private final Map<K, Integer> reserved = new HashMap<>();
+        /** The exact pass's short slot kinds as groups, so a cost order is computed once per kind. */
+        private final Map<List<List<K>>, Group<K>> exactGroups = new HashMap<>();
 
         // Shortfall walk state (null during a plain solve).
         UndoMap<K, Long> virtual;
         UndoMap<K, Long> shortfall;
         UndoMap<K, List<K>> alts;
 
-        Solve(boolean batched, boolean creditRemainders, boolean exact, boolean capInt) {
+        Solve(boolean batched, boolean creditRemainders, boolean exact, boolean capInt, boolean costOrder) {
             this.batched = batched;
             this.creditRemainders = creditRemainders;
             this.exact = exact;
             this.capInt = capInt;
+            this.costOrder = costOrder;
         }
 
         /** Undoes the steps (and probe trace) recorded since the marks; see {@link #quantityFree}. */
@@ -1064,18 +1247,16 @@ public final class RecipeGraphSolver<R, K> {
             if (cached != null) {
                 return cached;
             }
-            List<List<K>> slots = recipe.ingredientSlots();
-            List<List<K>> craftableSlots = recipe.craftableIngredientSlots();
+            // The slots a craft fills: blank cells dropped, a slot with a quantity repeated (the one
+            // reading of a recipe's slots, shared with PlanSimulator); the craftable subset aligned 1:1,
+            // falling back to the full slot if an adapter under-supplies.
+            List<List<K>> slots = PlanSimulator.expand(recipe, recipe.ingredientSlots());
+            List<List<K>> craftableSlots = PlanSimulator.expand(recipe, recipe.craftableIngredientSlots());
             List<Group<K>> groups = new ArrayList<>();
             Map<List<List<K>>, Group<K>> byKey = new HashMap<>();
-            int nonEmpty = 0;
             for (int s = 0; s < slots.size(); s++) {
                 List<K> slot = slots.get(s);
-                if (slot.isEmpty()) {
-                    continue;
-                }
-                // Aligned 1:1 by contract; fall back to the full slot if an adapter under-supplies.
-                List<K> craftable = s < craftableSlots.size() ? craftableSlots.get(s) : slot;
+                List<K> craftable = craftableSlots.get(s);
                 Group<K> group = null;
                 List<List<K>> key = null;
                 if (batched) {
@@ -1090,7 +1271,7 @@ public final class RecipeGraphSolver<R, K> {
                     }
                 }
                 group.count++;
-                group.slotIndexes.add(nonEmpty++);
+                group.slotIndexes.add(s);
             }
             groupCache.put(recipe, groups);
             return groups;
@@ -1148,74 +1329,97 @@ public final class RecipeGraphSolver<R, K> {
                 }
                 int shortGroup = -1;
                 long supplied = 0;
-                for (int i = 0; i < groups.size(); i++) {
-                    Group<K> group = groups.get(i);
-                    long need = satMul(size, group.count);
-                    long got = satisfySlot(group, need, inv, steps, crafting, depth, consumed, groupUse.get(i));
-                    if (got < need) {
-                        missing.add(group.alternatives.get(0));
-                        for (K item : group.alternatives) {
-                            Group<K> taker = firstTaker.get(item);
-                            if (taker != null && taker != group) {
-                                contention = true;
-                                if (taker.alternatives.size() > 1 || group.alternatives.size() > 1) {
-                                    choiceContention = true;
+                K station = recipe.station();
+                if (station != null) {
+                    // Made first when absent, then reserved before any slot is filled (see #reserve): a slot
+                    // that also accepts the station item takes another alternative rather than the one unit
+                    // the step needs standing, and a sub-craft at the same station shares that unit.
+                    if (!acquireStation(station, inv, steps, crafting, depth)) {
+                        // A smaller batch needs the station just the same: this recipe is unusable here.
+                        if (!budgetHit) {
+                            missing.add(station);
+                        }
+                        inv.rollback(invMark);
+                        discard(steps, stepMark, usedMark);
+                        return 0;
+                    }
+                    reserve(station);
+                }
+                try {
+                    for (int i = 0; i < groups.size(); i++) {
+                        Group<K> group = groups.get(i);
+                        long need = satMul(size, group.count);
+                        long got = satisfySlot(group, need, inv, steps, crafting, depth, consumed, groupUse.get(i));
+                        if (got < need) {
+                            missing.add(group.alternatives.get(0));
+                            for (K item : group.alternatives) {
+                                Group<K> taker = firstTaker.get(item);
+                                if (taker != null && taker != group) {
+                                    contention = true;
+                                    if (taker.alternatives.size() > 1 || group.alternatives.size() > 1) {
+                                        choiceContention = true;
+                                    }
+                                }
+                            }
+                            shortGroup = i;
+                            supplied = got / group.count;
+                            break;
+                        }
+                    }
+                    if (shortGroup < 0 && quantityFree && steps != null && steps.size() >= maxSteps) {
+                        tooLong = true;
+                        budgetHit = true;
+                        inv.rollback(invMark);
+                        discard(steps, stepMark, usedMark);
+                        return 0;
+                    }
+                    if (shortGroup < 0) {
+                        // The station was never taken out of stock: the reservation ends with this step (finally).
+                        if (steps != null) {
+                            steps.add(new Step<>(recipe, size, layoutRuns(size, groups, groupUse)));
+                            if (quantityFree) {
+                                attemptsLeft++;
+                            }
+                        }
+                        if (used != null) {
+                            used.add(recipe);
+                        }
+                        addTo(inv, recipe.result(), satMul(size, recipe.resultCount()));
+                        // Remainders of consumed items physically reappear when this step executes.
+                        boolean freed = false;
+                        if (creditRemainders && remainder != null) {
+                            for (Map.Entry<K, Long> entry : consumed.entrySet()) {
+                                K leftBehind = remainder.apply(entry.getKey());
+                                if (leftBehind != null) {
+                                    addTo(inv, leftBehind, entry.getValue());
+                                    freed = true;
                                 }
                             }
                         }
-                        shortGroup = i;
-                        supplied = got / group.count;
-                        break;
+                        exhausted = shrunk && !freed;
+                        return size;
                     }
-                }
-                if (shortGroup < 0 && quantityFree && steps != null && steps.size() >= maxSteps) {
-                    tooLong = true;
-                    budgetHit = true;
                     inv.rollback(invMark);
                     discard(steps, stepMark, usedMark);
-                    return 0;
-                }
-                if (shortGroup < 0) {
-                    if (steps != null) {
-                        steps.add(new Step<>(recipe, size, layoutRuns(size, groups, groupUse)));
-                        if (quantityFree) {
-                            attemptsLeft++;
-                        }
+                    if (shortGroup > 0) {
+                        contended = true;
                     }
-                    if (used != null) {
-                        used.add(recipe);
+                    if (budgetHit) {
+                        return 0;
                     }
-                    addTo(inv, recipe.result(), satMul(size, recipe.resultCount()));
-                    // Remainders of consumed items physically reappear when this step executes.
-                    boolean freed = false;
-                    if (creditRemainders) {
-                        for (Map.Entry<K, Long> entry : consumed.entrySet()) {
-                            K leftBehind = remainder.apply(entry.getKey());
-                            if (leftBehind != null) {
-                                addTo(inv, leftBehind, entry.getValue());
-                                freed = true;
-                            }
-                        }
+                    shrunk = true;
+                    if (supplied > 0) {
+                        size = supplied; // strictly smaller: got < need
+                    } else if (contended && size > 1 && !triedSingle) {
+                        size = 1;
+                        triedSingle = true;
+                    } else {
+                        return 0;
                     }
-                    exhausted = shrunk && !freed;
-                    return size;
-                }
-                inv.rollback(invMark);
-                discard(steps, stepMark, usedMark);
-                if (shortGroup > 0) {
-                    contended = true;
-                }
-                if (budgetHit) {
-                    return 0;
-                }
-                shrunk = true;
-                if (supplied > 0) {
-                    size = supplied; // strictly smaller: got < need
-                } else if (contended && size > 1 && !triedSingle) {
-                    size = 1;
-                    triedSingle = true;
-                } else {
-                    return 0;
+                } finally {
+                    if (station != null) {
+                        unreserve(station); // every exit: emitted, undone, out of budget, or retried smaller
+                    }
                 }
             }
         }
@@ -1241,7 +1445,7 @@ public final class RecipeGraphSolver<R, K> {
                 if (got >= need) {
                     return got;
                 }
-                long n = take(item, need - got, inv, consumed);
+                long n = draw(item, need - got, inv, consumed);
                 if (n > 0) {
                     use.merge(item, n, RecipeGraphSolver::satAdd);
                 }
@@ -1250,12 +1454,12 @@ public final class RecipeGraphSolver<R, K> {
             // Only craft an alternative whose crafted (bare) form would actually satisfy the slot:
             // a filled-bucket alternative is matchable from stock above but never manufactured here
             // (crafting the bucket yields it empty, which the ingredient rejects).
-            for (K item : group.craftable) {
+            for (K item : craftOrder(group)) {
                 if (got >= need || budgetHit) {
                     break;
                 }
                 if (produce(item, need - got, inv, steps, crafting, depth + 1) > 0) {
-                    long n = take(item, need - got, inv, consumed);
+                    long n = draw(item, need - got, inv, consumed);
                     if (n > 0) {
                         use.merge(item, n, RecipeGraphSolver::satAdd);
                     }
@@ -1263,6 +1467,79 @@ public final class RecipeGraphSolver<R, K> {
                 }
             }
             return got;
+        }
+
+        /**
+         * Starts a reservation of one unit of {@code station} for a step being planned. The rule, the same
+         * in every pass that fills slots (batched, unitwise, exact, and so in the probe, the guided pass and
+         * the shortfall walk's stock search):
+         * <ul>
+         *   <li>while a step that needs station {@code S} is being planned, one unit of {@code S} is
+         *       reserved: it stays in the inventory, and no ingredient draw at any depth below that step
+         *       may take it ({@link #draw}, and {@link #withholdReserved} around the exact pass's replays,
+         *       see {@code count(S) - 1}). A recipe that also lists {@code S} as an ingredient therefore
+         *       needs a second unit, crafted if it can be;</li>
+         *   <li>a station check at any depth ({@link #acquireStation}) sees the unit, reserved or not, so a
+         *       sub-craft at the same station needs no second one. Steps nested at the same station share
+         *       the one standing unit: the reservations are counted per station but never withhold more
+         *       than one unit of it, however deep the nesting;</li>
+         *   <li>a station not in stock is crafted first, then reserved, then the slots are filled; the
+         *       reservation ends when the step is emitted or abandoned ({@link #unreserve} in a
+         *       {@code finally}, so budget exhaustion and every undo path end it too).</li>
+         * </ul>
+         * The unit is never taken out of stock, so the inventory's marks and rollbacks never have to undo a
+         * reservation; the step's own acceptance replay ({@link #replays}, like {@link PlanSimulator#replay})
+         * holds the unit for the step's crafts alone, which every plan built under this rule satisfies.
+         */
+        private void reserve(K station) {
+            reserved.merge(station, 1, Integer::sum);
+        }
+
+        /** Ends one {@link #reserve}. */
+        private void unreserve(K station) {
+            Integer holders = reserved.get(station);
+            if (holders == null || holders <= 1) {
+                reserved.remove(station);
+            } else {
+                reserved.put(station, holders - 1);
+            }
+        }
+
+        /**
+         * An ingredient draw: takes up to {@code max} of {@code item} like {@link #take}, but never the unit a
+         * step being planned stands on ({@link #reserve}): it sees {@code count - 1} of a reserved station.
+         */
+        private long draw(K item, long max, UndoMap<K, Long> inv, Map<K, Long> consumed) {
+            if (reserved.containsKey(item)) {
+                max = Math.min(max, count(inv, item) - 1);
+            }
+            return take(item, max, inv, consumed);
+        }
+
+        /**
+         * Takes the one reserved unit of every reserved station out of {@code inv}, for a
+         * {@link PlanSimulator#run} replay to see what an ingredient draw may take ({@link #reserve});
+         * {@link #restoreReserved} puts them back. Journaled in {@code inv}, so rolling back to a mark taken
+         * before this call undoes it too.
+         */
+        private List<K> withholdReserved(UndoMap<K, Long> inv) {
+            if (reserved.isEmpty()) {
+                return Collections.emptyList();
+            }
+            List<K> withheld = new ArrayList<>(reserved.size());
+            for (K station : reserved.keySet()) {
+                if (hold(inv, station)) {
+                    withheld.add(station);
+                }
+            }
+            return withheld;
+        }
+
+        /** Puts back what {@link #withholdReserved} took. */
+        private void restoreReserved(UndoMap<K, Long> inv, List<K> withheld) {
+            for (K station : withheld) {
+                release(inv, station);
+            }
         }
 
         /** Notes {@code group} as a taker of {@code item} (see {@link #contention}); returns {@code n}. */
@@ -1281,6 +1558,11 @@ public final class RecipeGraphSolver<R, K> {
          * (each of those crafts replayed the same way, so they physically take what the rule makes
          * them take) and the batch is replayed again, up to {@link #EXACT_ROUNDS} times. A batch that
          * still comes up short is undone and retried at the crafts that did complete, then at one.
+         *
+         * <p>A recipe's station is made first when absent (so its steps come earlier) and is reserved
+         * ({@link #reserve}) for the whole batch attempt, replays and sub-craft rounds alike: no draw
+         * can eat the standing unit, while a sub-craft at the same station runs on it. A missing station
+         * fails the recipe outright, at any batch size.
          */
         private long craftExact(RecipeInfo<R, K> recipe,
                                 long size,
@@ -1288,7 +1570,7 @@ public final class RecipeGraphSolver<R, K> {
                                 List<Step<R, K>> steps,
                                 Set<K> crafting,
                                 int depth) {
-            List<List<K>> craftableSlots = recipe.craftableIngredientSlots();
+            List<List<K>> craftable = PlanSimulator.expand(recipe, recipe.craftableIngredientSlots());
             boolean triedSingle = false;
             while (true) {
                 if (depth > maxDepth || !visit()) {
@@ -1298,22 +1580,50 @@ public final class RecipeGraphSolver<R, K> {
                 int stepMark = steps == null ? 0 : steps.size();
                 long complete = 0;
                 boolean done = false;
+                K station = recipe.station();
+                if (station != null) {
+                    // Reserved before any slot is filled and through every replay and sub-craft round (see
+                    // #reserve): neither the step's own slots nor a sub-craft for them can draw the standing
+                    // unit, and a sub-craft at the same station shares it.
+                    if (!acquireStation(station, inv, steps, crafting, depth)) {
+                        // No smaller batch helps: the station is missing, not the ingredients.
+                        if (!budgetHit) {
+                            missing.add(station);
+                        }
+                        inv.rollback(invMark);
+                        if (steps != null) {
+                            steps.subList(stepMark, steps.size()).clear();
+                        }
+                        return 0;
+                    }
+                    reserve(station);
+                }
                 List<PlanSimulator.Chunk<K>> chunks = null;
-                for (int round = 0; ; round++) {
-                    int replayMark = inv.mark();
-                    chunks = new ArrayList<>();
-                    PlanSimulator.Batch<K> replay = PlanSimulator.run(recipe, size, inv, remainder, false, chunks);
-                    if (!replay.isShort()) {
-                        done = true;
-                        break;
+                try {
+                    for (int round = 0; ; round++) {
+                        int replayMark = inv.mark();
+                        chunks = new ArrayList<>();
+                        // The replay's draws must not see a reserved unit either: it is held out for the replay
+                        // alone, and the rollback below undoes that with the replay.
+                        List<K> withheld = withholdReserved(inv);
+                        PlanSimulator.Batch<K> replay = PlanSimulator.run(recipe, size, inv, remainder, false, chunks);
+                        if (!replay.isShort()) {
+                            restoreReserved(inv, withheld);
+                            done = true;
+                            break;
+                        }
+                        complete = replay.completeBeforeShort;
+                        inv.rollback(replayMark);
+                        if (round == EXACT_ROUNDS || budgetHit) {
+                            break;
+                        }
+                        if (!subCraftShortages(replay, craftable, inv, steps, crafting, depth)) {
+                            break;
+                        }
                     }
-                    complete = replay.completeBeforeShort;
-                    inv.rollback(replayMark);
-                    if (round == EXACT_ROUNDS || budgetHit) {
-                        break;
-                    }
-                    if (!subCraftShortages(replay, craftable(recipe, craftableSlots), inv, steps, crafting, depth)) {
-                        break;
+                } finally {
+                    if (station != null) {
+                        unreserve(station); // before the step is recorded, or before the batch is undone
                     }
                 }
                 if (done) {
@@ -1343,23 +1653,9 @@ public final class RecipeGraphSolver<R, K> {
         }
 
         /**
-         * The craftable subset for each of the recipe's non-empty slots (aligned with
-         * {@link PlanSimulator#nonEmptySlots}); the full slot where the adapter under-supplies.
-         */
-        private List<List<K>> craftable(RecipeInfo<R, K> recipe, List<List<K>> craftableSlots) {
-            List<List<K>> slots = recipe.ingredientSlots();
-            List<List<K>> out = new ArrayList<>();
-            for (int s = 0; s < slots.size(); s++) {
-                if (!slots.get(s).isEmpty()) {
-                    out.add(s < craftableSlots.size() ? craftableSlots.get(s) : slots.get(s));
-                }
-            }
-            return out;
-        }
-
-        /**
          * Sub-crafts what a short replay lacked: per distinct slot kind (identical slots pooled), its
-         * missing units from the craftable alternatives in preference order.
+         * missing units from the craftable alternatives in the order {@link #satisfySlot} crafts them
+         * ({@link #craftOrder}): the caller's, or under the cost order cheapest first.
          *
          * @return whether anything was produced at all
          */
@@ -1379,7 +1675,12 @@ public final class RecipeGraphSolver<R, K> {
             boolean progress = false;
             for (Map.Entry<List<List<K>>, Long> entry : deficit.entrySet()) {
                 long need = entry.getValue();
-                for (K item : entry.getKey().get(1)) {
+                Group<K> kind = exactGroups.get(entry.getKey());
+                if (kind == null) {
+                    kind = new Group<>(entry.getKey().get(0), entry.getKey().get(1));
+                    exactGroups.put(entry.getKey(), kind);
+                }
+                for (K item : craftOrder(kind)) {
                     if (need <= 0 || budgetHit) {
                         break;
                     }
@@ -1394,6 +1695,94 @@ public final class RecipeGraphSolver<R, K> {
                 }
             }
             return progress;
+        }
+
+        /**
+         * The recipes a plan tries for {@code item}, in order: the caller's list, or with a cost model
+         * every producer cheapest per unit first, unobtainable ones last, ties in the caller's order.
+         * None is dropped for its cost: stock may hold what an unobtainable recipe needs.
+         */
+        private List<? extends RecipeInfo<R, K>> candidates(K item) {
+            return costOrder ? costs.producersByCost(item) : producers.apply(item);
+        }
+
+        /**
+         * The recipes the shortfall walk descends into for what stock cannot cover: the caller's list,
+         * or with a cost model the obtainable ones cheapest first (every one, in the caller's order,
+         * when none is obtainable).
+         */
+        private List<? extends RecipeInfo<R, K>> walkCandidates(K item) {
+            return costOrder ? costs.obtainableProducers(item) : producers.apply(item);
+        }
+
+        /**
+         * The station check: makes sure one unit of a recipe's station is in {@code inv}, crafting it
+         * through its own producers when it is not. It sees every unit, reserved or not ({@link #reserve}),
+         * so a step nested under another at the same station runs on the one standing unit. Nothing is
+         * taken: the caller reserves the unit while the recipe's slots are filled and records the recipe's
+         * step after this, so the station's steps come earlier in the plan.
+         *
+         * @return false when the station is neither in stock nor craftable (nothing is left changed)
+         */
+        private boolean acquireStation(K station, UndoMap<K, Long> inv, List<Step<R, K>> steps,
+                                       Set<K> crafting, int depth) {
+            return count(inv, station) >= 1 || produce(station, 1, inv, steps, crafting, depth + 1) >= 1;
+        }
+
+        /**
+         * Orders the group's distinct alternatives by ascending cost in this slot (its unit cost where
+         * crafting it would fill the slot, its gather cost where it can only be held), unobtainable
+         * ones last, ties in the caller's order. Only with a cost model; once per group.
+         */
+        private void costGroup(Group<K> group) {
+            if (group.costed) {
+                return;
+            }
+            group.costed = true;
+            List<K> order = new ArrayList<>(new LinkedHashSet<>(group.alternatives));
+            final Map<K, Long> cost = new HashMap<>();
+            for (K item : order) {
+                cost.put(item, costs.slotCost(item, group.craftable.contains(item)));
+            }
+            // Collections.sort is stable: equal costs keep the caller's order, UNOBTAINABLE sorts last.
+            Collections.sort(order, (a, b) -> Long.compare(cost.get(a), cost.get(b)));
+            int obtainable = 0;
+            while (obtainable < order.size() && cost.get(order.get(obtainable)) != CostModel.UNOBTAINABLE) {
+                obtainable++;
+            }
+            group.obtainableByCost = obtainable == 0 ? null : order.subList(0, obtainable);
+            List<K> craftable = new ArrayList<>(order.size());
+            for (K item : order) {
+                if (group.craftable.contains(item)) {
+                    craftable.add(item);
+                }
+            }
+            group.craftableByCost = craftable;
+        }
+
+        /**
+         * The group's obtainable alternatives, cheapest first, for the shortfall walk's remainder. Null
+         * with no cost model, or when no alternative is obtainable: today's order then stands and the
+         * first alternative is the one reported.
+         */
+        private List<K> obtainableByCost(Group<K> group) {
+            if (!costOrder) {
+                return null;
+            }
+            costGroup(group);
+            return group.obtainableByCost;
+        }
+
+        /**
+         * The craftable alternatives in the order sub-crafts are tried: the caller's, or with a cost
+         * model cheapest first, unobtainable ones last but still tried (stock may make them).
+         */
+        private List<K> craftOrder(Group<K> group) {
+            if (!costOrder) {
+                return group.craftable;
+            }
+            costGroup(group);
+            return group.craftableByCost;
         }
 
         /**
@@ -1421,7 +1810,7 @@ public final class RecipeGraphSolver<R, K> {
             long produced = 0;
             crafting.add(item);
             try {
-                for (RecipeInfo<R, K> candidate : producers.apply(item)) {
+                for (RecipeInfo<R, K> candidate : candidates(item)) {
                     int yield = candidate.resultCount();
                     if (yield <= 0 || !Objects.equals(candidate.result(), item)
                             || (allowed != null && !allowed.contains(candidate))) {
@@ -1500,6 +1889,10 @@ public final class RecipeGraphSolver<R, K> {
             if (left <= 0) {
                 return Collections.emptySet();
             }
+            List<K> cheapest = obtainableByCost(group);
+            if (cheapest != null) {
+                return requireCheapest(group, cheapest, left, crafting, depth);
+            }
             for (K item : group.alternatives) {
                 if (producers.apply(item).isEmpty()) {
                     require(item, left, group.alternatives, crafting, depth);
@@ -1551,6 +1944,78 @@ public final class RecipeGraphSolver<R, K> {
         }
 
         /**
+         * {@link #requireSlot} under a cost model, for what stock did not cover: what stock can make
+         * is credited first, from every craftable alternative whatever its cost (in the order a plan
+         * tries them, so the walk spends stock as the planner would), and only the rest is costed: it
+         * goes to the cheapest obtainable alternative whether that is a raw item or a crafted one, an
+         * alternative that would cycle back into the chain being undone for the next cheapest. This
+         * replaces "a raw alternative before a craftable one".
+         *
+         * @param order the group's obtainable alternatives, cheapest first ({@link #obtainableByCost})
+         */
+        private Set<K> requireCheapest(Group<K> group, List<K> order, long left, Set<K> crafting, int depth) {
+            for (K item : craftOrder(group)) {
+                if (left <= 0 || budgetHit) {
+                    break;
+                }
+                if (produce(item, left, virtual, null, crafting, depth + 1) > 0) {
+                    left -= take(item, left, virtual, null);
+                }
+            }
+            if (left <= 0) {
+                return Collections.emptySet();
+            }
+            Set<K> hits = null;
+            for (K item : order) {
+                if (!group.craftable.contains(item)) {
+                    // Only ever matched from stock, never made: the item itself is what to gather.
+                    recordLeaf(item, left, group.alternatives);
+                    return Collections.emptySet();
+                }
+                if (crafting.contains(item)) {
+                    hits = withAll(hits, Collections.singleton(item));
+                    continue;
+                }
+                int virtualMark = virtual.mark();
+                int shortfallMark = shortfall.mark();
+                int altsMark = alts.mark();
+                boolean approximateMark = approximate;
+                Set<K> itemHits = require(item, left, group.alternatives, crafting, depth);
+                if (itemHits.isEmpty()) {
+                    return itemHits;
+                }
+                virtual.rollback(virtualMark);
+                shortfall.rollback(shortfallMark);
+                alts.rollback(altsMark);
+                approximate = approximateMark;
+                hits = withAll(hits, itemHits);
+            }
+            if (hits != null) {
+                return hits;
+            }
+            recordLeaf(order.get(0), left, group.alternatives);
+            return Collections.emptySet();
+        }
+
+        /**
+         * Demands one unit of a recipe's station the way a slot of its own would be: from stock, else
+         * crafted, else gathered. A station is not consumed, so the unit is back in the walk's stock
+         * afterwards and a later recipe at the same station asks for nothing: its leaves are counted
+         * once, however many crafts the step batches.
+         *
+         * @return as {@link #requireSlot}: the chain items the station could only be had through
+         */
+        Set<K> requireStation(K station, Set<K> crafting, int depth) {
+            Group<K> group = new Group<>(Collections.singletonList(station), Collections.singletonList(station));
+            group.count = 1;
+            Set<K> hits = requireSlot(group, 1, crafting, depth);
+            if (hits.isEmpty()) {
+                addTo(virtual, station, 1);
+            }
+            return hits;
+        }
+
+        /**
          * Accumulates the leaf demand to obtain {@code qty} of {@code item}: consume stock first,
          * then either sub-craft one batch via a producer (recording the sub-recipe's own leaf
          * demands and crediting the overproduction back) or, if the item has no usable producer,
@@ -1583,10 +2048,15 @@ public final class RecipeGraphSolver<R, K> {
             // Usable producers in order (deterministic — CraftPlanner sorts by id). None at all means
             // it bottoms out as a gatherable.
             boolean expandable = false;
-            for (RecipeInfo<R, K> candidate : producers.apply(item)) {
-                if (candidate.resultCount() > 0) {
-                    expandable = true;
-                    break;
+            List<? extends RecipeInfo<R, K>> candidates = walkCandidates(item);
+            // With a cost model, what stock could make was credited before this remainder was asked
+            // for, so gathering may now beat crafting it.
+            if (!costOrder || !costs.isLeaf(item)) {
+                for (RecipeInfo<R, K> candidate : candidates) {
+                    if (candidate.resultCount() > 0) {
+                        expandable = true;
+                        break;
+                    }
                 }
             }
             if (!expandable) {
@@ -1596,7 +2066,7 @@ public final class RecipeGraphSolver<R, K> {
             Set<K> hits = null;
             crafting.add(item);
             try {
-                for (RecipeInfo<R, K> producer : producers.apply(item)) {
+                for (RecipeInfo<R, K> producer : candidates) {
                     if (producer.resultCount() <= 0) {
                         continue;
                     }
@@ -1618,6 +2088,12 @@ public final class RecipeGraphSolver<R, K> {
                         if (!groupHits.isEmpty()) {
                             producerHits = groupHits;
                             break;
+                        }
+                    }
+                    if (producerHits == null && producer.station() != null) {
+                        Set<K> stationHits = requireStation(producer.station(), crafting, depth + 1);
+                        if (!stationHits.isEmpty()) {
+                            producerHits = stationHits;
                         }
                     }
                     if (producerHits == null) {

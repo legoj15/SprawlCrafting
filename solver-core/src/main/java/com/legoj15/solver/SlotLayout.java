@@ -8,7 +8,8 @@ import java.util.Objects;
 /**
  * One run of a planned step's per-slot item choice: the next {@link #crafts()} crafts of that step
  * put {@code items().get(i)} into non-empty slot {@code i} of the recipe — the order of
- * {@code RecipeInfo.ingredientSlots()} with blank cells removed (the order
+ * {@code RecipeInfo.ingredientSlots()} with blank cells removed and a slot of quantity {@code q}
+ * (see {@code RecipeInfo.ingredientSlotCount}) listed {@code q} times (the order
  * {@code PlanSimulator.nonEmptySlots(recipe)} returns), which is what {@link SlotAssignment#assign}
  * is handed too. Every entry is one of that slot's alternatives; the solver's passes decide the
  * items when they plan, so an executor that follows the layouts never re-decides and eats stock a

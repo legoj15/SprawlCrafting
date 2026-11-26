@@ -425,6 +425,69 @@ class DepthFirstScheduleTest {
         }
     }
 
+    /**
+     * A step that runs at a station the plan itself crafts: the station's step must run before the first
+     * craft that needs it, once, and the station is not consumed (the model keeps the one unit), so every
+     * later batch at it runs without crafting another.
+     */
+    @Test
+    void aStepWaitsForItsStationAndDoesNotUseItUp() {
+        // step0: 2 d -> bench; step1: a -> b at the bench (5 crafts); step2: 5 b -> target at the bench.
+        Plan plan = new Plan(
+                new long[] {1, 5, 1},
+                Arrays.asList(
+                        runs(new SlotLayout<>(1, items("d", "d"))),
+                        runs(new SlotLayout<>(5, items("a"))),
+                        runs(new SlotLayout<>(1, items("b", "b", "b", "b", "b")))),
+                Arrays.asList("bench", "b", "target"),
+                new int[] {1, 1, 1});
+        DepthFirstSchedule<String> schedule = new DepthFirstSchedule<>(plan.crafts, plan.layouts, plan.results,
+                plan.resultCounts, plan.held, Arrays.asList(null, "bench", "bench"));
+        List<Integer> order = new ArrayList<>();
+        for (int guard = 0; !schedule.finished(); guard++) {
+            assertTrue(guard < 100, "the schedule did not finish: " + order);
+            int step = schedule.current();
+            order.add(step);
+            if (step == 1) {
+                assertEquals(1L, schedule.stock("bench"), "the bench stands while b is made");
+            }
+            schedule.performed(schedule.batch() > 2 ? 2 : schedule.batch()); // small batches: more picks
+        }
+        assertEquals(0, order.get(0).intValue(), "the bench is made before any step that runs at it: " + order);
+        assertEquals(1L, schedule.done(0));
+        assertEquals(1L, schedule.stock("bench"), "the bench is not consumed: " + order);
+        assertEquals(Arrays.asList(0, 1, 1, 1, 2), order);
+    }
+
+    @Test
+    void aStepThatAlsoConsumesItsStationWaitsForASecondUnit() {
+        // step0: 4 planks -> table; step1: a table -> x, made at a table (one unit eaten, one standing); step2: x -> t.
+        Plan plan = new Plan(
+                new long[] {1, 1, 1},
+                Arrays.asList(
+                        runs(new SlotLayout<>(1, items("planks", "planks", "planks", "planks"))),
+                        runs(new SlotLayout<>(1, items("table"))),
+                        runs(new SlotLayout<>(1, items("x")))),
+                Arrays.asList("table", "x", "t"),
+                new int[] {1, 1, 1});
+        plan.held.put("table", 1L);
+        plan.held.put("planks", 4L);
+        DepthFirstSchedule<String> schedule = new DepthFirstSchedule<>(plan.crafts, plan.layouts, plan.results,
+                plan.resultCounts, plan.held, Arrays.asList(null, "table", null));
+        List<Integer> order = new ArrayList<>();
+        for (int guard = 0; !schedule.finished(); guard++) {
+            assertTrue(guard < 100, "the schedule did not finish: " + order);
+            int step = schedule.current();
+            order.add(step);
+            if (step == 1) {
+                assertEquals(2L, schedule.stock("table"), "the second table is made before one is eaten at the other");
+            }
+            schedule.performed(schedule.batch());
+        }
+        assertEquals(Arrays.asList(0, 1, 2), order);
+        assertEquals(1L, schedule.stock("table"), "one table still stands: " + order);
+    }
+
     private static List<SlotLayout<String>> runs(SlotLayout<String>... runList) {
         return new ArrayList<>(Arrays.asList(runList));
     }

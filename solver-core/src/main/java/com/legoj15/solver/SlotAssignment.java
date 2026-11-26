@@ -40,7 +40,9 @@ public final class SlotAssignment {
      * null where nothing in stock can fill it. Never assigns an item more often than its count.
      *
      * @param slots each slot's acceptable items in preference order (the solver's
-     *              {@link RecipeGraphSolver.RecipeInfo#ingredientSlots()} with blank cells removed)
+     *              {@link RecipeGraphSolver.RecipeInfo#ingredientSlots()} with blank cells removed, and a
+     *              slot whose {@link RecipeGraphSolver.RecipeInfo#ingredientSlotCount quantity} is
+     *              above 1 listed once per unit: this rule only ever sees one item per slot)
      * @param stock current counts; absent or non-positive means none
      */
     public static <K> List<K> assign(List<? extends List<K>> slots, Map<K, ? extends Number> stock) {

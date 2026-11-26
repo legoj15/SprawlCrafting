@@ -29,6 +29,11 @@ import java.util.Set;
  * available. The model knows no crafting remainders and no storage cap — execution re-checks every
  * craft against the live inventory, and a shortage the model did not foresee is real.
  *
+ * <p>Stations: given each step's station (the six-argument constructor), a step is not eligible until
+ * the model holds one unit of its station, and performing it does not consume that unit. The
+ * five-argument constructor knows no stations: given a plan with a station step it may run that step
+ * before the step that makes its station.
+ *
  * <p>Authored in Java 8 like the rest of this module (the legacy loaders run a Java 8 runtime).
  *
  * @param <K> item identity type
@@ -39,6 +44,8 @@ public final class DepthFirstSchedule<K> {
     public static final long MAX_CAP = Integer.MAX_VALUE;
 
     private final long[] crafts;
+    /** Per step, the station its recipe runs at, or null (see the six-argument constructor). */
+    private final List<K> stations;
     private final List<K> results;
     private final int[] resultCounts;
     /** The model's per-item stock; keys are exactly the items some step produces. */
@@ -84,13 +91,32 @@ public final class DepthFirstSchedule<K> {
      */
     public DepthFirstSchedule(long[] crafts, List<List<SlotLayout<K>>> layouts, List<K> results,
                               int[] resultCounts, Map<K, Long> held) {
+        this(crafts, layouts, results, resultCounts, held, null);
+    }
+
+    /**
+     * The constructor for a plan whose recipes may run at a {@link RecipeGraphSolver.RecipeInfo#station()
+     * station} (since 2.2.0). A step whose station some step of the plan produces is not eligible until
+     * the model holds one unit of it: a shortage is met by demanding the producing step first, as for an
+     * ingredient. Performing the step does not consume the unit, so later batches at the same station run
+     * on it. A station no step produces is raw, assumed standing, like any untracked item.
+     *
+     * @param stations per step (aligned 1:1 with {@code crafts}), the station its recipe runs at, or null
+     *                 for none; a null list means no step has one (the five-argument constructor, which
+     *                 must not be given a plan with stations: it would not wait for them)
+     */
+    public DepthFirstSchedule(long[] crafts, List<List<SlotLayout<K>>> layouts, List<K> results,
+                              int[] resultCounts, Map<K, Long> held, List<K> stations) {
         if (crafts == null || crafts.length == 0) {
             throw new IllegalArgumentException("a schedule needs at least one step");
         }
         if (layouts.size() != crafts.length || results.size() != crafts.length
-                || resultCounts.length != crafts.length) {
-            throw new IllegalArgumentException("layouts, results and resultCounts must align 1:1 with crafts");
+                || resultCounts.length != crafts.length || (stations != null && stations.size() != crafts.length)) {
+            throw new IllegalArgumentException(
+                    "layouts, results, resultCounts and stations must align 1:1 with crafts");
         }
+        this.stations = stations == null
+                ? new ArrayList<K>(Collections.<K>nCopies(crafts.length, null)) : new ArrayList<>(stations);
         this.crafts = crafts.clone();
         this.results = new ArrayList<>(results);
         this.resultCounts = resultCounts.clone();
@@ -343,7 +369,8 @@ public final class DepthFirstSchedule<K> {
     /**
      * Up to {@code want} crafts of step {@code i} as the next batch: {@code b} is the smallest of the
      * want, the step's remainder, its share of {@code cap} and what its current layout run still
-     * holds. Every tracked layout item must be in model stock for all {@code b} crafts; a shortage
+     * holds. A tracked station must have one unit in model stock first (its producing step is demanded
+     * for one unit otherwise). Every tracked layout item must be in model stock for all {@code b} crafts; a shortage
      * recurses into the first plan-order step that produces it and still has crafts left (returning
      * that demand instead), and an item no runnable producer makes shrinks {@code b} to the held
      * count — to 1 rather than 0, so the executor meets the real shortage and reports it.
@@ -361,10 +388,45 @@ public final class DepthFirstSchedule<K> {
         b = Math.min(b, Math.max(1L, cap / volume(i)));
         b = Math.min(b, runLeft(i));
         long take = b; // b routes the demand; take is what the held stock lets this batch run
+        K station = stations.get(i);
+        Long standing = station == null ? null : stock.get(station);
+        if (standing != null && standing < 1) {
+            // The step needs one unit of its station standing (never consumed): make it first, like an
+            // ingredient shortage of one unit. A station no step produces is untracked: assumed standing.
+            path.add(i);
+            int p;
+            try {
+                p = producerOf(station, path);
+            } finally {
+                path.remove(i);
+            }
+            if (p >= 0) {
+                path.add(i);
+                Choice deeper;
+                try {
+                    deeper = demand(p, ceilDiv(1, Math.max(1, resultCounts[p])), path);
+                } finally {
+                    path.remove(i);
+                }
+                if (deeper != null) {
+                    return deeper;
+                }
+                return null; // the station's branch is refused room: this step cannot run until it frees up
+            }
+            if (producerOf(station, path, true) >= 0) {
+                return null; // its only producers are blocked
+            }
+            // No producing step is left: run at 1 so the executor meets the real shortage and reports it.
+        }
         for (Map.Entry<K, Long> entry : runUses[i].get(runOf(i)).entrySet()) {
             long have = stock.get(entry.getKey());
             if (have == Long.MAX_VALUE) {
                 continue;
+            }
+            if (standing != null && entry.getKey().equals(station)) {
+                // The standing unit is not an ingredient: a step that also eats its station item needs one more,
+                // as the solver plans it (RecipeGraphSolver reserves the unit against ingredient draws).
+                have = Math.max(0L, have - 1);
             }
             long need = saturate(b, entry.getValue());
             if (have >= need) {

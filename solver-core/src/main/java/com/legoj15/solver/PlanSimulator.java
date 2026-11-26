@@ -14,6 +14,11 @@ import java.util.function.UnaryOperator;
  * of what was consumed credited once the craft is done. A plan passes only if no slot of any craft
  * comes up empty.
  *
+ * <p>A recipe's {@link RecipeGraphSolver.RecipeInfo#station() station} must be in stock at the step and
+ * is not consumed: it is held out of the stock while the step's crafts run (so a recipe that also
+ * lists it as an ingredient needs one more) and put back afterwards. A slot with a quantity above 1
+ * is that many slots, see {@link RecipeGraphSolver.RecipeInfo#ingredientSlotCount}.
+ *
  * <p>The chunking is bounded by the number of times a capped count changes, not by the crafts:
  * {@link SlotAssignment}'s choice for a craft depends on each alternative's stock only up to the
  * number of slots that list it, so a run of crafts during which no such capped count moves repeats
@@ -54,8 +59,8 @@ public final class PlanSimulator {
         }
 
         /**
-         * The first alternative of the first slot that could not be filled, or null (also null when
-         * the step's recipe could not be looked up).
+         * The first alternative of the first slot that could not be filled, or the step's station
+         * when none was in stock, or null (also null when the step's recipe could not be looked up).
          */
         public K missing() {
             return missing;
@@ -92,9 +97,16 @@ public final class PlanSimulator {
             if (recipe == null) {
                 return new Replay<>(i, step.recipeId(), null);
             }
+            K station = recipe.station();
+            if (station != null && !RecipeGraphSolver.hold(inv, station)) {
+                return new Replay<>(i, step.recipeId(), station);
+            }
             Batch<K> batch = run(recipe, step.crafts(), inv, remainder, true);
             if (batch.isShort()) {
                 return new Replay<>(i, step.recipeId(), batch.firstMissing);
+            }
+            if (station != null) {
+                RecipeGraphSolver.release(inv, station);
             }
         }
         return new Replay<>(-1, null, null);
@@ -121,15 +133,43 @@ public final class PlanSimulator {
         }
     }
 
-    /** The recipe's slots with empty ones (blank cells) removed. */
+    /**
+     * The recipe's slots with empty ones (blank cells) removed and each remaining slot repeated by its
+     * {@link RecipeGraphSolver.RecipeInfo#ingredientSlotCount quantity}: the list a layout, a
+     * {@link Batch} and {@link SlotAssignment} are indexed by.
+     */
     static <R, K> List<List<K>> nonEmptySlots(RecipeGraphSolver.RecipeInfo<R, K> recipe) {
-        List<List<K>> slots = new ArrayList<>();
-        for (List<K> slot : recipe.ingredientSlots()) {
-            if (!slot.isEmpty()) {
-                slots.add(slot);
+        return expand(recipe, recipe.ingredientSlots());
+    }
+
+    /**
+     * The one place a recipe's slots become the slots a craft fills: {@code perSlot} (the recipe's
+     * {@link RecipeGraphSolver.RecipeInfo#ingredientSlots()}, or a list aligned with it such as
+     * {@link RecipeGraphSolver.RecipeInfo#craftableIngredientSlots()}) with the slots the recipe lists
+     * empty dropped, and every other slot's entry repeated once per unit of its quantity. A slot
+     * {@code perSlot} does not reach (an adapter that under-supplies) is the slot itself. A quantity
+     * below 1 is an {@link IllegalArgumentException}, thrown the first time any pass reads the recipe.
+     */
+    static <R, K> List<List<K>> expand(RecipeGraphSolver.RecipeInfo<R, K> recipe, List<List<K>> perSlot) {
+        List<List<K>> slots = recipe.ingredientSlots();
+        List<List<K>> out = new ArrayList<>(slots.size());
+        for (int s = 0; s < slots.size(); s++) {
+            List<K> slot = slots.get(s);
+            // Checked for an empty slot too: a bad quantity is an adapter bug wherever it sits.
+            int quantity = recipe.ingredientSlotCount(s);
+            if (quantity < 1) {
+                throw new IllegalArgumentException("recipe " + recipe.id() + " slot " + s + " has quantity "
+                        + quantity + ", which must be at least 1");
+            }
+            if (slot.isEmpty()) {
+                continue;
+            }
+            List<K> entry = s < perSlot.size() ? perSlot.get(s) : slot;
+            for (int copy = 0; copy < quantity; copy++) {
+                out.add(entry);
             }
         }
-        return slots;
+        return out;
     }
 
     /** One chunk of {@link #run}: {@code repeat} consecutive crafts that all took {@code chosen}. */
