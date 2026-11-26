@@ -106,6 +106,10 @@ its own `solver-core/build/<including build's root project name>/`; only a stand
 in parallel in one checkout and switching between them does not recompile the library (#22; verified
 2026-11-20 with all three building the jar at once).
 
+A build outside this repository that includes `solver-core` (MegaBlockBot) gets
+`solver-core/build/<root project name>-<hash of the including checkout's path>/`: its git worktrees all
+share one root project name, and they build at the same time.
+
 Before that split they shared one directory, and a leftover daemon from one build held
 `build/libs/solver-<v>.jar` open so the next failed with "Unable to delete file". That is why all four
 `gradle.properties` files set `org.gradle.daemon=false`. The lock reason is gone; the setting was left

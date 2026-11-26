@@ -13,8 +13,15 @@ version = property("solver_version") as String
 // forge-1.12.2/). Each gets its own output directory, build/<including build's name>/, so they never
 // overwrite or lock each other's classes and jar (#22). Built alone (-p solver-core: the release
 // script, JitPack) it keeps plain build/.
+// A build outside this repository can include it too (MegaBlockBot does), and every git worktree of
+// such a consumer has the same root project name, so those also get a hash of the including checkout's
+// path: two worktrees building at once must not share an output directory either.
 gradle.parent?.let { includer ->
-    layout.buildDirectory.set(layout.projectDirectory.dir("build/${includer.rootProject.name}"))
+    val includerDir = includer.rootProject.projectDir.canonicalFile
+    val insideThisRepo = includerDir.toPath().startsWith(projectDir.canonicalFile.parentFile.toPath())
+    val key = if (insideThisRepo) includer.rootProject.name
+        else "${includer.rootProject.name}-${Integer.toHexString(includerDir.path.lowercase().hashCode())}"
+    layout.buildDirectory.set(layout.projectDirectory.dir("build/$key"))
 }
 
 java {
